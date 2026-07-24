@@ -6,6 +6,7 @@ import fnmatch
 import json
 import os
 import subprocess
+import sys
 import traceback
 import urllib.error
 import urllib.request
@@ -37,6 +38,14 @@ GITHUB_API_PAGE_SIZE = 100
 GITHUB_API_MAX_PAGES = 30
 
 
+def _warn_event_payload_issue(stage, error, reason):
+    print(
+        '⚠️ GitHub event payload stage='
+        f'{stage} failure: {type(error).__name__} - {reason}',
+        file=sys.stderr,
+    )
+
+
 def run_git(args):
     result = subprocess.run(args, capture_output=True, text=True)
     if result.returncode != 0:
@@ -48,12 +57,37 @@ def run_git(args):
 
 def _event_payload():
     event_path = os.environ.get('GITHUB_EVENT_PATH')
-    if not event_path or not os.path.exists(event_path):
+    if not event_path:
+        _warn_event_payload_issue(
+            'read',
+            FileNotFoundError('GITHUB_EVENT_PATH is not configured'),
+            'environment variable GITHUB_EVENT_PATH is missing or empty',
+        )
         return {}
     try:
         with open(event_path, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    except (OSError, ValueError):
+            try:
+                payload = json.load(f)
+            except json.JSONDecodeError as exc:
+                reason = f'line {exc.lineno} column {exc.colno}: {exc.msg}'
+                _warn_event_payload_issue('parse', exc, reason)
+                return {}
+        if not isinstance(payload, dict):
+            _warn_event_payload_issue(
+                'parse',
+                TypeError('Parsed JSON payload is not a dict'),
+                'payload root must be a JSON object',
+            )
+            return {}
+        return payload
+    except (OSError, UnicodeError) as exc:
+        if isinstance(exc, OSError) and exc.strerror:
+            reason = f'{exc.strerror} (path={event_path})'
+        elif isinstance(exc, UnicodeError):
+            reason = 'event file is not valid UTF-8'
+        else:
+            reason = 'operating system error'
+        _warn_event_payload_issue('read', exc, reason)
         return {}
 
 

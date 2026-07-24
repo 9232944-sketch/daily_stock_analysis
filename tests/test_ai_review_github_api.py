@@ -99,6 +99,120 @@ def test_manual_dispatch_context_comes_from_github_api(monkeypatch):
     assert ai_review.get_pr_context() == ('Fix review', 'Closes #2051')
 
 
+def test_event_payload_warns_when_file_is_missing(monkeypatch, tmp_path, capsys):
+    event_path = tmp_path / 'missing-event.json'
+    monkeypatch.setenv('GITHUB_EVENT_PATH', str(event_path))
+
+    assert ai_review._event_payload() == {}
+
+    warning = capsys.readouterr().err
+    assert 'stage=read failure' in warning
+    assert 'FileNotFoundError' in warning
+    assert 'No such file or directory' in warning
+
+
+def test_event_payload_warns_when_path_not_configured(monkeypatch, capsys):
+    monkeypatch.delenv('GITHUB_EVENT_PATH', raising=False)
+
+    assert ai_review._event_payload() == {}
+
+    warning = capsys.readouterr().err
+    assert 'stage=read failure' in warning
+    assert 'FileNotFoundError' in warning
+
+
+def test_event_payload_warns_when_file_cannot_be_read(
+    monkeypatch,
+    tmp_path,
+    capsys,
+):
+    event_path = tmp_path / 'event.json'
+    event_path.write_text('{}', encoding='utf-8')
+    monkeypatch.setenv('GITHUB_EVENT_PATH', str(event_path))
+
+    def deny_event_read(*_args, **_kwargs):
+        raise PermissionError(13, 'Permission denied')
+
+    monkeypatch.setattr(ai_review, 'open', deny_event_read, raising=False)
+
+    assert ai_review._event_payload() == {}
+
+    warning = capsys.readouterr().err
+    assert 'stage=read failure' in warning
+    assert 'PermissionError' in warning
+    assert 'Permission denied' in warning
+
+
+def test_event_payload_warns_for_invalid_json_without_leaking_content(
+    monkeypatch,
+    tmp_path,
+    capsys,
+):
+    sensitive_value = 'do-not-log-this-token'
+    event_path = tmp_path / 'event.json'
+    event_path.write_text(
+        f'{{"token": "{sensitive_value}", "pull_request": }}',
+        encoding='utf-8',
+    )
+    monkeypatch.setenv('GITHUB_EVENT_PATH', str(event_path))
+
+    assert ai_review._event_payload() == {}
+
+    warning = capsys.readouterr().err
+    assert 'stage=parse failure' in warning
+    assert 'JSONDecodeError' in warning
+    assert sensitive_value not in warning
+
+
+def test_event_payload_warns_when_payload_is_not_a_json_object(
+    monkeypatch,
+    tmp_path,
+    capsys,
+):
+    sensitive_value = 'do-not-log-this-token'
+    event_path = tmp_path / 'event.json'
+    event_path.write_text(f'[{{"token": "{sensitive_value}"}}]', encoding='utf-8')
+    monkeypatch.setenv('GITHUB_EVENT_PATH', str(event_path))
+
+    assert ai_review._event_payload() == {}
+
+    warning = capsys.readouterr().err
+    assert 'stage=parse failure' in warning
+    assert 'TypeError' in warning
+    assert sensitive_value not in warning
+
+
+def test_event_payload_warns_for_invalid_utf8_without_leaking_content(
+    monkeypatch,
+    tmp_path,
+    capsys,
+):
+    sensitive_value = b'do-not-log-these-bytes'
+    event_path = tmp_path / 'event.json'
+    event_path.write_bytes(b'{"token": "' + sensitive_value + b'\xff"}')
+    monkeypatch.setenv('GITHUB_EVENT_PATH', str(event_path))
+
+    assert ai_review._event_payload() == {}
+
+    warning = capsys.readouterr().err
+    assert 'stage=read failure' in warning
+    assert 'UnicodeDecodeError' in warning
+    assert sensitive_value.decode() not in warning
+
+
+def test_event_payload_accepts_empty_object_without_warning(
+    monkeypatch,
+    tmp_path,
+    capsys,
+):
+    event_path = tmp_path / 'event.json'
+    event_path.write_text('{}', encoding='utf-8')
+    monkeypatch.setenv('GITHUB_EVENT_PATH', str(event_path))
+
+    assert ai_review._event_payload() == {}
+    assert capsys.readouterr().err == ''
+
+
 def test_delegated_ci_context_does_not_claim_success(monkeypatch):
     monkeypatch.setenv('CI_DELEGATED_TO_PULL_REQUEST', 'true')
 
