@@ -70,10 +70,9 @@ def test_macos_distribution_build_requires_signing_and_notarization() -> None:
         _read_text(REPO_ROOT / "apps" / "dsa-desktop" / "package.json")
     )
 
-    assert 'if is_true "${GITHUB_ACTIONS:-}"; then' in script
-    assert script.index('if is_true "${GITHUB_ACTIONS:-}"; then') < script.index(
-        'is_true "${DSA_MAC_DISTRIBUTION}"; then'
-    )
+    assert 'if [[ -n "${DSA_MAC_DISTRIBUTION:-}" ]] &&' in script
+    assert 'is_true "${DSA_MAC_DISTRIBUTION}"; then' in script
+    assert 'if is_true "${GITHUB_ACTIONS:-}"; then' not in script
     assert 'export CSC_IDENTITY_AUTO_DISCOVERY="true"' in script
     assert "Developer ID Application" in script
     assert "CSC_KEY_PASSWORD is required when CSC_LINK is provided." in script
@@ -85,6 +84,27 @@ def test_macos_distribution_build_requires_signing_and_notarization() -> None:
     assert "WARNING: unsigned local macOS build; do not publish this artifact." in script
     assert package["build"]["mac"]["hardenedRuntime"] is True
     assert package["build"]["mac"]["gatekeeperAssess"] is False
+
+
+def test_macos_github_actions_build_stays_unsigned_without_distribution_flag() -> None:
+    script_path = REPO_ROOT / "scripts" / "build-desktop-macos.sh"
+    command = """
+source "$1"
+printf '%s\\n' "${distribution_build}"
+"""
+    env = {"PATH": os.environ["PATH"], "GITHUB_ACTIONS": "true"}
+
+    result = subprocess.run(
+        ["bash", "-c", command, "bash", str(script_path)],
+        cwd=REPO_ROOT,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0
+    assert result.stdout.strip() == "false"
 
 
 def test_macos_distribution_verifies_app_notarized_dmg_and_gatekeeper() -> None:

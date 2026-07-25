@@ -18,9 +18,7 @@ is_true() {
 }
 
 distribution_build=false
-if is_true "${GITHUB_ACTIONS:-}"; then
-  distribution_build=true
-elif [[ -n "${DSA_MAC_DISTRIBUTION:-}" ]] &&
+if [[ -n "${DSA_MAC_DISTRIBUTION:-}" ]] &&
   is_true "${DSA_MAC_DISTRIBUTION}"; then
   distribution_build=true
 fi

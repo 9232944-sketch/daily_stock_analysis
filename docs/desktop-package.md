@@ -95,7 +95,8 @@ spctl --assess --type execute --verbose=4 "/Applications/Daily Stock Analysis.ap
 
 ### macOS 签名、公证与发布校验
 
-`scripts/build-desktop-macos.sh` 将 GitHub Actions 构建视为分发构建；本地可显式设置 `DSA_MAC_DISTRIBUTION=true`。分发构建必须具备以下两组凭据，否则会在 Electron 打包前直接失败，不会留下可发布的 DMG：
+`scripts/build-desktop-macos.sh` 只有在显式设置 `DSA_MAC_DISTRIBUTION=true` 时才视为分发构建；GitHub Actions 默认仍按普通构建执行。  
+要进入签名/公证路径，发布工作流必须同时注入 `DSA_MAC_DISTRIBUTION=true` 与完整 Apple 凭据（当前 `desktop-release.yml` 尚未设置该变量）。分发构建必须具备以下两组凭据，否则会在 Electron 打包前直接失败，不会留下可发布的 DMG：
 
 - Developer ID Application 证书：通过 `CSC_LINK` / `CSC_KEY_PASSWORD` 提供，或预先安装到构建 keychain。
 - Apple 公证凭据（二选一）：
