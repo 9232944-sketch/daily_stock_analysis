@@ -134,6 +134,11 @@ def _needs_dependency_install(frontend_dir: Path, package_json: Path, lock_file:
     dependency_fingerprint = _calculate_dependency_fingerprint(frontend_dir)
     if dependency_fingerprint is not None:
         installed_fingerprint = _read_installed_dependency_fingerprint(frontend_dir)
+        # Legacy rsync deployments may preserve a newer node_modules mtime while
+        # changing package manifests. Without an explicit fingerprint marker we
+        # must reinstall instead of falling back to the hidden lockfile mtime.
+        if installed_fingerprint is None:
+            return True
         return dependency_fingerprint != installed_fingerprint
 
     install_marker = node_modules_dir / ".package-lock.json"

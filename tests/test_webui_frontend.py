@@ -162,6 +162,27 @@ def test_dependency_install_uses_content_fingerprint_when_mtime_is_preserved(tmp
     ) is True
 
 
+def test_dependency_install_reinstalls_legacy_node_modules_without_fingerprint_marker(tmp_path):
+    frontend_dir = _create_frontend_source(tmp_path / "repo")
+    lock_file = frontend_dir / "package-lock.json"
+    lock_file.write_text('{"lockfileVersion":3,"packages":{}}', encoding="utf-8")
+    node_modules = frontend_dir / "node_modules"
+    node_modules.mkdir()
+    hidden_lockfile = node_modules / ".package-lock.json"
+    hidden_lockfile.write_text('{"name":"legacy-install"}', encoding="utf-8")
+
+    lock_file.write_text('{"lockfileVersion":3,"packages":{"node_modules/new":{}}}', encoding="utf-8")
+    os.utime(lock_file, (1, 1))
+    os.utime(hidden_lockfile, None)
+
+    assert webui_frontend._needs_dependency_install(
+        frontend_dir,
+        frontend_dir / "package.json",
+        lock_file,
+        force_build=False,
+    ) is True
+
+
 def test_source_input_discovery_errors_fall_back_without_aborting(tmp_path, monkeypatch, caplog):
     frontend_dir = _create_frontend_source(tmp_path / "repo")
 
