@@ -70,9 +70,11 @@ def test_macos_distribution_build_requires_signing_and_notarization() -> None:
         _read_text(REPO_ROOT / "apps" / "dsa-desktop" / "package.json")
     )
 
+    assert "is_release_workflow_context" in script
     assert 'if [[ -n "${DSA_MAC_DISTRIBUTION:-}" ]]; then' in script
     assert 'elif should_auto_enable_distribution_build; then' in script
-    assert '[[ -n "${RELEASE_TAG:-}" ]]' in script
+    assert "macOS release workflows must run a signed distribution build." in script
+    assert "Provide signing credentials in the release workflow" in script
     assert "has_complete_app_store_connect_notarization_credentials" in script
     assert "has_complete_apple_id_notarization_credentials" in script
     assert 'export CSC_IDENTITY_AUTO_DISCOVERY="true"' in script
@@ -107,6 +109,50 @@ printf '%s\\n' "${distribution_build}"
 
     assert result.returncode == 0
     assert result.stdout.strip() == "false"
+
+
+def test_macos_github_actions_release_requires_distribution_credentials() -> None:
+    script_path = REPO_ROOT / "scripts" / "build-desktop-macos.sh"
+
+    result = subprocess.run(
+        ["bash", "-c", 'source "$1"', "bash", str(script_path)],
+        cwd=REPO_ROOT,
+        env={
+            "PATH": os.environ["PATH"],
+            "GITHUB_ACTIONS": "true",
+            "RELEASE_TAG": "v3.21.0",
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "macOS release workflows must run a signed distribution build." in result.stdout
+
+
+def test_macos_release_context_rejects_explicit_unsigned_override() -> None:
+    script_path = REPO_ROOT / "scripts" / "build-desktop-macos.sh"
+
+    result = subprocess.run(
+        ["bash", "-c", 'source "$1"', "bash", str(script_path)],
+        cwd=REPO_ROOT,
+        env={
+            "PATH": os.environ["PATH"],
+            "GITHUB_ACTIONS": "true",
+            "RELEASE_TAG": "v3.21.0",
+            "DSA_MAC_DISTRIBUTION": "false",
+            "APPLE_ID": "developer@example.com",
+            "APPLE_APP_SPECIFIC_PASSWORD": "app-password",
+            "APPLE_TEAM_ID": "TEAMID1234",
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "macOS release workflows must run a signed distribution build." in result.stdout
 
 
 def test_macos_distribution_release_workflow_exports_release_tag_context() -> None:
@@ -264,6 +310,82 @@ printf '%s\\n' "${notary_auth_args[@]}"
 
     assert result.returncode == 0
     assert str(api_key.resolve()) in result.stdout.splitlines()
+
+
+def test_macos_distribution_resolves_csc_link_path_before_directory_change(
+    tmp_path: Path,
+) -> None:
+    script_path = REPO_ROOT / "scripts" / "build-desktop-macos.sh"
+    certificate = tmp_path / "developer-id.p12"
+    certificate.write_text("signed-cert", encoding="utf-8")
+    command = """
+cd "$2"
+source "$1"
+uname() { printf 'Darwin\\n'; }
+security() { printf ''; }
+prepare_distribution_credentials
+printf '%s\\n' "${CSC_LINK}"
+"""
+    env = {
+        "PATH": os.environ["PATH"],
+        "CSC_LINK": certificate.name,
+        "CSC_KEY_PASSWORD": "test-password",
+        "APPLE_ID": "developer@example.com",
+        "APPLE_APP_SPECIFIC_PASSWORD": "app-password",
+        "APPLE_TEAM_ID": "TEAMID1234",
+    }
+
+    result = subprocess.run(
+        ["bash", "-c", command, "bash", str(script_path), str(tmp_path)],
+        cwd=REPO_ROOT,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0
+    assert result.stdout.splitlines()[-1] == str(certificate.resolve())
+
+
+@pytest.mark.parametrize(
+    "csc_link",
+    [
+        "https://example.com/developer-id.p12",
+        "MIIKBASE64CERTIFICATE==",
+    ],
+)
+def test_macos_distribution_preserves_non_file_csc_link_values(
+    csc_link: str,
+) -> None:
+    script_path = REPO_ROOT / "scripts" / "build-desktop-macos.sh"
+    command = """
+source "$1"
+uname() { printf 'Darwin\\n'; }
+security() { printf ''; }
+prepare_distribution_credentials
+printf '%s\\n' "${CSC_LINK}"
+"""
+    env = {
+        "PATH": os.environ["PATH"],
+        "CSC_LINK": csc_link,
+        "CSC_KEY_PASSWORD": "test-password",
+        "APPLE_ID": "developer@example.com",
+        "APPLE_APP_SPECIFIC_PASSWORD": "app-password",
+        "APPLE_TEAM_ID": "TEAMID1234",
+    }
+
+    result = subprocess.run(
+        ["bash", "-c", command, "bash", str(script_path)],
+        cwd=REPO_ROOT,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0
+    assert result.stdout.splitlines()[-1] == csc_link
 
 
 def test_macos_distribution_verifies_app_notarized_dmg_and_gatekeeper() -> None:

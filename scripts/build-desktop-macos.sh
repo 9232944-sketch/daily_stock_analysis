@@ -29,9 +29,13 @@ has_complete_apple_id_notarization_credentials() {
     [[ -n "${APPLE_TEAM_ID:-}" ]]
 }
 
-should_auto_enable_distribution_build() {
+is_release_workflow_context() {
   is_true "${GITHUB_ACTIONS:-}" &&
-    [[ -n "${RELEASE_TAG:-}" ]] &&
+    [[ -n "${RELEASE_TAG:-}" ]]
+}
+
+should_auto_enable_distribution_build() {
+  is_release_workflow_context &&
     (
       has_complete_app_store_connect_notarization_credentials ||
         has_complete_apple_id_notarization_credentials
@@ -45,6 +49,12 @@ if [[ -n "${DSA_MAC_DISTRIBUTION:-}" ]]; then
   fi
 elif should_auto_enable_distribution_build; then
   distribution_build=true
+fi
+
+if is_release_workflow_context && [[ "${distribution_build}" != "true" ]]; then
+  echo "ERROR: macOS release workflows must run a signed distribution build."
+  echo "Provide signing credentials in the release workflow or set DSA_MAC_DISTRIBUTION=true with complete notarization credentials."
+  exit 1
 fi
 
 notary_auth_args=()
@@ -61,6 +71,27 @@ resolve_existing_path() {
     cd "${parent_dir}" >/dev/null 2>&1 &&
       printf '%s/%s\n' "$(pwd -P)" "${base_name}"
   )
+}
+
+maybe_resolve_file_env_path() {
+  local env_name="$1"
+  local env_value="${!env_name:-}"
+  local resolved_path=""
+
+  if [[ -z "${env_value}" ]]; then
+    return 0
+  fi
+
+  if [[ "${env_value}" == *"://"* ]] || [[ ! -f "${env_value}" ]]; then
+    return 0
+  fi
+
+  resolved_path="$(resolve_existing_path "${env_value}")"
+  if [[ -z "${resolved_path}" ]]; then
+    return 0
+  fi
+
+  export "${env_name}=${resolved_path}"
 }
 
 prepare_distribution_credentials() {
@@ -80,6 +111,7 @@ prepare_distribution_credentials() {
     echo "ERROR: CSC_KEY_PASSWORD is required when CSC_LINK is provided."
     exit 1
   fi
+  maybe_resolve_file_env_path CSC_LINK
   available_identities="$(security find-identity -v -p codesigning 2>/dev/null || true)"
   if [[ -z "${CSC_LINK:-}" ]] &&
     [[ "${available_identities}" != *"Developer ID Application"* ]]; then
@@ -110,11 +142,12 @@ prepare_distribution_credentials() {
   fi
 
   if [[ "${api_credentials}" -eq 3 ]]; then
+    maybe_resolve_file_env_path APPLE_API_KEY
     if [[ ! -f "${APPLE_API_KEY}" ]] || [[ ! -r "${APPLE_API_KEY}" ]]; then
       echo "ERROR: APPLE_API_KEY must point to a readable App Store Connect .p8 file."
       exit 1
     fi
-    api_key_path="$(resolve_existing_path "${APPLE_API_KEY}")"
+    api_key_path="${APPLE_API_KEY}"
     if [[ -z "${api_key_path}" ]]; then
       echo "ERROR: APPLE_API_KEY must point to a readable App Store Connect .p8 file."
       exit 1
