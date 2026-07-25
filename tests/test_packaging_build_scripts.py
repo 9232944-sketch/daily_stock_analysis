@@ -182,7 +182,7 @@ def test_macos_distribution_masks_apple_notary_env_from_electron_builder(
     stub_npx.write_text(
         """#!/usr/bin/env bash
 set -euo pipefail
-for name in APPLE_API_KEY APPLE_API_KEY_ID APPLE_API_ISSUER APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
+for name in APPLE_API_KEY APPLE_API_KEY_ID APPLE_API_ISSUER APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID APPLE_KEYCHAIN APPLE_KEYCHAIN_PROFILE; do
   if [[ -n "${!name+x}" ]]; then
     printf '%s=set\\n' "$name"
   else
@@ -207,6 +207,8 @@ run_electron_builder --mac dmg --publish never
         "APPLE_ID": "developer@example.com",
         "APPLE_APP_SPECIFIC_PASSWORD": "app-password",
         "APPLE_TEAM_ID": "TEAMID1234",
+        "APPLE_KEYCHAIN": "build.keychain-db",
+        "APPLE_KEYCHAIN_PROFILE": "AC_PASSWORD",
     }
 
     result = subprocess.run(
@@ -225,7 +227,43 @@ run_electron_builder --mac dmg --publish never
     assert "APPLE_ID=unset" in result.stdout
     assert "APPLE_APP_SPECIFIC_PASSWORD=unset" in result.stdout
     assert "APPLE_TEAM_ID=unset" in result.stdout
+    assert "APPLE_KEYCHAIN=unset" in result.stdout
+    assert "APPLE_KEYCHAIN_PROFILE=unset" in result.stdout
     assert "ARGS=electron-builder --mac dmg --publish never" in result.stdout
+
+
+def test_macos_distribution_resolves_api_key_path_before_directory_change(
+    tmp_path: Path,
+) -> None:
+    script_path = REPO_ROOT / "scripts" / "build-desktop-macos.sh"
+    api_key = tmp_path / "AuthKey_TEST.p8"
+    api_key.write_text("test-key", encoding="utf-8")
+    command = """
+cd "$2"
+source "$1"
+uname() { printf 'Darwin\\n'; }
+security() { printf '1) Developer ID Application: Test (TEAMID)\\n'; }
+prepare_distribution_credentials
+printf '%s\\n' "${notary_auth_args[@]}"
+"""
+    env = {
+        "PATH": os.environ["PATH"],
+        "APPLE_API_KEY": api_key.name,
+        "APPLE_API_KEY_ID": "KEYID123",
+        "APPLE_API_ISSUER": "00000000-0000-0000-0000-000000000000",
+    }
+
+    result = subprocess.run(
+        ["bash", "-c", command, "bash", str(script_path), str(tmp_path)],
+        cwd=REPO_ROOT,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0
+    assert str(api_key.resolve()) in result.stdout.splitlines()
 
 
 def test_macos_distribution_verifies_app_notarized_dmg_and_gatekeeper() -> None:

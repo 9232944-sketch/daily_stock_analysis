@@ -49,10 +49,25 @@ fi
 
 notary_auth_args=()
 
+resolve_existing_path() {
+  local input_path="$1"
+  local parent_dir
+  local base_name
+
+  parent_dir="$(dirname -- "${input_path}")"
+  base_name="$(basename -- "${input_path}")"
+
+  (
+    cd "${parent_dir}" >/dev/null 2>&1 &&
+      printf '%s/%s\n' "$(pwd -P)" "${base_name}"
+  )
+}
+
 prepare_distribution_credentials() {
   local available_identities=""
   local api_credentials=0
   local apple_id_credentials=0
+  local api_key_path=""
 
   if [[ "$(uname -s)" != "Darwin" ]]; then
     echo "ERROR: signed macOS distribution builds must run on macOS."
@@ -99,8 +114,13 @@ prepare_distribution_credentials() {
       echo "ERROR: APPLE_API_KEY must point to a readable App Store Connect .p8 file."
       exit 1
     fi
+    api_key_path="$(resolve_existing_path "${APPLE_API_KEY}")"
+    if [[ -z "${api_key_path}" ]]; then
+      echo "ERROR: APPLE_API_KEY must point to a readable App Store Connect .p8 file."
+      exit 1
+    fi
     notary_auth_args=(
-      "--key" "${APPLE_API_KEY}"
+      "--key" "${api_key_path}"
       "--key-id" "${APPLE_API_KEY_ID}"
       "--issuer" "${APPLE_API_ISSUER}"
     )
@@ -270,6 +290,8 @@ run_electron_builder() {
     -u APPLE_ID \
     -u APPLE_APP_SPECIFIC_PASSWORD \
     -u APPLE_TEAM_ID \
+    -u APPLE_KEYCHAIN \
+    -u APPLE_KEYCHAIN_PROFILE \
     npx electron-builder "$@"
 }
 
