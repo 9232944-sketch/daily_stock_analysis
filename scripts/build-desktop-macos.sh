@@ -17,9 +17,33 @@ is_true() {
   esac
 }
 
+has_complete_app_store_connect_notarization_credentials() {
+  [[ -n "${APPLE_API_KEY:-}" ]] &&
+    [[ -n "${APPLE_API_KEY_ID:-}" ]] &&
+    [[ -n "${APPLE_API_ISSUER:-}" ]]
+}
+
+has_complete_apple_id_notarization_credentials() {
+  [[ -n "${APPLE_ID:-}" ]] &&
+    [[ -n "${APPLE_APP_SPECIFIC_PASSWORD:-}" ]] &&
+    [[ -n "${APPLE_TEAM_ID:-}" ]]
+}
+
+should_auto_enable_distribution_build() {
+  is_true "${GITHUB_ACTIONS:-}" &&
+    [[ -n "${RELEASE_TAG:-}" ]] &&
+    (
+      has_complete_app_store_connect_notarization_credentials ||
+        has_complete_apple_id_notarization_credentials
+    )
+}
+
 distribution_build=false
-if [[ -n "${DSA_MAC_DISTRIBUTION:-}" ]] &&
-  is_true "${DSA_MAC_DISTRIBUTION}"; then
+if [[ -n "${DSA_MAC_DISTRIBUTION:-}" ]]; then
+  if is_true "${DSA_MAC_DISTRIBUTION}"; then
+    distribution_build=true
+  fi
+elif should_auto_enable_distribution_build; then
   distribution_build=true
 fi
 
@@ -238,6 +262,17 @@ ensure_desktop_dependencies() {
   fi
 }
 
+run_electron_builder() {
+  env \
+    -u APPLE_API_KEY \
+    -u APPLE_API_KEY_ID \
+    -u APPLE_API_ISSUER \
+    -u APPLE_ID \
+    -u APPLE_APP_SPECIFIC_PASSWORD \
+    -u APPLE_TEAM_ID \
+    npx electron-builder "$@"
+}
+
 main() {
   echo "Building Electron desktop app (macOS)..."
 
@@ -290,9 +325,9 @@ main() {
 
   echo "Building macOS target arch: ${MAC_ARCH:-default}"
   if [[ ${#ARCH_ARGS[@]} -gt 0 ]]; then
-    npx electron-builder --mac dmg "${ARCH_ARGS[@]}" "${BUILDER_ARGS[@]}" --publish never
+    run_electron_builder --mac dmg "${ARCH_ARGS[@]}" "${BUILDER_ARGS[@]}" --publish never
   else
-    npx electron-builder --mac dmg "${BUILDER_ARGS[@]}" --publish never
+    run_electron_builder --mac dmg "${BUILDER_ARGS[@]}" --publish never
   fi
 
   if [[ "${distribution_build}" == "true" ]]; then

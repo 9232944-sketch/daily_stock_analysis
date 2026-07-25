@@ -95,15 +95,19 @@ spctl --assess --type execute --verbose=4 "/Applications/Daily Stock Analysis.ap
 
 ### macOS 签名、公证与发布校验
 
-`scripts/build-desktop-macos.sh` 只有在显式设置 `DSA_MAC_DISTRIBUTION=true` 时才视为分发构建；GitHub Actions 默认仍按普通构建执行。  
-要进入签名/公证路径，发布工作流必须同时注入 `DSA_MAC_DISTRIBUTION=true` 与完整 Apple 凭据（当前 `desktop-release.yml` 尚未设置该变量）。分发构建必须具备以下两组凭据，否则会在 Electron 打包前直接失败，不会留下可发布的 DMG：
+`scripts/build-desktop-macos.sh` 支持两种进入分发构建的方式：
+
+- 显式设置 `DSA_MAC_DISTRIBUTION=true`，适合本地或维护者手动复核；
+- 在 GitHub Actions 中同时具备 `RELEASE_TAG` 和完整 Apple 公证凭据时自动切入分发模式，避免 tagged release 因遗漏额外开关而退回 unsigned 本地包。
+
+因此，`desktop-release.yml` 的 macOS job 只要继续提供 `RELEASE_TAG`，并由维护者在 runner secret/keychain 中完整注入签名与公证凭据，就会走签名/公证路径；即使 workflow 未显式传 `DSA_MAC_DISTRIBUTION`，也不会再默认产出 unsigned 发布包。分发构建必须具备以下两组凭据，否则会在 Electron 打包前直接失败，不会留下可发布的 DMG：
 
 - Developer ID Application 证书：通过 `CSC_LINK` / `CSC_KEY_PASSWORD` 提供，或预先安装到构建 keychain。
 - Apple 公证凭据（二选一）：
   - App Store Connect API Key：`APPLE_API_KEY`、`APPLE_API_KEY_ID`、`APPLE_API_ISSUER`
   - Apple ID：`APPLE_ID`、`APPLE_APP_SPECIFIC_PASSWORD`、`APPLE_TEAM_ID`
 
-证书密码和公证凭据只能存放在发布环境的 secret/keychain 中，并由维护者在发布任务中完整注入；任一凭据组只配置部分字段时构建会立即失败。不要把凭据写入仓库文件、命令日志或构建产物。`APPLE_API_KEY` 必须指向构建机上受保护且可读的 `.p8` 临时文件，而不是把私钥正文放进配置。
+证书密码和公证凭据只能存放在发布环境的 secret/keychain 中，并由维护者在发布任务中完整注入；任一凭据组只配置部分字段时构建会立即失败。不要把凭据写入仓库文件、命令日志或构建产物。`APPLE_API_KEY` 必须指向构建机上受保护且可读的 `.p8` 临时文件，而不是把私钥正文放进配置。脚本调用 `electron-builder` 时会临时移除 `APPLE_*` 公证变量，避免 `app-builder-lib` 提前触发内置 notarization 分支；真正的公证统一在 DMG 生成后由 `notarytool` 执行。
 
 分发构建按固定顺序执行并在首个失败处停止：
 

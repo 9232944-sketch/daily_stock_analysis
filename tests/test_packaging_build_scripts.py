@@ -70,9 +70,11 @@ def test_macos_distribution_build_requires_signing_and_notarization() -> None:
         _read_text(REPO_ROOT / "apps" / "dsa-desktop" / "package.json")
     )
 
-    assert 'if [[ -n "${DSA_MAC_DISTRIBUTION:-}" ]] &&' in script
-    assert 'is_true "${DSA_MAC_DISTRIBUTION}"; then' in script
-    assert 'if is_true "${GITHUB_ACTIONS:-}"; then' not in script
+    assert 'if [[ -n "${DSA_MAC_DISTRIBUTION:-}" ]]; then' in script
+    assert 'elif should_auto_enable_distribution_build; then' in script
+    assert '[[ -n "${RELEASE_TAG:-}" ]]' in script
+    assert "has_complete_app_store_connect_notarization_credentials" in script
+    assert "has_complete_apple_id_notarization_credentials" in script
     assert 'export CSC_IDENTITY_AUTO_DISCOVERY="true"' in script
     assert "Developer ID Application" in script
     assert "CSC_KEY_PASSWORD is required when CSC_LINK is provided." in script
@@ -86,7 +88,7 @@ def test_macos_distribution_build_requires_signing_and_notarization() -> None:
     assert package["build"]["mac"]["gatekeeperAssess"] is False
 
 
-def test_macos_github_actions_build_stays_unsigned_without_distribution_flag() -> None:
+def test_macos_github_actions_build_stays_unsigned_without_release_context() -> None:
     script_path = REPO_ROOT / "scripts" / "build-desktop-macos.sh"
     command = """
 source "$1"
@@ -105,6 +107,125 @@ printf '%s\\n' "${distribution_build}"
 
     assert result.returncode == 0
     assert result.stdout.strip() == "false"
+
+
+def test_macos_distribution_release_workflow_exports_release_tag_context() -> None:
+    workflow = _read_text(REPO_ROOT / ".github" / "workflows" / "desktop-release.yml")
+
+    assert "build-macos:" in workflow
+    assert "RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}" in workflow
+    assert "run: bash scripts/build-all-macos.sh" in workflow
+    assert "DSA_MAC_ARCH: ${{ matrix.arch }}" in workflow
+
+
+def test_macos_github_actions_release_auto_enables_distribution_with_notary_credentials() -> None:
+    script_path = REPO_ROOT / "scripts" / "build-desktop-macos.sh"
+    command = """
+source "$1"
+printf '%s\\n' "${distribution_build}"
+"""
+    env = {
+        "PATH": os.environ["PATH"],
+        "GITHUB_ACTIONS": "true",
+        "RELEASE_TAG": "v3.21.0",
+        "APPLE_ID": "developer@example.com",
+        "APPLE_APP_SPECIFIC_PASSWORD": "app-password",
+        "APPLE_TEAM_ID": "TEAMID1234",
+    }
+
+    result = subprocess.run(
+        ["bash", "-c", command, "bash", str(script_path)],
+        cwd=REPO_ROOT,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0
+    assert result.stdout.strip() == "true"
+
+
+def test_macos_github_actions_release_auto_enables_distribution_with_api_key_credentials() -> None:
+    script_path = REPO_ROOT / "scripts" / "build-desktop-macos.sh"
+    command = """
+source "$1"
+printf '%s\\n' "${distribution_build}"
+"""
+    env = {
+        "PATH": os.environ["PATH"],
+        "GITHUB_ACTIONS": "true",
+        "RELEASE_TAG": "v3.21.0",
+        "APPLE_API_KEY": "/tmp/AuthKey_TEST.p8",
+        "APPLE_API_KEY_ID": "KEYID123",
+        "APPLE_API_ISSUER": "00000000-0000-0000-0000-000000000000",
+    }
+
+    result = subprocess.run(
+        ["bash", "-c", command, "bash", str(script_path)],
+        cwd=REPO_ROOT,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0
+    assert result.stdout.strip() == "true"
+
+
+def test_macos_distribution_masks_apple_notary_env_from_electron_builder(
+    tmp_path: Path,
+) -> None:
+    script_path = REPO_ROOT / "scripts" / "build-desktop-macos.sh"
+    stub_npx = tmp_path / "npx"
+    stub_npx.write_text(
+        """#!/usr/bin/env bash
+set -euo pipefail
+for name in APPLE_API_KEY APPLE_API_KEY_ID APPLE_API_ISSUER APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
+  if [[ -n "${!name+x}" ]]; then
+    printf '%s=set\\n' "$name"
+  else
+    printf '%s=unset\\n' "$name"
+  fi
+done
+printf 'ARGS=%s\\n' "$*"
+""",
+        encoding="utf-8",
+    )
+    stub_npx.chmod(0o755)
+
+    command = """
+source "$1"
+run_electron_builder --mac dmg --publish never
+"""
+    env = {
+        "PATH": f"{tmp_path}:{os.environ['PATH']}",
+        "APPLE_API_KEY": "/tmp/AuthKey_TEST.p8",
+        "APPLE_API_KEY_ID": "KEYID123",
+        "APPLE_API_ISSUER": "00000000-0000-0000-0000-000000000000",
+        "APPLE_ID": "developer@example.com",
+        "APPLE_APP_SPECIFIC_PASSWORD": "app-password",
+        "APPLE_TEAM_ID": "TEAMID1234",
+    }
+
+    result = subprocess.run(
+        ["bash", "-c", command, "bash", str(script_path)],
+        cwd=REPO_ROOT,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0
+    assert "APPLE_API_KEY=unset" in result.stdout
+    assert "APPLE_API_KEY_ID=unset" in result.stdout
+    assert "APPLE_API_ISSUER=unset" in result.stdout
+    assert "APPLE_ID=unset" in result.stdout
+    assert "APPLE_APP_SPECIFIC_PASSWORD=unset" in result.stdout
+    assert "APPLE_TEAM_ID=unset" in result.stdout
+    assert "ARGS=electron-builder --mac dmg --publish never" in result.stdout
 
 
 def test_macos_distribution_verifies_app_notarized_dmg_and_gatekeeper() -> None:
