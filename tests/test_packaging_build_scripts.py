@@ -97,6 +97,39 @@ def test_macos_distribution_build_requires_signing_and_notarization() -> None:
     assert "WARNING: unsigned local macOS build; do not publish this artifact." in script
     assert package["build"]["mac"]["hardenedRuntime"] is True
     assert package["build"]["mac"]["gatekeeperAssess"] is False
+    assert "-maxdepth" not in script
+
+
+def test_macos_distribution_artifact_discovery_uses_portable_globbing(
+    tmp_path: Path,
+) -> None:
+    script_path = REPO_ROOT / "scripts" / "build-desktop-macos.sh"
+    dist_dir = tmp_path / "dist"
+    (dist_dir / "mac-arm64" / "Daily Stock Analysis.app").mkdir(parents=True)
+    (dist_dir / "Daily Stock Analysis-arm64.dmg").write_text(
+        "dmg", encoding="utf-8"
+    )
+    command = """
+source "$1"
+cd "$2"
+find_single_artifact d "Daily Stock Analysis.app"
+find_single_artifact f "*.dmg"
+"""
+
+    result = subprocess.run(
+        ["bash", "-c", command, "bash", str(script_path), str(tmp_path)],
+        cwd=REPO_ROOT,
+        env={"PATH": os.environ["PATH"]},
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0
+    assert result.stdout.splitlines() == [
+        "dist/mac-arm64/Daily Stock Analysis.app",
+        "dist/Daily Stock Analysis-arm64.dmg",
+    ]
 
 
 def test_macos_github_actions_build_stays_unsigned_without_release_context() -> None:

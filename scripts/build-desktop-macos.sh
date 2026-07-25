@@ -177,21 +177,26 @@ prepare_distribution_credentials() {
 find_single_artifact() {
   local artifact_name="$1"
   local artifact_pattern="$2"
-  local found=""
-  local count=0
+  local matches=()
   local candidate
 
   while IFS= read -r candidate; do
-    found="${candidate}"
-    count=$((count + 1))
-  done < <(find dist -maxdepth 2 -type "${artifact_name}" -name "${artifact_pattern}" -print)
+    if [[ "${artifact_name}" == "d" ]] && [[ -d "${candidate}" ]]; then
+      matches+=("${candidate}")
+    elif [[ "${artifact_name}" == "f" ]] && [[ -f "${candidate}" ]]; then
+      matches+=("${candidate}")
+    fi
+  done < <(
+    compgen -G "dist/${artifact_pattern}" || true
+    compgen -G "dist/*/${artifact_pattern}" || true
+  )
 
-  if [[ "${count}" -ne 1 ]]; then
-    echo "ERROR: expected one ${artifact_pattern} artifact, found ${count}." >&2
+  if [[ "${#matches[@]}" -ne 1 ]]; then
+    echo "ERROR: expected one ${artifact_pattern} artifact, found ${#matches[@]}." >&2
     exit 1
   fi
 
-  printf '%s\n' "${found}"
+  printf '%s\n' "${matches[0]}"
 }
 
 verify_signed_app() {
