@@ -8,6 +8,28 @@ log() {
   echo "$1"
 }
 
+count_top_level_yaml_files() {
+  local target_dir="$1"
+  local file_path
+  local count=0
+  local nullglob_was_set=0
+
+  if shopt -q nullglob; then
+    nullglob_was_set=1
+  fi
+  shopt -s nullglob
+  for file_path in "${target_dir}"/*.yaml; do
+    if [[ -f "${file_path}" ]]; then
+      count=$((count + 1))
+    fi
+  done
+  if [[ "${nullglob_was_set}" -eq 0 ]]; then
+    shopt -u nullglob
+  fi
+
+  printf '%s\n' "${count}"
+}
+
 PYTHON_BIN="${PYTHON_BIN:-}"
 if [[ -z "${PYTHON_BIN}" ]]; then
   if command -v python3 >/dev/null 2>&1; then
@@ -193,7 +215,7 @@ while IFS= read -r packaged_file; do
 done < <(find "${packaged_root}" -type f -print)
 
 log "Verifying packaged built-in strategies..."
-source_strategy_count="$(find "${ROOT_DIR}/strategies" -maxdepth 1 -type f -name '*.yaml' | wc -l | tr -d '[:space:]')"
+source_strategy_count="$(count_top_level_yaml_files "${ROOT_DIR}/strategies")"
 packaged_strategies="${ROOT_DIR}/dist/backend/stock_analysis/_internal/strategies"
 if [[ ! -d "${packaged_strategies}" ]]; then
   packaged_strategies="${ROOT_DIR}/dist/backend/stock_analysis/strategies"
@@ -202,7 +224,7 @@ if [[ ! -d "${packaged_strategies}" ]]; then
   echo "ERROR: packaged strategies directory not found under dist/backend/stock_analysis."
   exit 1
 fi
-packaged_strategy_count="$(find "${packaged_strategies}" -maxdepth 1 -type f -name '*.yaml' | wc -l | tr -d '[:space:]')"
+packaged_strategy_count="$(count_top_level_yaml_files "${packaged_strategies}")"
 if [[ "${packaged_strategy_count}" != "${source_strategy_count}" ]]; then
   echo "ERROR: packaged strategies count mismatch: expected ${source_strategy_count}, got ${packaged_strategy_count}."
   exit 1

@@ -64,6 +64,15 @@ def test_macos_backend_reports_first_invalid_pyinstaller_signature() -> None:
     assert "unreadable signature immediately after PyInstaller packaging" in script
 
 
+def test_macos_backend_strategy_count_uses_portable_globbing() -> None:
+    script = _read_text(REPO_ROOT / "scripts" / "build-backend-macos.sh")
+
+    assert "count_top_level_yaml_files()" in script
+    assert 'for file_path in "${target_dir}"/*.yaml; do' in script
+    assert "shopt -s nullglob" in script
+    assert '-maxdepth 1 -type f -name \'*.yaml\'' not in script
+
+
 def test_macos_distribution_build_requires_signing_and_notarization() -> None:
     script = _read_text(REPO_ROOT / "scripts" / "build-desktop-macos.sh")
     package = json.loads(
