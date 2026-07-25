@@ -111,7 +111,7 @@ spctl --assess --type execute --verbose=4 "/Applications/Daily Stock Analysis.ap
 
 分发构建按固定顺序执行并在首个失败处停止：
 
-1. PyInstaller 后端生成后检查已有 Mach-O 签名，输出首个失败文件及“PyInstaller packaging”阶段。
+1. PyInstaller 后端生成后检查已有 Mach-O 签名；若发现残缺旧签名会先移除，只有不可读签名才会在“PyInstaller packaging”阶段直接失败。
 2. Electron 完成嵌套代码签名后，逐个验证 `.app` / `.framework` / `.xpc` bundle 与 Mach-O，再执行 `codesign --verify --deep --strict --verbose=4` 验证完整主应用。
 3. 使用 `notarytool` 公证 DMG，执行 `stapler staple` 与 `stapler validate`。
 4. 只读挂载 DMG，对其中的应用再次执行严格 `codesign` 和 `spctl --assess --type execute --verbose=4`。

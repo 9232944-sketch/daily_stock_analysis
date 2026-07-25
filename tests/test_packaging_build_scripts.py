@@ -60,7 +60,9 @@ def test_macos_backend_reports_first_invalid_pyinstaller_signature() -> None:
     assert 'file -b "${packaged_file}" | grep -q "Mach-O"' in script
     assert 'codesign --verify --strict --verbose=4 "${packaged_file}"' in script
     assert "code object is not signed at all" in script
-    assert "first invalid signature immediately after PyInstaller packaging" in script
+    assert "removing invalid pre-existing signature from PyInstaller artifact" in script
+    assert 'codesign --remove-signature "${packaged_file}"' in script
+    assert "failed to clear invalid signature immediately after PyInstaller packaging" in script
     assert "unreadable signature immediately after PyInstaller packaging" in script
 
 
@@ -98,6 +100,78 @@ def test_macos_distribution_build_requires_signing_and_notarization() -> None:
     assert package["build"]["mac"]["hardenedRuntime"] is True
     assert package["build"]["mac"]["gatekeeperAssess"] is False
     assert "-maxdepth" not in script
+
+
+def test_macos_backend_strips_invalid_packaged_signature(tmp_path: Path) -> None:
+    script_path = REPO_ROOT / "scripts" / "build-backend-macos.sh"
+    packaged_file = tmp_path / "broken.bin"
+    packaged_file.write_text("mach-o", encoding="utf-8")
+    marker = tmp_path / "removed.flag"
+    command = """
+source "$1"
+marker_path="$3"
+codesign() {
+  if [[ "$1" == "-d" ]]; then
+    if [[ -f "${marker_path}" ]]; then
+      printf 'code object is not signed at all\\n' >&2
+      return 1
+    fi
+    printf 'Authority=adhoc\\n' >&2
+    return 0
+  fi
+  if [[ "$1" == "--verify" ]]; then
+    printf 'broken signature\\n' >&2
+    return 1
+  fi
+  if [[ "$1" == "--remove-signature" ]]; then
+    : > "${marker_path}"
+    printf 'removed:%s\\n' "$2"
+    return 0
+  fi
+}
+strip_invalid_packaged_signature "$2"
+"""
+
+    result = subprocess.run(
+        ["bash", "-c", command, "bash", str(script_path), str(packaged_file), str(marker)],
+        cwd=REPO_ROOT,
+        env={"PATH": os.environ["PATH"]},
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0
+    assert "removing invalid pre-existing signature" in result.stdout
+    assert f"removed:{packaged_file}" in result.stdout
+
+
+def test_macos_backend_rejects_unreadable_packaged_signature(tmp_path: Path) -> None:
+    script_path = REPO_ROOT / "scripts" / "build-backend-macos.sh"
+    packaged_file = tmp_path / "broken.bin"
+    packaged_file.write_text("mach-o", encoding="utf-8")
+    command = """
+source "$1"
+codesign() {
+  if [[ "$1" == "-d" ]]; then
+    printf 'malformed signature\\n' >&2
+    return 1
+  fi
+}
+strip_invalid_packaged_signature "$2"
+"""
+
+    result = subprocess.run(
+        ["bash", "-c", command, "bash", str(script_path), str(packaged_file)],
+        cwd=REPO_ROOT,
+        env={"PATH": os.environ["PATH"]},
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "unreadable signature immediately after PyInstaller packaging" in result.stdout
 
 
 def test_macos_distribution_artifact_discovery_uses_portable_globbing(

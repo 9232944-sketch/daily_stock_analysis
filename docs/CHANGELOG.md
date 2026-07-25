@@ -26,7 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - [修复] 修复 Windows 上 mimetypes 冷启动时读取注册表导致的进程卡死
 - [新功能] Web 首页与 `POST /api/v1/analysis/market-review` 支持用严格校验的 `region` 字符串临时选择单个或多个复盘市场；一次性覆盖不读取或修改全局配置，“服务器默认”在任务提交边界解析为 canonical 实际执行市场，并贯穿 accepted 响应、任务状态/列表/SSE、完成态结构化 payload 与 History。
 - [修复] GitHub Actions PR Review 流程中的 `_event_payload()` 此前用 `except (OSError, ValueError): return {}` 把「事件文件缺失」「文件不可读」「JSON 非法」三类异常统一吞成空对象，下游只表现为 `PR number is unavailable` 无法定位根因；现保留空对象降级行为不变，但分别对三类失败输出不含载荷内容的警告（仅含异常类型与 `GITHUB_EVENT_PATH` 源路径），并补齐三类降级路径与「坏载荷导致 PR 编号不可用」链路的回归测试（fixes #2070）
-- [修复] macOS 分发构建强制执行 Developer ID 完整签名、DMG 公证与 stapler/Gatekeeper 校验，并在 PyInstaller 或 Electron 阶段报告首个损坏签名，避免发布被系统判定为恶意软件的残缺应用包。
+- [修复] macOS 分发构建强制执行 Developer ID 完整签名、DMG 公证与 stapler/Gatekeeper 校验；PyInstaller 阶段遇到残缺旧签名时先移除并继续验证，只有不可读签名或后续 Electron 签名链损坏才阻断发布，同时补充桌面端签名故障排查说明，避免发布被系统判定为恶意软件的残缺应用包。
 
 ## [3.27.0] - 2026-07-19
 
