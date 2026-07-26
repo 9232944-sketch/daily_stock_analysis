@@ -238,9 +238,16 @@ class TestHKRealtimeFallback(unittest.TestCase):
 
         with patch.dict(sys.modules, {"akshare": ak_mock}):
             quote = self.fetcher._get_hk_realtime_quote("HK00700")
+            cached_fallback_quote = self.fetcher._get_hk_realtime_quote("HK00700")
 
         self.assertIsNotNone(quote)
+        self.assertIsNotNone(cached_fallback_quote)
         self.assertEqual(quote.name, "腾讯控股")
+        self.assertEqual(cached_fallback_quote.name, "腾讯控股")
+        self.assertIsNone(akshare_fetcher_module._hk_realtime_cache["data"])
+        self.assertEqual(akshare_fetcher_module._hk_realtime_cache["last_result"], "failure")
+        ak_mock.stock_hk_spot_em.assert_called_once()
+        self.assertEqual(ak_mock.stock_hk_spot.call_count, 2)
 
     @patch("data_provider.akshare_fetcher.get_realtime_circuit_breaker")
     def test_em_missing_code_column_falls_back_without_poisoning_cache(self, mock_cb):

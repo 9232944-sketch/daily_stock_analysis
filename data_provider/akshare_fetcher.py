@@ -1596,6 +1596,8 @@ class AkshareFetcher(BaseFetcher):
                             raise TypeError("stock_hk_spot_em 未返回 DataFrame")
                         if '代码' not in df.columns:
                             raise KeyError("stock_hk_spot_em 返回结果缺少 代码 列")
+                        if df.empty:
+                            raise ValueError("stock_hk_spot_em 返回空市场快照")
 
                         _hk_realtime_cache['data'] = df
                         _hk_realtime_cache['timestamp'] = time.time()
