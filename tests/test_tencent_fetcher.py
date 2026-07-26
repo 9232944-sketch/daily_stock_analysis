@@ -3,11 +3,45 @@
 
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
+from pathlib import Path
 from unittest.mock import patch
 
 import pandas as pd
 
 from data_provider.tencent_fetcher import TencentFetcher, _to_tencent_symbol
+
+
+def _read_priority_from_fresh_process(value: str | None) -> int:
+    env = os.environ.copy()
+    if value is None:
+        env.pop("TENCENT_PRIORITY", None)
+    else:
+        env["TENCENT_PRIORITY"] = value
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "from data_provider.tencent_fetcher import TencentFetcher; "
+                "print(TencentFetcher.priority)"
+            ),
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    return int(result.stdout.strip().splitlines()[-1])
+
+
+def test_tencent_priority_defaults_to_last_resort_and_allows_override() -> None:
+    assert _read_priority_from_fresh_process(None) == 5
+    assert _read_priority_from_fresh_process("2") == 2
 
 
 def test_tencent_symbol_conversion_supports_a_share_markets() -> None:

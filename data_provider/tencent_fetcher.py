@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from datetime import datetime, timedelta
 from typing import Any, Optional
 
@@ -26,7 +27,10 @@ class TencentFetcher(BaseFetcher):
     """Fetch qfq daily K-line data from Tencent's direct quote endpoint."""
 
     name = "TencentFetcher"
-    priority = 0
+    # This direct endpoint is the last-resort A-share daily fallback. Keeping
+    # it at priority 0 made a single Efinance failure skip the richer built-in
+    # fallback chain and try Tencent before AkShare/PyTDX/Baostock/YFinance.
+    priority = int(os.getenv("TENCENT_PRIORITY", "5"))
     allow_empty_daily_data = True
 
     _KLINE_ENDPOINT = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
