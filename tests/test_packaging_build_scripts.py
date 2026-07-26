@@ -66,12 +66,19 @@ def test_macos_unsigned_packaging_contract_is_explicit() -> None:
     package = json.loads(
         _read_text(REPO_ROOT / "apps" / "dsa-desktop" / "package.json")
     )
+    after_pack_hook = _read_text(
+        REPO_ROOT / "apps" / "dsa-desktop" / "scripts" / "afterPackMacos.js"
+    )
     backend_script = _read_text(REPO_ROOT / "scripts" / "build-backend-macos.sh")
     desktop_script = _read_text(REPO_ROOT / "scripts" / "build-desktop-macos.sh")
     workflow = _read_text(REPO_ROOT / ".github" / "workflows" / "ci.yml")
 
     assert package["build"]["mac"]["identity"] is None
     assert package["build"]["mac"]["hardenedRuntime"] is False
+    assert package["build"]["afterPack"] == "scripts/afterPackMacos.js"
+    assert "context.electronPlatformName !== 'darwin'" in after_pack_hook
+    assert "'macos-signature-audit.sh'" in after_pack_hook
+    assert "execFileSync('bash', [auditScript, 'normalize', appPath]" in after_pack_hook
     normalize_call = (
         'bash "${SCRIPT_DIR}/macos-signature-audit.sh" normalize "${packaged_root}"'
     )

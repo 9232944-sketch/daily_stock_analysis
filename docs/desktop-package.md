@@ -78,7 +78,7 @@ powershell -ExecutionPolicy Bypass -File scripts\build-all.ps1
 
 ### macOS 提示“应用已损坏，无法打开”
 
-当前 macOS DMG 尚未使用 Apple Developer 证书签名和公证。构建配置会显式生成 unsigned 应用，并在 PyInstaller 产物首次执行前移除残缺签名；CI 还会检查 Electron 原始 `.app` 和 DMG 挂载后的 `.app`，阻止再次发布带有 `code has no resources but signature indicates they must be present` 等损坏签名的产物。该处理只能缓解 v3.27.0 的残缺签名缺陷，**不会让应用获得 Apple 信任**。通过浏览器下载后，macOS Gatekeeper 仍可能提示“无法验证开发者”、阻止启动，或要求用户人工确认。
+当前 macOS DMG 尚未使用 Apple Developer 证书签名和公证。构建配置会显式生成 unsigned 应用，在 PyInstaller 产物首次执行前清理残缺签名，并通过 electron-builder `afterPack` hook 在 DMG 创建前再次清理完整 `.app`；CI 还会检查 Electron 原始 `.app` 和 DMG 挂载后的 `.app`，阻止再次发布带有 `code has no resources but signature indicates they must be present` 等损坏签名的产物。该处理只能缓解 v3.27.0 的残缺签名缺陷，**不会让应用获得 Apple 信任**。通过浏览器下载后，macOS Gatekeeper 仍可能提示“无法验证开发者”、阻止启动，或要求用户人工确认。
 
 请按以下顺序排查：
 

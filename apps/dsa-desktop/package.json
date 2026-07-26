@@ -21,6 +21,7 @@
     "directories": {
       "output": "dist"
     },
+    "afterPack": "scripts/afterPackMacos.js",
     "files": [
       "main.js",
       "preload.js",
