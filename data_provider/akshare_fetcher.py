@@ -99,7 +99,9 @@ _etf_realtime_cache: Dict[str, Any] = {
 _hk_realtime_cache: Dict[str, Any] = {
     'data': None,
     'timestamp': 0,
-    'ttl': 1200  # 20分钟缓存有效期
+    'ttl': 1200,  # 20分钟缓存有效期
+    'failure_ttl': 30,
+    'last_result': None,
 }
 _hk_realtime_cache_lock = threading.Lock()
 
@@ -1534,6 +1536,16 @@ class AkshareFetcher(BaseFetcher):
             current_time = time.time()
             cache_data = _hk_realtime_cache['data']
             cache_age = current_time - _hk_realtime_cache['timestamp']
+            if (
+                _hk_realtime_cache.get('last_result') == 'failure'
+                and cache_age < _hk_realtime_cache.get('failure_ttl', 0)
+            ):
+                logger.debug(
+                    f"[缓存命中] 港股实时行情(东财) - 复用最近失败结果 "
+                    f"{int(cache_age)}s/{_hk_realtime_cache.get('failure_ttl', 0)}s"
+                )
+                return True, None
+
             if cache_data is None or cache_age >= _hk_realtime_cache['ttl']:
                 return False, None
 
@@ -1587,6 +1599,7 @@ class AkshareFetcher(BaseFetcher):
 
                         _hk_realtime_cache['data'] = df
                         _hk_realtime_cache['timestamp'] = time.time()
+                        _hk_realtime_cache['last_result'] = 'success'
                         logger.info(
                             f"[缓存更新] 港股实时行情(东财) 缓存已刷新，"
                             f"TTL={_hk_realtime_cache['ttl']}s"
@@ -1598,6 +1611,9 @@ class AkshareFetcher(BaseFetcher):
                             return quote
 
                     except Exception as e:
+                        _hk_realtime_cache['data'] = None
+                        _hk_realtime_cache['timestamp'] = time.time()
+                        _hk_realtime_cache['last_result'] = 'failure'
                         logger.warning(
                             f"[API错误] ak.stock_hk_spot_em 获取港股 {stock_code} "
                             f"失败: {e}，尝试 stock_hk_spot 备用接口"

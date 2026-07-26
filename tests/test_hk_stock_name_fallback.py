@@ -92,6 +92,8 @@ class TestHKRealtimeFallback(unittest.TestCase):
             "data": None,
             "timestamp": 0,
             "ttl": 1200,
+            "failure_ttl": 30,
+            "last_result": None,
         })
         # Bypass rate limiting
         self.fetcher._enforce_rate_limit = lambda: None
@@ -178,6 +180,40 @@ class TestHKRealtimeFallback(unittest.TestCase):
         self.assertEqual(quote.name, "腾讯控股")
         self.assertAlmostEqual(quote.price, 368.0)
         ak_mock.stock_hk_spot.assert_called_once()
+
+    @patch("data_provider.akshare_fetcher.get_realtime_circuit_breaker")
+    def test_parallel_em_failure_reuses_negative_cache_before_fallback(self, mock_cb):
+        """并发冷启动失败时应只尝试一次主接口，其余线程复用失败结果后走备用链路。"""
+        mock_cb.return_value = _DummyCircuitBreaker()
+        codes = ["00700", "09988", "03690", "01810"]
+        ak_mock = MagicMock()
+
+        def delayed_em_failure():
+            time.sleep(0.05)
+            raise Exception("东方财富接口超时")
+
+        ak_mock.stock_hk_spot_em.side_effect = delayed_em_failure
+        ak_mock.stock_hk_spot.return_value = pd.concat(
+            [_make_spot_df().assign(代码=code) for code in codes],
+            ignore_index=True,
+        )
+        start = threading.Barrier(len(codes))
+
+        def fetch(code: str):
+            fetcher = AkshareFetcher()
+            fetcher._set_random_user_agent = lambda: None
+            fetcher._enforce_rate_limit = lambda: None
+            start.wait(timeout=2)
+            return fetcher._get_hk_realtime_quote(f"HK{code}")
+
+        with patch.dict(sys.modules, {"akshare": ak_mock}):
+            with ThreadPoolExecutor(max_workers=len(codes)) as executor:
+                quotes = list(executor.map(fetch, codes))
+
+        self.assertTrue(all(quote is not None for quote in quotes))
+        ak_mock.stock_hk_spot_em.assert_called_once()
+        self.assertEqual(ak_mock.stock_hk_spot.call_count, len(codes))
+        self.assertEqual(akshare_fetcher_module._hk_realtime_cache["last_result"], "failure")
 
     @patch("data_provider.akshare_fetcher.get_realtime_circuit_breaker")
     def test_both_fail_returns_none(self, mock_cb):
