@@ -68,7 +68,9 @@ def _build_agent_chat_context(request: ChatRequest, config, skills: Optional[Lis
     context = dict(request.context or {})
     if skills is not None:
         context["skills"] = skills
-    context.setdefault("report_language", config.report_language)
+    report_language = context.get("report_language")
+    if report_language is None or (isinstance(report_language, str) and not report_language.strip()):
+        context["report_language"] = config.report_language
     return context
 
 

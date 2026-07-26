@@ -162,6 +162,76 @@ def test_agent_chat_preserves_explicit_report_language(tmp_path: Path) -> None:
     assert executor.chat.call_args.kwargs["context"]["report_language"] == "ko"
 
 
+@pytest.mark.parametrize("provided_language", [None, "", "   "])
+def test_agent_chat_treats_null_or_blank_report_language_as_missing(
+    tmp_path: Path, provided_language
+) -> None:
+    executor = MagicMock()
+    executor.chat.return_value = _result()
+
+    with patch("api.middlewares.auth.is_auth_enabled", return_value=False), \
+         patch("api.v1.endpoints.agent.get_config", return_value=_litellm_config(report_language="en")), \
+         patch("api.v1.endpoints.agent._build_executor", return_value=executor):
+        response = TestClient(create_app(static_dir=tmp_path / "static")).post(
+            "/api/v1/agent/chat",
+            json={
+                "message": "analyze",
+                "session_id": "default-language",
+                "context": {"report_language": provided_language},
+            },
+        )
+
+    assert response.status_code == 200
+    assert executor.chat.call_args.kwargs["context"]["report_language"] == "en"
+
+
+@pytest.mark.parametrize("provided_language", [None, "", "   "])
+def test_agent_chat_stream_treats_null_or_blank_report_language_as_missing(
+    tmp_path: Path, provided_language
+) -> None:
+    executor = _executor(_result(backend="litellm"))
+
+    with patch("api.middlewares.auth.is_auth_enabled", return_value=False), \
+         patch("api.v1.endpoints.agent.get_config", return_value=_litellm_config(report_language="en")), \
+         patch("api.v1.endpoints.agent._build_executor", return_value=executor):
+        response = TestClient(create_app(static_dir=tmp_path / "static")).post(
+            "/api/v1/agent/chat/stream",
+            json={
+                "message": "analyze",
+                "session_id": "stream-default-language",
+                "context": {"report_language": provided_language},
+            },
+        )
+
+    assert response.status_code == 200
+    events = _sse_events(response.text)
+    assert [event["type"] for event in events] == ["accepted", "done"]
+    assert executor.prepare_turn.call_args.kwargs["context"]["report_language"] == "en"
+
+
+@pytest.mark.parametrize("provided_language, expected_language", [
+    (None, "en"),
+    ("", "en"),
+    ("   ", "en"),
+    ("ko", "ko"),
+])
+def test_build_agent_chat_context_normalizes_default_report_language(
+    provided_language, expected_language
+) -> None:
+    request = agent_endpoint.ChatRequest(
+        message="question",
+        context={"report_language": provided_language} if provided_language is not None else {"report_language": None},
+    )
+
+    context = agent_endpoint._build_agent_chat_context(
+        request,
+        _litellm_config(report_language="en"),
+        skills=None,
+    )
+
+    assert context["report_language"] == expected_language
+
+
 def test_codex_agent_chat_rejects_non_streaming_entrypoint(tmp_path: Path) -> None:
     with patch("api.middlewares.auth.is_auth_enabled", return_value=False), \
          patch("api.v1.endpoints.agent.get_config", return_value=_codex_config()), \
