@@ -54,6 +54,8 @@
       "include": "installer.nsh"
     },
     "mac": {
+      "identity": null,
+      "hardenedRuntime": false,
       "target": "dmg"
     }
   }
