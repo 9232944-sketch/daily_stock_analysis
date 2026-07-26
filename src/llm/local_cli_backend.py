@@ -548,6 +548,7 @@ def _is_sensitive_diagnostic_field_name(name: str) -> bool:
     normalized = _normalize_diagnostic_field_name(name)
     return (
         normalized in _SENSITIVE_DIAGNOSTIC_FIELDS
+        or normalized in _registered_sensitive_diagnostic_field_names()
         or any(normalized.endswith(suffix) for suffix in _SENSITIVE_DIAGNOSTIC_FIELD_SUFFIXES)
     )
 
@@ -657,6 +658,14 @@ def _redact_multiline_sensitive_fields(text: str) -> str:
 
             value = match.group("value")
             stripped_value = value.strip()
+            if not stripped_value:
+                replacement = "<redacted>"
+                if match.start("value") > 0 and not line[match.start("value") - 1].isspace():
+                    replacement = f" {replacement}"
+                replacements.append((match.start("value"), match.end("value"), replacement))
+                block_match = block_match or match
+                continue
+
             if _is_yaml_block_scalar(value):
                 replacements.append((match.start("value"), match.end("value"), "<redacted>"))
                 block_match = block_match or match
@@ -2074,6 +2083,14 @@ def _registered_sensitive_env_exact_names() -> frozenset[str]:
         str(name).upper()
         for name, metadata in _FIELD_DEFINITIONS.items()
         if isinstance(metadata, Mapping) and metadata.get("is_sensitive")
+    )
+
+
+@lru_cache(maxsize=1)
+def _registered_sensitive_diagnostic_field_names() -> frozenset[str]:
+    return frozenset(
+        _normalize_diagnostic_field_name(name)
+        for name in _registered_sensitive_env_exact_names()
     )
 
 

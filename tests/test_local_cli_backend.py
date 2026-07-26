@@ -1703,6 +1703,43 @@ def test_diagnostics_redacts_sensitive_collections() -> None:
     assert '{"credentials":<redacted>,"session_id":"abc123"}' in redacted
 
 
+def test_diagnostics_redacts_block_yaml_sensitive_collections() -> None:
+    text = (
+        "credentials:\n"
+        "  username: alice\n"
+        "  value: tiny-secret\n"
+        "session_id=stdout123\n"
+        "api_keys:\n"
+        "  - first-secret\n"
+        "  - second-secret\n"
+        "token_budget: 1000\n"
+    )
+
+    redacted = redact_diagnostic_text(text, limit=1000)
+
+    assert "tiny-secret" not in redacted
+    assert "first-secret" not in redacted
+    assert "second-secret" not in redacted
+    assert "credentials: <redacted>\nsession_id=stdout123\n" in redacted
+    assert "api_keys: <redacted>\ntoken_budget: 1000\n" in redacted
+
+
+def test_diagnostics_redacts_registered_sensitive_structured_fields() -> None:
+    text = (
+        '{"dingtalkAppKey":"tiny-secret","session_id":"abc123"}\n'
+        "pushover_user_key: tiny-secret session_id=stderr123\n"
+        '{"ntfy_url":"https://ntfy.sh/private-topic","session_id":"ntfy123"}'
+    )
+
+    redacted = redact_diagnostic_text(text, limit=1000)
+
+    assert "tiny-secret" not in redacted
+    assert "https://ntfy.sh/private-topic" not in redacted
+    assert '{"dingtalkAppKey":"<redacted>","session_id":"abc123"}' in redacted
+    assert "pushover_user_key: <redacted> session_id=stderr123" in redacted
+    assert '{"ntfy_url":"<redacted>","session_id":"ntfy123"}' in redacted
+
+
 def test_diagnostics_redacts_ansi_prefixed_sensitive_fields() -> None:
     text = "\x1b[31mpassword: tiny\x1b[0m session_id=abc123 \x1b[32mapi_key: short123\x1b[0m"
 
@@ -2062,6 +2099,41 @@ raise SystemExit(2)
     assert "tiny-secret" not in stderr_preview
     assert "api_keys: <redacted> token_budget: 1000" in stdout_preview
     assert '{"credentials":<redacted>,"session_id":"nested123"}' in stderr_preview
+
+
+def test_nonzero_exit_diagnostic_previews_redact_block_yaml_and_registered_sensitive_fields(
+    tmp_path: Path,
+) -> None:
+    backend = _backend(
+        tmp_path,
+        """
+import sys
+print("credentials:\\n  username: alice\\n  value: tiny-secret\\nsession_id=stdout123")
+print('{"dingtalkAppKey":"stdout-short","session_id":"stdout456"}')
+print("api_keys:\\n  - first-secret\\n  - second-secret\\ntoken_budget: 1000", file=sys.stderr)
+print("pushover_user_key: stderr-short session_id=stderr123", file=sys.stderr)
+print('{"ntfy_url":"https://ntfy.sh/private-topic","session_id":"stderr456"}', file=sys.stderr)
+raise SystemExit(2)
+""",
+    )
+
+    with pytest.raises(GenerationError) as exc_info:
+        backend.generate("prompt", {})
+
+    assert exc_info.value.error_code is GenerationErrorCode.NON_ZERO_EXIT
+    stdout_preview = exc_info.value.details["stdout_preview"]
+    stderr_preview = exc_info.value.details["stderr_preview"]
+    assert "tiny-secret" not in stdout_preview
+    assert "stdout-short" not in stdout_preview
+    assert "first-secret" not in stderr_preview
+    assert "second-secret" not in stderr_preview
+    assert "stderr-short" not in stderr_preview
+    assert "https://ntfy.sh/private-topic" not in stderr_preview
+    assert "credentials: <redacted>\nsession_id=stdout123" in stdout_preview
+    assert '{"dingtalkAppKey":"<redacted>","session_id":"stdout456"}' in stdout_preview
+    assert "api_keys: <redacted>\ntoken_budget: 1000" in stderr_preview
+    assert "pushover_user_key: <redacted> session_id=stderr123" in stderr_preview
+    assert '{"ntfy_url":"<redacted>","session_id":"stderr456"}' in stderr_preview
 
 
 def test_nonzero_exit_diagnostic_previews_redact_repo_env_json_and_parameterized_auth(
