@@ -149,7 +149,7 @@ const getCandidateReason = (item: AlphaSiftCandidate) => {
   if (typeof summary === 'string') {
     return summary;
   }
-  return 'AlphaSift 返回候选，但没有给出文字摘要。请查看下方因子、风险和原始字段。';
+  return '内建引擎返回了候选，但没有给出文字摘要。请查看下方因子、风险和原始字段。';
 };
 
 const getSignal = (item: AlphaSiftCandidate) => {
@@ -485,7 +485,7 @@ const StockScreeningPage: React.FC = () => {
   const alertMessages = llmDegraded
     ? screenMessages.length > 0
       ? screenMessages
-      : ['LLM 重排未完成或未返回判断，当前候选来自 AlphaSift 本地因子评分。']
+      : ['LLM 重排未完成或未返回判断，当前候选来自内建因子评分。']
     : screenMessages;
   const isScreeningEnabled = enabled && available;
   const statusText = isScreeningEnabled ? '选股已开启' : '选股未开启';
@@ -558,7 +558,7 @@ const StockScreeningPage: React.FC = () => {
       }
     } catch (err) {
       setStrategies([]);
-      setStrategyLoadError(err instanceof Error ? err.message : 'AlphaSift 策略列表加载失败');
+      setStrategyLoadError(err instanceof Error ? err.message : '内建策略列表加载失败');
     } finally {
       setLoadingStrategies(false);
     }
@@ -784,7 +784,7 @@ const StockScreeningPage: React.FC = () => {
         setEnabled(false);
         setAvailable(false);
       }
-      setError(err instanceof Error ? err.message : '开启 AlphaSift 失败');
+      setError(err instanceof Error ? err.message : '开启内建选股失败');
     } finally {
       setEnabling(false);
     }
@@ -827,7 +827,7 @@ const StockScreeningPage: React.FC = () => {
       });
       setActiveTaskId(task.taskId);
       setTaskProgress(0);
-      setTaskMessage(task.message || 'AlphaSift 选股任务已提交');
+      setTaskMessage(task.message || '选股任务已提交');
     } catch (err) {
       setCandidates([]);
       setLoading(false);
@@ -843,8 +843,8 @@ const StockScreeningPage: React.FC = () => {
             <PlusCircle className="h-4 w-4" />
           </span>
           <div>
-            <h1 className="text-2xl font-bold tracking-normal text-foreground">AlphaSift 选股</h1>
-            <p className="mt-1 text-sm text-secondary-text">开启后通过内置 AlphaSift 适配层生成候选股票，并补充 DSA 数据与新闻</p>
+            <h1 className="text-2xl font-bold tracking-normal text-foreground">内建选股</h1>
+            <p className="mt-1 text-sm text-secondary-text">由 DSA 内建引擎生成候选股票并补充行情与新闻，实现参考 AlphaSift</p>
           </div>
         </div>
 
@@ -857,11 +857,11 @@ const StockScreeningPage: React.FC = () => {
       {!enabled ? (
         <InlineAlert
           variant="info"
-          title="AlphaSift 未开启"
-          message="点击后写入 ALPHASIFT_ENABLED=true；AlphaSift 已随后端依赖安装，若适配层缺失请先更新依赖或重建后端。"
+          title="内建选股未开启"
+          message="点击后写入兼容配置 ALPHASIFT_ENABLED=true；选股代码和策略已随 DSA 一同提供，不需要安装外部插件。"
           action={
             <Button size="sm" isLoading={enabling} loadingText="开启中..." onClick={() => void handleEnable()}>
-              开启 AlphaSift
+              开启选股
             </Button>
           }
         />
@@ -870,22 +870,22 @@ const StockScreeningPage: React.FC = () => {
       {enabled && !available ? (
         <InlineAlert
           variant="warning"
-          title="AlphaSift 适配层不可用"
-          message="适配层当前不可用，请先确认后端已安装依赖并重启服务，必要时执行 pip install -r requirements.txt 或使用设置页/服务端 /install 接口进行修复安装。"
+          title="内建选股引擎不可用"
+          message="请检查后端日志、策略文件和基础数据依赖后重启服务；该能力不依赖外部 AlphaSift 包或运行时安装接口。"
         />
       ) : null}
 
       <InlineAlert
         variant="warning"
         title="实验功能与风险提示"
-        message="AlphaSift 选股仍处于实验性质，结果仅用于研究和辅助判断，不构成投资建议；市场有风险，交易决策和损益由使用者自行承担。"
+        message="内建选股实现参考 AlphaSift，仍处于实验性质。结果仅用于研究和辅助判断，不构成投资建议；市场有风险，交易决策和损益由使用者自行承担。"
       />
 
       {loading ? (
         <InlineAlert
           variant="info"
           title="选股任务运行中"
-          message={`${taskMessage || '正在执行 AlphaSift 选股'}。任务 ID：${activeTaskId ? activeTaskId.slice(0, 12) : '-'}`}
+          message={`${taskMessage || '正在执行选股'}。任务 ID：${activeTaskId ? activeTaskId.slice(0, 12) : '-'}`}
         />
       ) : null}
 
@@ -900,7 +900,7 @@ const StockScreeningPage: React.FC = () => {
             <div>
               <h2 className="text-lg font-bold tracking-normal text-foreground">热点题材</h2>
               <p className="mt-1 text-xs leading-5 text-secondary-text">
-                来自 AlphaSift 最新 hotspot 能力；capital_heat、balanced_alpha 等策略会把 theme_heat 纳入评分。
+                热点逻辑参考 AlphaSift hotspot 能力；capital_heat、balanced_alpha 等策略会把 theme_heat 纳入评分。
               </p>
             </div>
           </div>
@@ -1133,7 +1133,7 @@ const StockScreeningPage: React.FC = () => {
         <div className="mb-4 flex items-center justify-between gap-3">
           <div>
             <h2 className="text-sm font-semibold text-foreground">选择策略</h2>
-            <p className="mt-1 text-xs text-secondary-text">策略来自 AlphaSift；DSA 会对候选补充行情、基本面和新闻上下文。</p>
+            <p className="mt-1 text-xs text-secondary-text">策略随 DSA 内建提供，实现参考 AlphaSift；DSA 会补充行情、基本面和新闻上下文。</p>
           </div>
           <span className="rounded-full border border-cyan/30 bg-cyan/10 px-3 py-1 text-xs font-semibold text-cyan">
             {selectedStrategyTag}
@@ -1147,7 +1147,7 @@ const StockScreeningPage: React.FC = () => {
             </div>
           ) : strategies.length === 0 ? (
             <div className="rounded-xl border border-dashed border-border bg-surface/70 p-4 text-sm text-secondary-text">
-              {strategyLoadError || 'AlphaSift 策略列表暂未载入，可在下方手动输入策略参数。'}
+              {strategyLoadError || '内建策略列表暂未载入，可在下方手动输入策略参数。'}
             </div>
           ) : (
             strategies.map((item) => {
@@ -1251,7 +1251,7 @@ const StockScreeningPage: React.FC = () => {
               </h2>
               <p className="mt-1 text-xs text-secondary-text">
                 {loading
-                  ? `${taskMessage || '正在执行 AlphaSift 选股'} · ${taskProgress}%`
+                  ? `${taskMessage || '正在执行选股'} · ${taskProgress}%`
                   : `当前策略：${displayedStrategy} · ${MARKETS.find((item) => item.id === market)?.label}`}
               </p>
             </div>
@@ -1276,7 +1276,7 @@ const StockScreeningPage: React.FC = () => {
       {screenMeta && alertMessages.length > 0 ? (
         <InlineAlert
           variant={llmDegraded ? 'warning' : 'info'}
-          title={llmDegraded ? 'LLM 已降级' : 'AlphaSift 提示'}
+          title={llmDegraded ? 'LLM 已降级' : '选股提示'}
           message={<ScreenAlertMessage messages={alertMessages} />}
         />
       ) : null}
@@ -1286,7 +1286,7 @@ const StockScreeningPage: React.FC = () => {
           <div>
             <h2 className="text-base font-semibold text-foreground">选股结果</h2>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-secondary-text">
-              AlphaSift 返回候选后，DSA 会对前几名补充行情、基本面、新闻和辅助摘要。
+              内建引擎返回候选后，DSA 会对前几名补充行情、基本面、新闻和辅助摘要。
             </p>
           </div>
           <div className="flex items-center gap-2 rounded-full border border-border bg-surface px-3 py-2 text-xs text-secondary-text">
@@ -1298,7 +1298,7 @@ const StockScreeningPage: React.FC = () => {
         {candidates.length === 0 ? (
           <div className="rounded-xl border border-dashed border-border bg-surface/70 px-5 py-10 text-center">
             <p className="text-sm font-medium text-foreground">暂无结果</p>
-            <p className="mt-2 text-sm text-secondary-text">开启 AlphaSift 后点击“运行选股”生成候选列表。</p>
+            <p className="mt-2 text-sm text-secondary-text">开启内建选股后点击“运行选股”生成候选列表。</p>
           </div>
         ) : (
           <div className="overflow-hidden rounded-xl border border-border">

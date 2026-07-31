@@ -11,7 +11,7 @@ import time
 import unittest
 from datetime import datetime
 from pathlib import Path
-from types import ModuleType, SimpleNamespace
+from types import SimpleNamespace
 from typing import Any, Dict, List
 from unittest.mock import ANY, MagicMock, patch
 import threading
@@ -25,11 +25,11 @@ except ModuleNotFoundError:
     sys.modules["litellm"] = MagicMock()
 
 from api.v1.endpoints import alphasift as alphasift_endpoint
-from src.config import Config, DEFAULT_ALPHASIFT_INSTALL_SPEC
+from src.config import Config
 from src.services import alphasift_service
+from src.services.screening import REFERENCE_REVISION
+from src.services.screening import dsa_adapter as builtin_screening_adapter
 from src.services.task_queue import TaskInfo, TaskStatus as QueueTaskStatus
-
-DEFAULT_ALPHASIFT_TEST_SPEC = DEFAULT_ALPHASIFT_INSTALL_SPEC
 
 
 def _alphasift_unavailable() -> HTTPException:
@@ -61,7 +61,7 @@ def _missing_alphasift_module_diagnostics() -> Dict[str, str]:
         "reason": "missing_module",
         "stage": "import_adapter",
         "error_type": "ModuleNotFoundError",
-        "module": "alphasift.dsa_adapter",
+        "module": "src.services.screening.dsa_adapter",
     }
 
 
@@ -75,8 +75,8 @@ class AlphaSiftOpportunitiesApiTestCase(unittest.TestCase):
         self.env_patch.stop()
         Config.reset_instance()
 
-    def _config(self, *, enabled: bool, install_spec: str = DEFAULT_ALPHASIFT_TEST_SPEC) -> Config:
-        return Config(alphasift_enabled=enabled, alphasift_install_spec=install_spec)
+    def _config(self, *, enabled: bool) -> Config:
+        return Config(alphasift_enabled=enabled)
 
     @staticmethod
     def _request(cookies=None) -> SimpleNamespace:
@@ -121,11 +121,23 @@ class AlphaSiftOpportunitiesApiTestCase(unittest.TestCase):
             with patch.dict(os.environ, {"ALPHASIFT_DATA_DIR": str(Path(tmpdir) / "alphasift")}, clear=False):
                 return alphasift_endpoint.alphasift_hotspot_detail(config=config, **kwargs)
 
-    def test_default_install_spec_is_commit_pinned(self) -> None:
-        self.assertRegex(
-            DEFAULT_ALPHASIFT_TEST_SPEC,
-            r"^git\+https://github\.com/ZhuLinsen/alphasift\.git@[0-9a-f]{40}$",
-        )
+    def test_builtin_screening_adapter_loads_bundled_strategies(self) -> None:
+        status = builtin_screening_adapter.get_status()
+        strategies = builtin_screening_adapter.list_strategies()
+
+        self.assertTrue(status["available"])
+        self.assertEqual(status["engine"], "builtin")
+        self.assertEqual(status["reference_revision"], REFERENCE_REVISION)
+        self.assertEqual(status["strategy_count"], len(strategies))
+        self.assertIn("dual_low", {item["id"] for item in strategies})
+
+    def test_status_exposes_builtin_engine_provenance(self) -> None:
+        payload = alphasift_endpoint.alphasift_status(config=self._config(enabled=True))
+
+        self.assertTrue(payload["available"])
+        self.assertEqual(payload["engine"], "builtin")
+        self.assertEqual(payload["reference_revision"], REFERENCE_REVISION)
+
 
     def test_status_defaults_to_disabled(self) -> None:
         config = self._config(enabled=False)
@@ -135,18 +147,9 @@ class AlphaSiftOpportunitiesApiTestCase(unittest.TestCase):
 
         self.assertEqual(payload["enabled"], False)
         self.assertEqual(payload["available"], False)
-        self.assertEqual(payload["install_spec_is_default"], True)
+        self.assertEqual(payload["engine"], "builtin")
         self.assertNotIn("diagnostics", payload)
-        self.assertNotIn("install_spec", payload)
 
-    def test_status_marks_custom_install_source(self) -> None:
-        config = self._config(enabled=False, install_spec="git+https://example.com/private/alphasift.git")
-
-        with patch("src.services.alphasift_service._call_alphasift_status", side_effect=_raise_alphasift_unavailable):
-            payload = alphasift_endpoint.alphasift_status(config=config)
-
-        self.assertEqual(payload["install_spec_is_default"], False)
-        self.assertNotIn("install_spec", payload)
 
     def test_status_includes_adapter_contract_metadata(self) -> None:
         config = self._config(enabled=True)
@@ -227,7 +230,10 @@ class AlphaSiftOpportunitiesApiTestCase(unittest.TestCase):
 
     def test_status_marks_missing_module_for_dependency_diagnostic(self) -> None:
         config = self._config(enabled=True)
-        missing_module_exc = ModuleNotFoundError("No module named 'alphasift.dsa_adapter'", name="alphasift.dsa_adapter")
+        missing_module_exc = ModuleNotFoundError(
+            "No module named 'src.services.screening.dsa_adapter'",
+            name="src.services.screening.dsa_adapter",
+        )
 
         with (
             patch("src.services.alphasift_service._import_alphasift", side_effect=missing_module_exc),
@@ -603,7 +609,7 @@ class AlphaSiftOpportunitiesApiTestCase(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             cache_path = Path(tmpdir) / "missing-hotspots.json"
             app = FastAPI()
-            app.include_router(alphasift_endpoint.router, prefix="/api/v1/alphasift")
+            app.include_router(alphasift_endpoint.router, prefix="/api/v1/screening")
             app.dependency_overrides[alphasift_endpoint.get_config_dep] = lambda: config
             with (
                 patch.dict(os.environ, {"INDUSTRY_PROVIDER": ""}, clear=False),
@@ -612,7 +618,7 @@ class AlphaSiftOpportunitiesApiTestCase(unittest.TestCase):
                 patch("src.services.alphasift_service.DsaEastMoneyHotspotProvider.hotspot_rows", return_value=[]),
                 patch("src.services.alphasift_service._import_alphasift_hotspot", return_value=SimpleNamespace(discover_hotspots=discover)),
             ):
-                response = TestClient(app).get("/api/v1/alphasift/hotspots?refresh=true&top=1")
+                response = TestClient(app).get("/api/v1/screening/hotspots?refresh=true&top=1")
 
         self.assertEqual(response.status_code, 200)
         payload = response.json()
@@ -1268,7 +1274,7 @@ class AlphaSiftOpportunitiesApiTestCase(unittest.TestCase):
     def test_hotspot_detail_route_accepts_slash_containing_topic(self) -> None:
         config = self._config(enabled=True)
         app = FastAPI()
-        app.include_router(alphasift_endpoint.router, prefix="/api/v1/alphasift")
+        app.include_router(alphasift_endpoint.router, prefix="/api/v1/screening")
         app.dependency_overrides[alphasift_endpoint.get_config_dep] = lambda: config
         service = MagicMock()
         service.hotspot_detail.return_value = {
@@ -1281,7 +1287,7 @@ class AlphaSiftOpportunitiesApiTestCase(unittest.TestCase):
         }
 
         with patch("api.v1.endpoints.alphasift._service", return_value=service):
-            response = TestClient(app).get("/api/v1/alphasift/hotspots/DRG%2FDIP?provider=akshare")
+            response = TestClient(app).get("/api/v1/screening/hotspots/DRG%2FDIP?provider=akshare")
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["topic"], "DRG/DIP")
@@ -1590,7 +1596,6 @@ class AlphaSiftOpportunitiesApiTestCase(unittest.TestCase):
                 "src.services.alphasift_service._get_alphasift_status_snapshot",
                 return_value=({}, False, _missing_alphasift_module_diagnostics()),
             ),
-            patch("src.services.alphasift_service._install_alphasift") as install_mock,
         ):
             with self.assertRaises(HTTPException) as caught:
                 self._strategies(config=config)
@@ -1598,7 +1603,6 @@ class AlphaSiftOpportunitiesApiTestCase(unittest.TestCase):
         self.assertEqual(caught.exception.status_code, 424)
         self.assertEqual(caught.exception.detail["error"], "alphasift_unavailable")
         self.assertEqual(caught.exception.detail.get("diagnostics", {}).get("reason"), "missing_module")
-        install_mock.assert_not_called()
 
     def test_screen_rejects_when_disabled(self) -> None:
         config = self._config(enabled=False)
@@ -1617,7 +1621,6 @@ class AlphaSiftOpportunitiesApiTestCase(unittest.TestCase):
                 "src.services.alphasift_service._get_alphasift_status_snapshot",
                 return_value=({}, False, _missing_alphasift_module_diagnostics()),
             ),
-            patch("src.services.alphasift_service._install_alphasift") as install_mock,
         ):
             with self.assertRaises(HTTPException) as caught:
                 self._screen(config)
@@ -1625,8 +1628,7 @@ class AlphaSiftOpportunitiesApiTestCase(unittest.TestCase):
         self.assertEqual(caught.exception.status_code, 424)
         self.assertEqual(caught.exception.detail["error"], "alphasift_unavailable")
         self.assertEqual(caught.exception.detail.get("diagnostics", {}).get("reason"), "missing_module")
-        self.assertIn("pip install -r requirements.txt", caught.exception.detail["message"])
-        install_mock.assert_not_called()
+        self.assertIn("内建选股引擎初始化失败", caught.exception.detail["message"])
 
     def test_start_screen_task_submits_background_work(self) -> None:
         config = self._config(enabled=True)
@@ -1664,7 +1666,7 @@ class AlphaSiftOpportunitiesApiTestCase(unittest.TestCase):
         fake_queue.update_task_progress.assert_any_call(
             "screen-task-1",
             20,
-            "正在执行 AlphaSift 选股，外部数据源较慢时会持续后台运行",
+            "正在执行内建选股，外部数据源较慢时会持续后台运行",
         )
 
     def test_screen_task_status_returns_alphasift_result(self) -> None:
@@ -1717,142 +1719,23 @@ class AlphaSiftOpportunitiesApiTestCase(unittest.TestCase):
                     {"reason": "unexpected_exception", "stage": "get_status", "error_type": "RuntimeError"},
                 ),
             ),
-            patch("src.services.alphasift_service._install_alphasift") as install_mock,
         ):
             with self.assertRaises(HTTPException) as caught:
                 self._screen(config)
 
         self.assertEqual(caught.exception.status_code, 424)
         self.assertEqual(caught.exception.detail["error"], "alphasift_unavailable")
-        self.assertEqual(caught.exception.detail.get("diagnostics", {}).get("resolution"), "no_auto_install")
+        self.assertEqual(caught.exception.detail.get("diagnostics", {}).get("resolution"), "builtin_engine")
         self.assertEqual(
             caught.exception.detail.get("diagnostics", {}).get("message"),
-            "请先检查后端日志并修复运行时异常，当前未触发修复安装。",
-        )
-        install_mock.assert_not_called()
-
-    def test_install_rejects_spoofed_localhost_without_admin_session(self) -> None:
-        config = self._config(enabled=True)
-        request = SimpleNamespace(
-            cookies={alphasift_service.COOKIE_NAME: "invalid-session"},
-            url=SimpleNamespace(hostname="localhost"),
-            client=SimpleNamespace(host="127.0.0.1"),
+            "内建选股引擎不执行运行时安装，请检查后端日志和策略资源。",
         )
 
-        with (
-            patch.dict(os.environ, {"DSA_DESKTOP_MODE": "false"}, clear=False),
-            patch("src.services.alphasift_service.refresh_auth_state") as refresh_mock,
-            patch("src.services.alphasift_service.is_auth_enabled", return_value=True),
-            patch("src.services.alphasift_service.verify_session", return_value=False) as verify_session_mock,
-            patch("src.services.alphasift_service.subprocess.run") as run_mock,
-        ):
-            with self.assertRaises(HTTPException) as caught:
-                alphasift_endpoint.alphasift_install(request=request, config=config)
 
-        self.assertEqual(caught.exception.status_code, 401)
-        self.assertEqual(caught.exception.detail["error"], "alphasift_install_access_denied")
-        refresh_mock.assert_called_once()
-        verify_session_mock.assert_called_once_with("invalid-session")
-        run_mock.assert_not_called()
 
-    def test_install_allows_valid_admin_session_outside_desktop_mode(self) -> None:
-        config = self._config(enabled=True)
-        request = self._request({alphasift_service.COOKIE_NAME: "valid-session"})
 
-        with (
-            patch.dict(os.environ, {"DSA_DESKTOP_MODE": "false"}, clear=False),
-            patch("src.services.alphasift_service.refresh_auth_state") as refresh_mock,
-            patch("src.services.alphasift_service.is_auth_enabled", return_value=True),
-            patch("src.services.alphasift_service.verify_session", return_value=True) as verify_session_mock,
-            patch("src.services.alphasift_service._install_alphasift", return_value={"installed": True}) as install_mock,
-        ):
-            payload = alphasift_endpoint.alphasift_install(request=request, config=config)
 
-        self.assertEqual(payload["installed"], True)
-        refresh_mock.assert_called_once()
-        verify_session_mock.assert_called_once_with("valid-session")
-        install_mock.assert_called_once_with(config)
 
-    def test_install_rejects_when_disabled_without_side_effects(self) -> None:
-        config = self._config(enabled=False)
-
-        with (
-            patch.dict(os.environ, {"DSA_DESKTOP_MODE": "true"}, clear=False),
-            patch("src.services.alphasift_service.subprocess.run") as run_mock,
-            patch("src.services.alphasift_service._import_alphasift") as import_mock,
-        ):
-            with self.assertRaises(HTTPException) as caught:
-                alphasift_endpoint.alphasift_install(request=self._request(), config=config)
-
-        self.assertEqual(caught.exception.status_code, 403)
-        self.assertEqual(caught.exception.detail["error"], "alphasift_disabled")
-        import_mock.assert_not_called()
-        run_mock.assert_not_called()
-
-    def test_install_invokes_pip_when_enabled_and_missing(self) -> None:
-        config = self._config(enabled=True)
-        completed = SimpleNamespace(returncode=0, stdout="installed", stderr="")
-
-        with (
-            patch.dict(os.environ, {"DSA_DESKTOP_MODE": "true"}, clear=False),
-            patch("src.services.alphasift_service._is_alphasift_available", side_effect=[False, True]),
-            patch(
-                "src.services.alphasift_service._call_alphasift_status",
-                return_value={"available": True, "supported_markets": ["cn"], "contract_version": "1", "version": "0.2.0", "strategy_count": 1},
-            ),
-            patch("src.services.alphasift_service.subprocess.run", return_value=completed) as run_mock,
-            patch("src.services.alphasift_service._get_dsa_adapter", return_value=_make_adapter_module()),
-        ):
-            payload = alphasift_endpoint.alphasift_install(request=self._request(), config=config)
-
-        self.assertEqual(payload["installed"], True)
-        self.assertEqual(payload["already_installed"], False)
-        self.assertEqual(payload["install_spec_is_default"], True)
-        self.assertNotIn("install_spec", payload)
-        run_mock.assert_called_once()
-        install_command = run_mock.call_args.args[0]
-        self.assertIn("--upgrade", install_command)
-        self.assertIn("--force-reinstall", install_command)
-        self.assertIn(DEFAULT_ALPHASIFT_TEST_SPEC, install_command)
-
-    def test_install_rejects_when_alphasift_adapter_reports_unavailable(self) -> None:
-        config = self._config(enabled=True)
-        completed = SimpleNamespace(returncode=0, stdout="installed", stderr="")
-
-        with (
-            patch.dict(os.environ, {"DSA_DESKTOP_MODE": "true"}, clear=False),
-            patch(
-                "src.services.alphasift_service._call_alphasift_status",
-                side_effect=[
-                    {"available": False},
-                    {"available": False},
-                ],
-            ),
-            patch("src.services.alphasift_service.subprocess.run", return_value=completed) as run_mock,
-            patch("src.services.alphasift_service._get_dsa_adapter") as get_adapter_mock,
-        ):
-            with self.assertRaises(HTTPException) as caught:
-                alphasift_endpoint.alphasift_install(request=self._request(), config=config)
-
-        self.assertEqual(caught.exception.status_code, 424)
-        self.assertEqual(caught.exception.detail["error"], "alphasift_unavailable")
-        run_mock.assert_called_once()
-        get_adapter_mock.assert_not_called()
-
-    def test_install_rejects_untrusted_spec(self) -> None:
-        config = self._config(enabled=True, install_spec="git+https://example.com/private/alphasift.git")
-
-        with (
-            patch.dict(os.environ, {"DSA_DESKTOP_MODE": "true"}, clear=False),
-            patch("src.services.alphasift_service._is_alphasift_available", return_value=False),
-            patch("src.services.alphasift_service.subprocess.run") as run_mock,
-        ):
-            with self.assertRaises(HTTPException) as caught:
-                alphasift_endpoint.alphasift_install(request=self._request(), config=config)
-
-        self.assertEqual(caught.exception.status_code, 403)
-        self.assertEqual(caught.exception.detail["error"], "alphasift_install_spec_not_allowed")
-        run_mock.assert_not_called()
 
     def test_screen_calls_dsa_adapter_and_normalizes_llm_fields(self) -> None:
         config = self._config(enabled=True)
@@ -1929,11 +1812,10 @@ class AlphaSiftOpportunitiesApiTestCase(unittest.TestCase):
 
     def test_screen_prefers_dsa_daily_history_for_alphasift_enrichment(self) -> None:
         config = self._config(enabled=True)
-        parent_module = ModuleType("alphasift")
-        daily_module = ModuleType("alphasift.daily")
+        from src.services.screening import daily as daily_module
+
+        builtin_daily_fetch = daily_module.fetch_daily_history
         original_daily_fetch = MagicMock(side_effect=AssertionError("AlphaSift daily fetch should not run first"))
-        daily_module.fetch_daily_history = original_daily_fetch
-        parent_module.daily = daily_module
         captured: Dict[str, Any] = {}
 
         def screen_with_daily_fetch(strategy: str, **kwargs: Any) -> Dict[str, Any]:
@@ -1953,7 +1835,7 @@ class AlphaSiftOpportunitiesApiTestCase(unittest.TestCase):
         fake_module = _make_adapter_module(screen=MagicMock(side_effect=screen_with_daily_fetch))
 
         with (
-            patch.dict(sys.modules, {"alphasift": parent_module, "alphasift.daily": daily_module}),
+            patch.object(daily_module, "fetch_daily_history", original_daily_fetch),
             patch("src.services.alphasift_service._import_alphasift", return_value=fake_module),
             patch(
                 "src.services.alphasift_service.get_dsa_daily_history",
@@ -1981,7 +1863,7 @@ class AlphaSiftOpportunitiesApiTestCase(unittest.TestCase):
         self.assertIs(captured["context"]["dsa"]["get_daily_history"], dsa_history_mock)
         dsa_history_mock.assert_called_once_with("600519", lookback_days=20)
         original_daily_fetch.assert_not_called()
-        self.assertIs(daily_module.fetch_daily_history, original_daily_fetch)
+        self.assertIs(daily_module.fetch_daily_history, builtin_daily_fetch)
 
     def test_screen_enriches_top_candidates_with_dsa_context(self) -> None:
         config = self._config(enabled=True)
@@ -2224,7 +2106,6 @@ class AlphaSiftOpportunitiesApiTestCase(unittest.TestCase):
     def test_screen_bridges_dsa_llm_config_into_alphasift_runtime(self) -> None:
         config = Config(
             alphasift_enabled=True,
-            alphasift_install_spec=DEFAULT_ALPHASIFT_TEST_SPEC,
             litellm_model="gemini/gemini-2.5-flash",
             litellm_fallback_models=["deepseek/deepseek-chat"],
             llm_channels=[
@@ -2273,6 +2154,7 @@ class AlphaSiftOpportunitiesApiTestCase(unittest.TestCase):
                 alphasift_service.os.environ,
                 {
                     "GEMINI_API_KEY": "outer-key",
+                    "TUSHARE_TOKEN": "",
                     "SNAPSHOT_SOURCE_PRIORITY": "",
                     "LLM_CANDIDATE_CONTEXT_ENABLED": "true",
                     "LLM_CANDIDATE_MULTIPLIER": "",
@@ -2336,7 +2218,6 @@ class AlphaSiftOpportunitiesApiTestCase(unittest.TestCase):
     def test_screen_injects_dsa_channel_headers_into_alphasift_litellm_calls(self) -> None:
         config = Config(
             alphasift_enabled=True,
-            alphasift_install_spec=DEFAULT_ALPHASIFT_TEST_SPEC,
             litellm_model="gemini/gemini-2.5-flash",
             llm_channels=[
                 {
@@ -2383,7 +2264,6 @@ class AlphaSiftOpportunitiesApiTestCase(unittest.TestCase):
     def test_screen_bridges_legacy_openai_fields_into_alphasift_runtime_env(self) -> None:
         config = Config(
             alphasift_enabled=True,
-            alphasift_install_spec=DEFAULT_ALPHASIFT_TEST_SPEC,
             litellm_model="openai/gpt-4o-mini",
             openai_api_keys=["dsa-openai-key"],
             openai_base_url="https://openai-compatible.example/v1",
@@ -2433,7 +2313,6 @@ class AlphaSiftOpportunitiesApiTestCase(unittest.TestCase):
     def test_screen_injects_openai_compatible_model_headers_into_alphasift_litellm_calls(self) -> None:
         config = Config(
             alphasift_enabled=True,
-            alphasift_install_spec=DEFAULT_ALPHASIFT_TEST_SPEC,
             litellm_model="openai/gpt-4o-mini",
             litellm_fallback_models=["openai/gpt-4o-mini"],
             llm_model_list=[
@@ -2487,7 +2366,6 @@ class AlphaSiftOpportunitiesApiTestCase(unittest.TestCase):
     def test_screen_bridges_openai_channel_base_url_and_headers(self) -> None:
         config = Config(
             alphasift_enabled=True,
-            alphasift_install_spec=DEFAULT_ALPHASIFT_TEST_SPEC,
             litellm_model="openai/gpt-4o-mini",
             litellm_fallback_models=["openai/gpt-4.1"],
             llm_channels=[
@@ -2565,7 +2443,6 @@ class AlphaSiftOpportunitiesApiTestCase(unittest.TestCase):
     def test_screen_injects_openai_compatible_fallback_headers_for_multiple_models(self) -> None:
         config = Config(
             alphasift_enabled=True,
-            alphasift_install_spec=DEFAULT_ALPHASIFT_TEST_SPEC,
             litellm_model="openai/gpt-4o-mini",
             litellm_fallback_models=["openai/gpt-4.1"],
             llm_model_list=[
@@ -2639,7 +2516,6 @@ class AlphaSiftOpportunitiesApiTestCase(unittest.TestCase):
     def test_screen_handles_concurrent_requests_without_litellm_header_cross_pollution(self) -> None:
         config_a = Config(
             alphasift_enabled=True,
-            alphasift_install_spec=DEFAULT_ALPHASIFT_TEST_SPEC,
             litellm_model="gemini/gemini-2.5-flash",
             llm_channels=[
                 {
@@ -2654,7 +2530,6 @@ class AlphaSiftOpportunitiesApiTestCase(unittest.TestCase):
         )
         config_b = Config(
             alphasift_enabled=True,
-            alphasift_install_spec=DEFAULT_ALPHASIFT_TEST_SPEC,
             litellm_model="gemini/gemini-2.5-flash",
             llm_channels=[
                 {
@@ -2786,7 +2661,6 @@ class AlphaSiftOpportunitiesApiTestCase(unittest.TestCase):
     def test_screen_preserves_explicit_openai_base_url_without_openai_channel(self) -> None:
         config = Config(
             alphasift_enabled=True,
-            alphasift_install_spec=DEFAULT_ALPHASIFT_TEST_SPEC,
             litellm_model="deepseek/deepseek-chat",
             llm_channels=[
                 {
@@ -2859,7 +2733,6 @@ class AlphaSiftOpportunitiesApiTestCase(unittest.TestCase):
     def test_screen_filters_undeclared_managed_fallbacks_for_dsa_routes(self) -> None:
         config = Config(
             alphasift_enabled=True,
-            alphasift_install_spec=DEFAULT_ALPHASIFT_TEST_SPEC,
             litellm_model="gemini/gemini-3-flash-preview",
             litellm_fallback_models=["gemini/gemini-2.5-flash"],
             llm_channels=[
@@ -2956,7 +2829,6 @@ class AlphaSiftOpportunitiesApiTestCase(unittest.TestCase):
                 "src.services.alphasift_service._get_alphasift_status_snapshot",
                 return_value=({}, False, _missing_alphasift_module_diagnostics()),
             ),
-            patch("src.services.alphasift_service._install_alphasift") as install_mock,
             patch("src.services.alphasift_service._import_alphasift", return_value=fake_module),
         ):
             with self.assertRaises(HTTPException) as caught:
@@ -2964,7 +2836,6 @@ class AlphaSiftOpportunitiesApiTestCase(unittest.TestCase):
 
         self.assertEqual(caught.exception.status_code, 424)
         self.assertEqual(caught.exception.detail.get("diagnostics", {}).get("reason"), "missing_module")
-        install_mock.assert_not_called()
         fake_module.screen.assert_not_called()
 
     def test_screen_normalizes_non_finite_values(self) -> None:

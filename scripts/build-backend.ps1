@@ -51,9 +51,9 @@ if (-not (Test-PythonCode -Python $pythonBin -Code "import multipart, multipart.
   throw 'python-multipart is not importable in the selected Python environment.'
 }
 
-Write-Host 'Checking AlphaSift adapter availability...'
-if (-not (Test-PythonCode -Python $pythonBin -Code "import alphasift.dsa_adapter")) {
-  throw 'alphasift.dsa_adapter is not importable after installing requirements.'
+Write-Host 'Checking built-in screening engine availability...'
+if (-not (Test-PythonCode -Python $pythonBin -Code "import src.services.screening.dsa_adapter")) {
+  throw 'src.services.screening.dsa_adapter is not importable.'
 }
 
 Write-Host 'Checking Futu SDK availability...'
@@ -98,8 +98,8 @@ $hiddenImports = @(
   'api.v1.endpoints.stocks',
   'api.v1.endpoints.health',
   'api.v1.endpoints.alphasift',
-  'alphasift',
-  'alphasift.dsa_adapter',
+  'src.services.screening',
+  'src.services.screening.dsa_adapter',
   'api.v1.schemas',
   'api.v1.schemas.analysis',
   'api.v1.schemas.history',
@@ -136,7 +136,7 @@ $pyInstallerArgs = @(
   '--collect-data', 'litellm',
   '--collect-data', 'tiktoken',
   '--collect-data', 'akshare',
-  '--collect-all', 'alphasift',
+  '--collect-all', 'src.services.screening',
   '--collect-all', 'futu'
 )
 $pyInstallerArgs += $hiddenImportArgs
@@ -161,7 +161,7 @@ if (-not (Test-Path $packagedEntry)) {
 }
 $previousProbe = $env:DSA_PACKAGED_IMPORT_PROBE
 try {
-  foreach ($module in @('alphasift.dsa_adapter', 'futu', 'orjson')) {
+  foreach ($module in @('src.services.screening.dsa_adapter', 'futu', 'orjson')) {
     $env:DSA_PACKAGED_IMPORT_PROBE = $module
     $probeProcess = Start-Process -FilePath $packagedEntry -Wait -PassThru
     if ($probeProcess.ExitCode -ne 0) {
@@ -211,6 +211,21 @@ if (-not (Test-Path $packagedStrategies)) {
 $packagedStrategyCount = @(Get-ChildItem -Path $packagedStrategies -Filter '*.yaml' -File).Count
 if ($packagedStrategyCount -ne $sourceStrategyCount) {
   throw "Packaged strategies count mismatch: expected $sourceStrategyCount, got $packagedStrategyCount."
+}
+
+Write-Host 'Verifying packaged screening strategies...'
+$sourceScreeningStrategies = Join-Path 'src\services\screening' 'strategies'
+$sourceScreeningStrategyCount = @(Get-ChildItem -Path $sourceScreeningStrategies -Filter '*.yaml' -File).Count
+$packagedScreeningStrategies = Join-Path 'dist\backend\stock_analysis' '_internal\src\services\screening\strategies'
+if (-not (Test-Path $packagedScreeningStrategies)) {
+  $packagedScreeningStrategies = Join-Path 'dist\backend\stock_analysis' 'src\services\screening\strategies'
+}
+if (-not (Test-Path $packagedScreeningStrategies)) {
+  throw 'Packaged screening strategies directory not found under dist\backend\stock_analysis.'
+}
+$packagedScreeningStrategyCount = @(Get-ChildItem -Path $packagedScreeningStrategies -Filter '*.yaml' -File).Count
+if ($packagedScreeningStrategyCount -ne $sourceScreeningStrategyCount) {
+  throw "Packaged screening strategies count mismatch: expected $sourceScreeningStrategyCount, got $packagedScreeningStrategyCount."
 }
 
 Write-Host 'Backend build completed.'

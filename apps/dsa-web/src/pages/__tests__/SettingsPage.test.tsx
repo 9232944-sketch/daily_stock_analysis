@@ -14,7 +14,6 @@ const {
   runSchedulerNow,
   updateSystemConfig,
   alphasiftEnable,
-  alphasiftInstall,
   notifyAlphaSiftConfigChanged,
   notifySystemConfigChanged,
   desktopCheckForUpdates,
@@ -45,7 +44,6 @@ const {
   runSchedulerNow: vi.fn(),
   updateSystemConfig: vi.fn(),
   alphasiftEnable: vi.fn(),
-  alphasiftInstall: vi.fn(),
   notifyAlphaSiftConfigChanged: vi.fn(),
   notifySystemConfigChanged: vi.fn(),
   desktopCheckForUpdates: vi.fn(),
@@ -103,7 +101,6 @@ vi.mock('../../api/analysis', () => ({
 vi.mock('../../api/alphasift', () => ({
   alphasiftApi: {
     enable: (...args: unknown[]) => alphasiftEnable(...args),
-    install: (...args: unknown[]) => alphasiftInstall(...args),
   },
   notifyAlphaSiftConfigChanged: (...args: unknown[]) => notifyAlphaSiftConfigChanged(...args),
   notifySystemConfigChanged: (...args: unknown[]) => notifySystemConfigChanged(...args),
@@ -588,11 +585,6 @@ describe('SettingsPage', () => {
       configVersion: 'v2',
       updatedKeys: ['ALPHASIFT_ENABLED'],
       reloadTriggered: true,
-    });
-    alphasiftInstall.mockResolvedValue({
-      installed: true,
-      alreadyInstalled: true,
-      installSpecIsDefault: true,
     });
     alphasiftEnable.mockResolvedValue(undefined);
     desktopGetUpdateState.mockResolvedValue({
@@ -1340,7 +1332,7 @@ describe('SettingsPage', () => {
     ]);
   });
 
-  it('notifies alphasift status update and skips install after generic save when ALPHASIFT_ENABLED is set false', async () => {
+  it('notifies screening status after generic save when ALPHASIFT_ENABLED is set false', async () => {
     save.mockResolvedValue({ success: true });
     getChangedItems.mockReturnValue([{ key: 'ALPHASIFT_ENABLED', value: 'false' }]);
 
@@ -1358,7 +1350,6 @@ describe('SettingsPage', () => {
     expect(notifyAlphaSiftConfigChanged).toHaveBeenCalledTimes(1);
     expect(notifySystemConfigChanged).toHaveBeenCalledTimes(1);
     expect(alphasiftEnable).not.toHaveBeenCalled();
-    expect(alphasiftInstall).not.toHaveBeenCalled();
   });
 
   it('runs the AlphaSift enable flow after generic save when ALPHASIFT_ENABLED is set true', async () => {
@@ -1378,7 +1369,6 @@ describe('SettingsPage', () => {
     await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
     expect(notifySystemConfigChanged).toHaveBeenCalledTimes(1);
     expect(alphasiftEnable).toHaveBeenCalledTimes(1);
-    expect(alphasiftInstall).not.toHaveBeenCalled();
     expect(refreshAfterExternalSave).toHaveBeenCalledWith(['ALPHASIFT_ENABLED']);
   });
 
@@ -1424,24 +1414,6 @@ describe('SettingsPage', () => {
               displayOrder: 16,
             },
           },
-          {
-            key: 'ALPHASIFT_INSTALL_SPEC',
-            value: 'git+https://github.com/ZhuLinsen/alphasift.git@2c76b2b6074ae3bae01d52e5e830a4af3e3246b2',
-            rawValueExists: true,
-            isMasked: false,
-            schema: {
-              key: 'ALPHASIFT_INSTALL_SPEC',
-              category: 'data_source',
-              dataType: 'string',
-              uiControl: 'password',
-              isSensitive: true,
-              isRequired: false,
-              isEditable: true,
-              options: [],
-              validation: {},
-              displayOrder: 17,
-            },
-          },
         ],
       },
     }));
@@ -1452,66 +1424,10 @@ describe('SettingsPage', () => {
 
     await waitFor(() => expect(alphasiftEnable).toHaveBeenCalledTimes(1));
     expect(updateSystemConfig).not.toHaveBeenCalled();
-    expect(alphasiftInstall).not.toHaveBeenCalled();
     expect(refreshAfterExternalSave).toHaveBeenCalledWith(['ALPHASIFT_ENABLED']);
   });
 
-  it('does not render raw AlphaSift install spec in the settings card', () => {
-    const privateInstallSpec = 'git+https://user:token@example.com/internal/alphasift.git';
-    const configState = buildSystemConfigState();
-    useSystemConfigMock.mockReturnValue(buildSystemConfigState({
-      activeCategory: 'data_source',
-      itemsByCategory: {
-        ...configState.itemsByCategory,
-        data_source: [
-          {
-            key: 'ALPHASIFT_ENABLED',
-            value: 'true',
-            rawValueExists: true,
-            isMasked: false,
-            schema: {
-              key: 'ALPHASIFT_ENABLED',
-              category: 'data_source',
-              dataType: 'boolean',
-              uiControl: 'switch',
-              isSensitive: false,
-              isRequired: false,
-              isEditable: true,
-              options: [],
-              validation: {},
-              displayOrder: 16,
-            },
-          },
-          {
-            key: 'ALPHASIFT_INSTALL_SPEC',
-            value: privateInstallSpec,
-            rawValueExists: true,
-            isMasked: true,
-            schema: {
-              key: 'ALPHASIFT_INSTALL_SPEC',
-              category: 'data_source',
-              dataType: 'string',
-              uiControl: 'password',
-              isSensitive: true,
-              isRequired: false,
-              isEditable: true,
-              options: [],
-              validation: {},
-              displayOrder: 17,
-            },
-          },
-        ],
-      },
-    }));
-
-    render(<SettingsPage />);
-
-    expect(screen.getByText('启用内置 AlphaSift 实验性质选股能力。')).toBeInTheDocument();
-    expect(screen.queryByText(privateInstallSpec)).not.toBeInTheDocument();
-    expect(screen.queryByText(/安装来源/)).not.toBeInTheDocument();
-  });
-
-  it('maps ALPHASIFT_ENABLED to the AlphaSift card instead of a generic settings field', () => {
+  it('maps ALPHASIFT_ENABLED to the built-in screening card instead of a generic field', () => {
     const configState = buildSystemConfigState();
     useSystemConfigMock.mockReturnValue(buildSystemConfigState({
       activeCategory: 'data_source',
@@ -1536,24 +1452,6 @@ describe('SettingsPage', () => {
               displayOrder: 16,
             },
           },
-          {
-            key: 'ALPHASIFT_INSTALL_SPEC',
-            value: '******',
-            rawValueExists: true,
-            isMasked: true,
-            schema: {
-              key: 'ALPHASIFT_INSTALL_SPEC',
-              category: 'data_source',
-              dataType: 'string',
-              uiControl: 'password',
-              isSensitive: true,
-              isRequired: false,
-              isEditable: true,
-              options: [],
-              validation: {},
-              displayOrder: 17,
-            },
-          },
         ],
       },
     }));
@@ -1562,7 +1460,6 @@ describe('SettingsPage', () => {
 
     expect(screen.getByRole('button', { name: '开启选股' })).toBeInTheDocument();
     expect(screen.queryByTestId('settings-field-ALPHASIFT_ENABLED')).not.toBeInTheDocument();
-    expect(screen.getByTestId('settings-field-ALPHASIFT_INSTALL_SPEC')).toBeInTheDocument();
   });
 
   it('scopes setup and AlphaSift helper cards to their related categories', async () => {
@@ -1599,7 +1496,7 @@ describe('SettingsPage', () => {
     const { rerender } = render(<SettingsPage />);
 
     expect(await screen.findByRole('heading', { name: '首次启动配置检查' })).toBeInTheDocument();
-    expect(screen.queryByRole('heading', { name: 'AlphaSift 选股' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: '内建选股' })).not.toBeInTheDocument();
 
     useSystemConfigMock.mockReturnValue(buildSystemConfigState({
       activeCategory: 'ai_model',
@@ -1611,7 +1508,7 @@ describe('SettingsPage', () => {
     rerender(<SettingsPage />);
 
     expect(screen.queryByRole('heading', { name: '首次启动配置检查' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('heading', { name: 'AlphaSift 选股' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: '内建选股' })).not.toBeInTheDocument();
 
     useSystemConfigMock.mockReturnValue(buildSystemConfigState({
       activeCategory: 'data_source',
@@ -1622,7 +1519,7 @@ describe('SettingsPage', () => {
     }));
     rerender(<SettingsPage />);
 
-    expect(await screen.findByRole('heading', { name: 'AlphaSift 选股' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: '内建选股' })).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: '首次启动配置检查' })).not.toBeInTheDocument();
   });
 
@@ -2270,7 +2167,6 @@ describe('SettingsPage', () => {
 
     await waitFor(() => expect(alphasiftEnable).toHaveBeenCalledTimes(1));
     expect(updateSystemConfig).not.toHaveBeenCalled();
-    expect(alphasiftInstall).not.toHaveBeenCalled();
     expect(refreshAfterExternalSave).toHaveBeenCalledWith(['ALPHASIFT_ENABLED']);
   });
 

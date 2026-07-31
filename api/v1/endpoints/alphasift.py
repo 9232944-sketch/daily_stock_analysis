@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""AlphaSift stock screening API routes."""
+"""Built-in stock screening routes (implementation references AlphaSift)."""
 
 from __future__ import annotations
 
@@ -115,14 +115,6 @@ def alphasift_hotspot_detail(
     return _service(config).hotspot_detail(topic=topic, provider=provider, refresh=refresh_value)
 
 
-@router.post("/install")
-def alphasift_install(
-    request: Request,
-    config: Config = Depends(get_config_dep),
-) -> Dict[str, Any]:
-    return _service(config).install(request=request)
-
-
 @router.post("/screen/tasks", status_code=202, response_model=AlphaSiftScreenAccepted)
 def alphasift_start_screen_task(
     request: AlphaSiftScreenRequest,
@@ -136,7 +128,7 @@ def alphasift_start_screen_task(
         task_queue.update_task_progress(
             task_id,
             20,
-            "正在执行 AlphaSift 选股，外部数据源较慢时会持续后台运行",
+            "正在执行内建选股，外部数据源较慢时会持续后台运行",
         )
         result = _service(config).screen(
             strategy=request.strategy,
@@ -155,7 +147,7 @@ def alphasift_start_screen_task(
         stock_code="alphasift_screen",
         stock_name=f"{request.strategy} / {request.market}",
         report_type="alphasift_screen",
-        message="AlphaSift 选股任务已提交",
+        message="内建选股任务已提交",
         task_id=task_id,
         trace_id=task_id,
     )
@@ -163,7 +155,7 @@ def alphasift_start_screen_task(
         task_id=task.task_id,
         trace_id=task.trace_id or task.task_id,
         status=task.status.value if isinstance(task.status, QueueTaskStatus) else str(task.status),
-        message=task.message or "AlphaSift 选股任务已提交",
+        message=task.message or "内建选股任务已提交",
         strategy=request.strategy,
         market=request.market,
         max_results=request.max_results,

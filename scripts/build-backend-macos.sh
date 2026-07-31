@@ -44,8 +44,8 @@ log "Installing backend dependencies..."
 log "Checking python-multipart availability..."
 "${PYTHON_BIN}" -c "import multipart, multipart.multipart"
 
-log "Checking AlphaSift adapter availability..."
-"${PYTHON_BIN}" -c "import alphasift.dsa_adapter"
+log "Checking built-in screening engine availability..."
+"${PYTHON_BIN}" -c "import src.services.screening.dsa_adapter"
 
 log "Checking Futu SDK availability..."
 "${PYTHON_BIN}" -c "import futu"
@@ -96,8 +96,8 @@ hidden_imports=(
   "src.services.analysis_service"
   "src.services.history_service"
   "src.services.alphasift_service"
-  "alphasift"
-  "alphasift.dsa_adapter"
+  "src.services.screening"
+  "src.services.screening.dsa_adapter"
   "orjson"
   "uvicorn.logging"
   "uvicorn.loops"
@@ -118,7 +118,7 @@ done
 
 pushd "${ROOT_DIR}" >/dev/null
 cmd=("${PYTHON_BIN}" -m PyInstaller --name stock_analysis --onedir --noconfirm --noconsole --add-data "static:static" --add-data "strategies:strategies" --collect-data litellm --collect-data tiktoken --collect-data akshare)
-cmd+=("--collect-all" "alphasift")
+cmd+=("--collect-all" "src.services.screening")
 cmd+=("--collect-all" "futu")
 cmd+=("${hidden_import_args[@]}" "main.py")
 
@@ -147,7 +147,7 @@ if ! "${packaged_entry}" --help >/tmp/dsa-packaged-help.log 2>&1; then
   exit 1
 fi
 
-for module in alphasift.dsa_adapter futu orjson; do
+for module in src.services.screening.dsa_adapter futu orjson; do
   if DSA_PACKAGED_IMPORT_PROBE="${module}" "${packaged_entry}" >/tmp/dsa-packaged-import.log 2>&1; then
     cat /tmp/dsa-packaged-import.log
   else
@@ -191,6 +191,22 @@ fi
 packaged_strategy_count="$(find "${packaged_strategies}" -maxdepth 1 -type f -name '*.yaml' | wc -l | tr -d '[:space:]')"
 if [[ "${packaged_strategy_count}" != "${source_strategy_count}" ]]; then
   echo "ERROR: packaged strategies count mismatch: expected ${source_strategy_count}, got ${packaged_strategy_count}."
+  exit 1
+fi
+
+log "Verifying packaged screening strategies..."
+source_screening_strategy_count="$(find "${ROOT_DIR}/src/services/screening/strategies" -maxdepth 1 -type f -name '*.yaml' | wc -l | tr -d '[:space:]')"
+packaged_screening_strategies="${ROOT_DIR}/dist/backend/stock_analysis/_internal/src/services/screening/strategies"
+if [[ ! -d "${packaged_screening_strategies}" ]]; then
+  packaged_screening_strategies="${ROOT_DIR}/dist/backend/stock_analysis/src/services/screening/strategies"
+fi
+if [[ ! -d "${packaged_screening_strategies}" ]]; then
+  echo "ERROR: packaged screening strategies directory not found under dist/backend/stock_analysis."
+  exit 1
+fi
+packaged_screening_strategy_count="$(find "${packaged_screening_strategies}" -maxdepth 1 -type f -name '*.yaml' | wc -l | tr -d '[:space:]')"
+if [[ "${packaged_screening_strategy_count}" != "${source_screening_strategy_count}" ]]; then
+  echo "ERROR: packaged screening strategies count mismatch: expected ${source_screening_strategy_count}, got ${packaged_screening_strategy_count}."
   exit 1
 fi
 

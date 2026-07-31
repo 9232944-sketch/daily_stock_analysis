@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""AlphaSift service facade and DSA runtime bridge."""
+"""Compatibility facade for DSA's built-in stock screening engine."""
 
 from __future__ import annotations
 
@@ -11,8 +11,6 @@ import logging
 import math
 import os
 import re
-import subprocess
-import sys
 import threading
 import time
 from contextvars import ContextVar
@@ -22,18 +20,18 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
-from fastapi import HTTPException, Request
+from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
-from src.auth import COOKIE_NAME, is_auth_enabled, refresh_auth_state, verify_session
-from src.config import Config, DEFAULT_ALPHASIFT_INSTALL_SPEC, get_configured_llm_models
+from src.config import Config, get_configured_llm_models
 
 logger = logging.getLogger(__name__)
 
-ALPHASIFT_DSA_ADAPTER_MODULE = "alphasift.dsa_adapter"
-ALPHASIFT_EXPECTED_MISSING_MODULES = frozenset({"alphasift", ALPHASIFT_DSA_ADAPTER_MODULE})
-ALLOWED_ALPHASIFT_INSTALL_SPECS = frozenset({DEFAULT_ALPHASIFT_INSTALL_SPEC})
-_ALPHASIFT_INSTALL_LOCK = threading.RLock()
+ALPHASIFT_DSA_ADAPTER_MODULE = "src.services.screening.dsa_adapter"
+ALPHASIFT_HOTSPOT_MODULE = "src.services.screening.hotspot"
+ALPHASIFT_EXPECTED_MISSING_MODULES = frozenset(
+    {"src.services.screening", ALPHASIFT_DSA_ADAPTER_MODULE, ALPHASIFT_HOTSPOT_MODULE}
+)
 ALPHASIFT_MANAGED_LITELLM_PROVIDERS = frozenset({"gemini", "vertex_ai", "anthropic", "openai", "deepseek"})
 _ALPHASIFT_RUNTIME_ENV_LOCK = threading.RLock()
 DSA_ENRICHMENT_MAX_CANDIDATES = 3
@@ -819,7 +817,10 @@ class AlphaSiftStrategyResponse(BaseModel):
 
 
 class AlphaSiftService:
-    """Coordinate AlphaSift calls with DSA-owned runtime capabilities."""
+    """Coordinate built-in screening calls with DSA-owned capabilities.
+
+    The class name and API error codes remain for backward compatibility.
+    """
 
     def __init__(self, config: Config):
         self.config = config
@@ -829,10 +830,12 @@ class AlphaSiftService:
         payload = {
             "enabled": bool(self.config.alphasift_enabled),
             "available": available,
-            "install_spec_is_default": _is_default_alphasift_install_spec(self.config.alphasift_install_spec),
+            "engine": adapter_status.get("engine") or "builtin",
             "contract_version": adapter_status.get("contract_version"),
             "version": adapter_status.get("version"),
             "strategy_count": adapter_status.get("strategy_count"),
+            "reference_project": adapter_status.get("reference_project"),
+            "reference_revision": adapter_status.get("reference_revision"),
         }
         source_health = _get_alphasift_source_health_snapshot()
         if source_health:
@@ -850,11 +853,6 @@ class AlphaSiftService:
             "strategies": strategies,
             "strategy_count": len(strategies),
         }
-
-    def install(self, *, request: Request) -> Dict[str, Any]:
-        _ensure_alphasift_install_access(request)
-        _ensure_alphasift_enabled(self.config)
-        return _install_alphasift(self.config)
 
     def hotspots(
         self,
@@ -1316,88 +1314,6 @@ def _build_alphasift_hotspot_summary_text(summary: Dict[str, Any], *, topic: str
     return "，".join(part for part in parts if part) + "。"
 
 
-def _install_alphasift(config: Config) -> Dict[str, Any]:
-    with _ALPHASIFT_INSTALL_LOCK:
-        install_spec_is_default = _is_default_alphasift_install_spec(config.alphasift_install_spec)
-        if _is_alphasift_available():
-            _get_dsa_adapter()
-            return _build_install_response(
-                already_installed=True,
-                install_spec_is_default=install_spec_is_default,
-            )
-
-        install_spec = _validate_install_spec(config.alphasift_install_spec)
-
-        try:
-            _purge_alphasift_modules()
-            importlib.invalidate_caches()
-            completed = subprocess.run(
-                [sys.executable, "-m", "pip", "install", "--upgrade", "--force-reinstall", install_spec],
-                check=False,
-                capture_output=True,
-                text=True,
-                timeout=300,
-            )
-        except Exception as exc:
-            raise HTTPException(
-                status_code=424,
-                detail={"error": "alphasift_install_failed", "message": f"修复安装 AlphaSift 失败：{exc}"},
-            ) from exc
-
-        if completed.returncode != 0:
-            stderr = (completed.stderr or "").strip()
-            stdout = (completed.stdout or "").strip()
-            detail = stderr or stdout or f"pip exited with code {completed.returncode}"
-            raise HTTPException(
-                status_code=424,
-                detail={
-                    "error": "alphasift_install_failed",
-                    "message": f"修复安装 AlphaSift 失败：{detail}",
-                },
-            )
-
-        importlib.invalidate_caches()
-        _purge_alphasift_modules()
-        adapter_status = _call_alphasift_status()
-        if not _is_adapter_available(adapter_status):
-            raise HTTPException(
-                status_code=424,
-                detail={"error": "alphasift_unavailable", "message": "AlphaSift 安装完成，但适配层当前不可用（available=false）。请检查当前 Python 环境和安装状态后重试。"},
-            )
-        _get_dsa_adapter()
-
-        return _build_install_response(
-            already_installed=False,
-            install_spec_is_default=_is_default_alphasift_install_spec(install_spec),
-        )
-
-
-def _validate_install_spec(raw_install_spec: str) -> str:
-    install_spec = (raw_install_spec or "").strip()
-    if not install_spec or install_spec.lower() == "alphasift":
-        raise HTTPException(
-            status_code=424,
-            detail={
-                "error": "alphasift_install_spec_missing",
-                "message": f"请先将 ALPHASIFT_INSTALL_SPEC 配置为受信任来源：{DEFAULT_ALPHASIFT_INSTALL_SPEC}。",
-            },
-        )
-
-    if install_spec not in ALLOWED_ALPHASIFT_INSTALL_SPECS:
-        raise HTTPException(
-            status_code=403,
-            detail={
-                "error": "alphasift_install_spec_not_allowed",
-                "message": (
-                    "出于安全考虑，修复安装 AlphaSift 仅允许使用受信任来源："
-                    f"{DEFAULT_ALPHASIFT_INSTALL_SPEC}。如需使用本地路径或 wheel，请先手动安装到当前 Python 环境。"
-                ),
-            },
-        )
-
-    return install_spec
-
-
 def _ensure_alphasift_enabled(config: Config) -> None:
     if not config.alphasift_enabled:
         raise HTTPException(
@@ -1406,31 +1322,15 @@ def _ensure_alphasift_enabled(config: Config) -> None:
         )
 
 
-def _ensure_alphasift_ready(config: Config, *, request: Request) -> None:
-    # Backward-compatible helper for tests/extensions. Normal strategies/screen
-    # calls no longer mutate the Python environment; AlphaSift is installed with
-    # project dependencies and `/install` remains an explicit repair action.
-    _ensure_alphasift_available_for_use()
-
-
 def _ensure_alphasift_available_for_use() -> None:
     _, available, diagnostics = _get_alphasift_status_snapshot()
     if available:
         return
     normalized_diagnostics = _include_alphasift_diagnostic_suffix(diagnostics)
-    if _is_missing_alphasift_module(diagnostics):
-        raise _alphasift_unavailable_exception(
-            "AlphaSift 是 DSA 的项目依赖，但当前运行环境未安装适配层。请先执行 `pip install -r requirements.txt`，或重建 Docker/桌面后端产物。",
-            diagnostics=normalized_diagnostics,
-        )
     raise _alphasift_unavailable_exception(
-        "AlphaSift 已开启但当前运行时状态异常。已保留异常诊断，避免自动重装掩盖真实问题。",
+        "DSA 内建选股引擎初始化失败，请检查策略文件、依赖和服务端日志。",
         diagnostics=normalized_diagnostics,
     )
-
-
-def _is_missing_alphasift_module(diagnostics: Optional[Dict[str, str]]) -> bool:
-    return bool(diagnostics and diagnostics.get("reason") == "missing_module")
 
 
 def _include_alphasift_diagnostic_suffix(
@@ -1441,10 +1341,10 @@ def _include_alphasift_diagnostic_suffix(
     if diagnostics.get("reason") == "missing_module":
         return diagnostics
     normalized = dict(diagnostics)
-    normalized.setdefault("resolution", "no_auto_install")
+    normalized.setdefault("resolution", "builtin_engine")
     normalized.setdefault(
         "message",
-        "请先检查后端日志并修复运行时异常，当前未触发修复安装。",
+        "内建选股引擎不执行运行时安装，请检查后端日志和策略资源。",
     )
     return normalized
 
@@ -1464,8 +1364,8 @@ def _get_alphasift_status_snapshot() -> Tuple[Dict[str, Any], bool, Optional[Dic
 def _get_alphasift_source_health_snapshot() -> Dict[str, Any]:
     health: Dict[str, Any] = {}
     for module_name, key, function_name in (
-        ("alphasift.snapshot", "snapshot", "snapshot_source_health_snapshot"),
-        ("alphasift.daily", "daily", "daily_source_health_snapshot"),
+        ("src.services.screening.snapshot", "snapshot", "snapshot_source_health_snapshot"),
+        ("src.services.screening.daily", "daily", "daily_source_health_snapshot"),
     ):
         try:
             module = importlib.import_module(module_name)
@@ -1477,37 +1377,6 @@ def _get_alphasift_source_health_snapshot() -> Dict[str, Any]:
         except Exception as exc:
             logger.debug("AlphaSift %s source health snapshot unavailable: %s", key, exc)
     return health
-
-
-def _ensure_alphasift_install_access(request: Request) -> None:
-    if os.getenv("DSA_DESKTOP_MODE") == "true":
-        return
-    refresh_auth_state()
-    if not is_auth_enabled():
-        raise HTTPException(
-            status_code=403,
-            detail={
-                "error": "alphasift_install_access_denied",
-                "message": "AlphaSift 修复安装仅允许桌面模式或已启用管理员认证的会话。请先启用管理员认证后重试。",
-            },
-        )
-
-    cookie_val = request.cookies.get(COOKIE_NAME)
-    if cookie_val and verify_session(cookie_val):
-        return
-
-    raise HTTPException(
-        status_code=401,
-        detail={
-            "error": "alphasift_install_access_denied",
-            "message": "AlphaSift 修复安装需要有效管理员会话。",
-        },
-    )
-
-
-def _is_alphasift_available() -> bool:
-    _, available, _ = _get_alphasift_status_snapshot()
-    return available
 
 
 def _is_adapter_available(adapter_status: Any) -> bool:
@@ -1529,18 +1398,18 @@ def _import_alphasift() -> Any:
                 "module": str(getattr(exc, "name", ALPHASIFT_DSA_ADAPTER_MODULE)),
             }
             raise _alphasift_unavailable_exception(
-                f"AlphaSift 未安装或未挂载到当前 Python 环境，无法导入 {ALPHASIFT_DSA_ADAPTER_MODULE}：{exc}",
+                f"DSA 内建选股模块缺失，无法导入 {ALPHASIFT_DSA_ADAPTER_MODULE}：{exc}",
                 diagnostics=diagnostics,
             ) from exc
         diagnostics = _log_unexpected_alphasift_exception("import_adapter", exc)
         raise _alphasift_unavailable_exception(
-            f"AlphaSift 适配层导入失败，请检查依赖完整性和当前 Python 环境：{exc}",
+            f"DSA 内建选股适配层导入失败：{exc}",
             diagnostics=diagnostics,
         ) from exc
     except Exception as exc:
         diagnostics = _log_unexpected_alphasift_exception("import_adapter", exc)
         raise _alphasift_unavailable_exception(
-            f"AlphaSift 适配层导入失败，请检查依赖完整性和当前 Python 环境：{exc}",
+            f"DSA 内建选股适配层导入失败：{exc}",
             diagnostics=diagnostics,
         ) from exc
 
@@ -1548,43 +1417,35 @@ def _import_alphasift() -> Any:
 def _import_alphasift_hotspot() -> Any:
     try:
         _prepare_alphasift_runtime_env()
-        return importlib.import_module("alphasift.hotspot")
+        return importlib.import_module(ALPHASIFT_HOTSPOT_MODULE)
     except ModuleNotFoundError as exc:
-        if getattr(exc, "name", None) in {"alphasift", "alphasift.hotspot"}:
+        if getattr(exc, "name", None) in ALPHASIFT_EXPECTED_MISSING_MODULES:
             diagnostics = {
                 "reason": "missing_module",
                 "stage": "import_hotspot",
                 "error_type": exc.__class__.__name__,
-                "module": str(getattr(exc, "name", "alphasift.hotspot")),
+                "module": str(getattr(exc, "name", ALPHASIFT_HOTSPOT_MODULE)),
             }
             raise _alphasift_unavailable_exception(
-                f"AlphaSift hotspot module is unavailable: {exc}",
+                f"内建热点模块不可用：{exc}",
                 diagnostics=diagnostics,
             ) from exc
         diagnostics = _log_unexpected_alphasift_exception("import_hotspot", exc)
         raise _alphasift_unavailable_exception(
-            f"AlphaSift hotspot module import failed: {exc}",
+            f"内建热点模块导入失败：{exc}",
             diagnostics=diagnostics,
         ) from exc
     except Exception as exc:
         diagnostics = _log_unexpected_alphasift_exception("import_hotspot", exc)
         raise _alphasift_unavailable_exception(
-            f"AlphaSift hotspot module import failed: {exc}",
+            f"内建热点模块导入失败：{exc}",
             diagnostics=diagnostics,
         ) from exc
 
 
 def _prepare_alphasift_runtime_env() -> None:
-    if os.getenv("STRATEGIES_DIR"):
-        return
-
-    spec = importlib.util.find_spec("alphasift")
-    if not spec or not spec.origin:
-        return
-
-    package_strategies_dir = Path(spec.origin).resolve().parent / "strategies"
-    if package_strategies_dir.is_dir():
-        os.environ["STRATEGIES_DIR"] = str(package_strategies_dir)
+    """Compatibility hook retained for extensions; the engine is bundled."""
+    return
 
 
 def _get_dsa_adapter() -> Any:
@@ -1599,7 +1460,7 @@ def _get_adapter_callable(adapter: Any, name: str, missing_error: str) -> Any:
     if not callable(callable_obj):
         raise HTTPException(
             status_code=424,
-            detail={"error": "alphasift_unavailable", "message": f"已导入 alphasift 适配层，但 {missing_error}"},
+            detail={"error": "alphasift_unavailable", "message": f"已导入内建选股适配层，但 {missing_error}"},
         )
     return callable_obj
 
@@ -1617,13 +1478,13 @@ def _call_alphasift_status() -> Dict[str, Any]:
                 "module": str(getattr(exc, "name", ALPHASIFT_DSA_ADAPTER_MODULE)),
             }
             raise _alphasift_unavailable_exception(
-                f"AlphaSift 未安装或未挂载到当前 Python 环境，无法导入 {ALPHASIFT_DSA_ADAPTER_MODULE}：{exc}",
+                f"内建选股模块缺失，无法导入 {ALPHASIFT_DSA_ADAPTER_MODULE}：{exc}",
                 diagnostics=diagnostics,
             ) from exc
 
         diagnostics = _log_unexpected_alphasift_exception("import_adapter", exc)
         raise _alphasift_unavailable_exception(
-            f"AlphaSift 适配层导入失败，请检查依赖完整性和当前 Python 环境：{exc}",
+            f"内建选股适配层导入失败，请检查后端模块和策略资源：{exc}",
             diagnostics=diagnostics,
         ) from exc
     try:
@@ -1631,7 +1492,7 @@ def _call_alphasift_status() -> Dict[str, Any]:
     except HTTPException as exc:
         diagnostics = _log_unexpected_alphasift_exception("get_status_callable", exc)
         raise _alphasift_unavailable_exception(
-            "AlphaSift 适配层 get_status 不可调用，请检查适配层版本。",
+            "内建选股适配层 get_status 不可调用，请检查适配契约。",
             diagnostics=diagnostics,
         ) from exc
     try:
@@ -1639,14 +1500,14 @@ def _call_alphasift_status() -> Dict[str, Any]:
     except Exception as exc:
         diagnostics = _log_unexpected_alphasift_exception("get_status", exc)
         raise _alphasift_unavailable_exception(
-            f"AlphaSift 适配层 get_status 调用失败：{exc}",
+            f"内建选股适配层 get_status 调用失败：{exc}",
             diagnostics=diagnostics,
         ) from exc
     if not isinstance(result, dict):
         exc = TypeError(f"get_status returned {type(result).__name__}, expected dict")
         diagnostics = _log_unexpected_alphasift_exception("get_status_result", exc)
         raise _alphasift_unavailable_exception(
-            "AlphaSift 适配层 get_status 返回结构非法，请检查适配层版本。",
+            "内建选股适配层 get_status 返回结构非法，请检查适配契约。",
             diagnostics=diagnostics,
         ) from exc
     return result
@@ -1654,12 +1515,6 @@ def _call_alphasift_status() -> Dict[str, Any]:
 
 def _is_expected_alphasift_missing(exc: ModuleNotFoundError) -> bool:
     return getattr(exc, "name", None) in ALPHASIFT_EXPECTED_MISSING_MODULES
-
-
-def _purge_alphasift_modules() -> None:
-    for module_name in list(sys.modules):
-        if module_name == "alphasift" or module_name.startswith("alphasift."):
-            sys.modules.pop(module_name, None)
 
 
 def _alphasift_unavailable_exception(
@@ -1844,7 +1699,7 @@ def _alphasift_runtime_env(config: Config, *, max_results: Optional[int] = None)
 @contextmanager
 def _alphasift_dsa_daily_history_provider() -> Iterator[None]:
     try:
-        daily_module = importlib.import_module("alphasift.daily")
+        daily_module = importlib.import_module("src.services.screening.daily")
     except Exception:
         yield
         return
@@ -3710,15 +3565,3 @@ def _remove_non_finite_json_values(value: Any) -> Any:
     if isinstance(value, float):
         return value if math.isfinite(value) else None
     return value
-
-
-def _build_install_response(already_installed: bool, install_spec_is_default: bool) -> Dict[str, Any]:
-    return {
-        "installed": True,
-        "already_installed": already_installed,
-        "install_spec_is_default": install_spec_is_default,
-    }
-
-
-def _is_default_alphasift_install_spec(install_spec: str) -> bool:
-    return (install_spec or "").strip() == DEFAULT_ALPHASIFT_INSTALL_SPEC

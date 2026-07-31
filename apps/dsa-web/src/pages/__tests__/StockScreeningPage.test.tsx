@@ -150,34 +150,31 @@ describe('StockScreeningPage', () => {
       .mockResolvedValueOnce({
         enabled: false,
         available: false,
-        installSpecIsDefault: true,
       })
       .mockResolvedValueOnce({
         enabled: true,
         available: false,
-        installSpecIsDefault: true,
       });
-    enableAlphaSift.mockRejectedValueOnce(new Error('AlphaSift 适配层不可用。请执行 pip install -r requirements.txt'));
+    enableAlphaSift.mockRejectedValueOnce(new Error('DSA 内建选股引擎不可用，请检查后端日志'));
 
     render(<StockScreeningPage />);
 
     expect(await screen.findByText('选股未开启')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /运行选股/ })).toBeDisabled();
 
-    fireEvent.click(screen.getByRole('button', { name: '开启 AlphaSift' }));
+    fireEvent.click(screen.getByRole('button', { name: '开启选股' }));
 
     await waitFor(() => expect(getAlphaSiftStatus).toHaveBeenCalledTimes(2));
     expect(screen.getByText('选股未开启')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /运行选股/ })).toBeDisabled();
-    expect(screen.getByText(/适配层当前不可用/)).toBeInTheDocument();
-    expect(screen.getByText('AlphaSift 适配层不可用。请执行 pip install -r requirements.txt')).toBeInTheDocument();
+    expect(screen.getByText('内建选股引擎不可用')).toBeInTheDocument();
+    expect(screen.getByText('DSA 内建选股引擎不可用，请检查后端日志')).toBeInTheDocument();
   });
 
   it('loads AlphaSift hotspot themes on demand', async () => {
     getAlphaSiftStatus.mockResolvedValueOnce({
       enabled: true,
       available: true,
-      installSpecIsDefault: true,
     });
     getHotspots
       .mockResolvedValueOnce({
@@ -250,7 +247,6 @@ describe('StockScreeningPage', () => {
     getAlphaSiftStatus.mockResolvedValueOnce({
       enabled: true,
       available: true,
-      installSpecIsDefault: true,
     });
     getHotspots.mockResolvedValueOnce({
       enabled: true,
@@ -271,7 +267,6 @@ describe('StockScreeningPage', () => {
     getAlphaSiftStatus.mockResolvedValueOnce({
       enabled: true,
       available: true,
-      installSpecIsDefault: true,
     });
     getHotspots.mockResolvedValueOnce({
       enabled: true,
@@ -293,7 +288,6 @@ describe('StockScreeningPage', () => {
     getAlphaSiftStatus.mockResolvedValueOnce({
       enabled: true,
       available: true,
-      installSpecIsDefault: true,
     });
     getHotspots.mockResolvedValueOnce({
       enabled: true,
@@ -330,7 +324,6 @@ describe('StockScreeningPage', () => {
     getAlphaSiftStatus.mockResolvedValueOnce({
       enabled: true,
       available: true,
-      installSpecIsDefault: true,
     });
     getHotspots.mockResolvedValueOnce({
       enabled: true,
@@ -368,7 +361,6 @@ describe('StockScreeningPage', () => {
     getAlphaSiftStatus.mockResolvedValueOnce({
       enabled: true,
       available: true,
-      installSpecIsDefault: true,
     });
     getHotspots.mockResolvedValueOnce({
       enabled: true,
@@ -414,7 +406,6 @@ describe('StockScreeningPage', () => {
     getAlphaSiftStatus.mockResolvedValueOnce({
       enabled: true,
       available: true,
-      installSpecIsDefault: true,
     });
     getHotspots.mockResolvedValueOnce({
       enabled: true,
@@ -495,7 +486,6 @@ describe('StockScreeningPage', () => {
     getAlphaSiftStatus.mockResolvedValueOnce({
       enabled: true,
       available: true,
-      installSpecIsDefault: true,
     });
     getHotspots.mockResolvedValueOnce({
       enabled: true,
@@ -580,7 +570,6 @@ describe('StockScreeningPage', () => {
     getAlphaSiftStatus.mockResolvedValueOnce({
       enabled: true,
       available: true,
-      installSpecIsDefault: true,
     });
     getHotspots
       .mockResolvedValueOnce({
@@ -659,7 +648,6 @@ describe('StockScreeningPage', () => {
     getAlphaSiftStatus.mockResolvedValueOnce({
       enabled: true,
       available: true,
-      installSpecIsDefault: true,
     });
     getHotspots
       .mockResolvedValueOnce({
@@ -703,7 +691,6 @@ describe('StockScreeningPage', () => {
     getAlphaSiftStatus.mockResolvedValueOnce({
       enabled: true,
       available: true,
-      installSpecIsDefault: true,
     });
     screenStocks.mockResolvedValue({
       enabled: true,
@@ -740,7 +727,6 @@ describe('StockScreeningPage', () => {
     getAlphaSiftStatus.mockResolvedValueOnce({
       enabled: true,
       available: true,
-      installSpecIsDefault: true,
     });
     screenStocks.mockResolvedValue({
       enabled: true,
@@ -786,7 +772,6 @@ describe('StockScreeningPage', () => {
     getAlphaSiftStatus.mockResolvedValueOnce({
       enabled: true,
       available: true,
-      installSpecIsDefault: true,
     });
     screenStocks.mockResolvedValueOnce({
       enabled: true,
@@ -822,7 +807,6 @@ describe('StockScreeningPage', () => {
     getAlphaSiftStatus.mockResolvedValue({
       enabled: true,
       available: true,
-      installSpecIsDefault: true,
     });
     screenStocks.mockResolvedValueOnce({
       enabled: true,
@@ -889,7 +873,6 @@ describe('StockScreeningPage', () => {
     getAlphaSiftStatus.mockResolvedValue({
       enabled: true,
       available: true,
-      installSpecIsDefault: true,
     });
     window.sessionStorage.setItem('dsa.alphasift.activeScreenTask.v1', JSON.stringify({
       taskId: 'screen-task-1',
@@ -915,7 +898,6 @@ describe('StockScreeningPage', () => {
     getAlphaSiftStatus.mockResolvedValueOnce({
       enabled: true,
       available: true,
-      installSpecIsDefault: true,
     });
     screenStocks.mockResolvedValueOnce({
       enabled: true,
@@ -959,7 +941,6 @@ describe('StockScreeningPage', () => {
     getAlphaSiftStatus.mockResolvedValueOnce({
       enabled: true,
       available: true,
-      installSpecIsDefault: true,
     });
     screenStocks.mockResolvedValueOnce({
       enabled: true,
@@ -985,7 +966,7 @@ describe('StockScreeningPage', () => {
     expect(await screen.findByText('选股已开启')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /运行选股/ }));
 
-    expect(await screen.findByText('AlphaSift 提示')).toBeInTheDocument();
+    expect(await screen.findByText('选股提示')).toBeInTheDocument();
     expect(screen.getAllByText('数据源降级：tushare（交易日历暂无可用开市日）')).toHaveLength(1);
     expect(screen.queryByText(/trade_cal returned no open trading days/)).not.toBeInTheDocument();
   });
@@ -994,7 +975,6 @@ describe('StockScreeningPage', () => {
     getAlphaSiftStatus.mockResolvedValueOnce({
       enabled: true,
       available: true,
-      installSpecIsDefault: true,
     });
     screenStocks.mockResolvedValueOnce({
       enabled: true,
@@ -1034,7 +1014,6 @@ describe('StockScreeningPage', () => {
     getAlphaSiftStatus.mockResolvedValueOnce({
       enabled: true,
       available: true,
-      installSpecIsDefault: true,
     });
     screenStocks.mockResolvedValueOnce({
       enabled: true,

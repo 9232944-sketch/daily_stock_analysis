@@ -30,14 +30,13 @@ describe('alphasiftApi', () => {
     updateConfig.mockReset();
   });
 
-  it('enables the config and checks bundled AlphaSift availability', async () => {
+  it('enables the config and checks built-in screening availability', async () => {
     getConfig.mockResolvedValueOnce({ configVersion: 'v1', maskToken: '******' });
     updateConfig.mockResolvedValueOnce({ success: true });
     get.mockResolvedValueOnce({
       data: {
         enabled: true,
         available: true,
-        install_spec_is_default: true,
       },
     });
 
@@ -49,7 +48,7 @@ describe('alphasiftApi', () => {
       reloadNow: true,
       items: [{ key: 'ALPHASIFT_ENABLED', value: 'true' }],
     });
-    expect(get).toHaveBeenCalledWith('/api/v1/alphasift/status');
+    expect(get).toHaveBeenCalledWith('/api/v1/screening/status');
     expect(updateConfig).toHaveBeenCalledTimes(1);
     expect(post).not.toHaveBeenCalled();
   });
@@ -61,7 +60,6 @@ describe('alphasiftApi', () => {
       data: {
         enabled: true,
         available: true,
-        install_spec_is_default: true,
       },
     });
 
@@ -72,7 +70,7 @@ describe('alphasiftApi', () => {
     expect(post).not.toHaveBeenCalled();
   });
 
-  it('rolls back ALPHASIFT_ENABLED when bundled AlphaSift is unavailable', async () => {
+  it('rolls back ALPHASIFT_ENABLED when the built-in engine is unavailable', async () => {
     getConfig
       .mockResolvedValueOnce({ configVersion: 'v1', maskToken: '******' })
       .mockResolvedValueOnce({ configVersion: 'v2', maskToken: '******' });
@@ -81,12 +79,11 @@ describe('alphasiftApi', () => {
       data: {
         enabled: true,
         available: false,
-        install_spec_is_default: true,
         diagnostics: { reason: 'missing_module' },
       },
     });
 
-    await expect(alphasiftApi.enable()).rejects.toThrow('pip install -r requirements.txt');
+    await expect(alphasiftApi.enable()).rejects.toThrow('DSA 内建选股引擎不可用');
 
     expect(updateConfig).toHaveBeenNthCalledWith(1, {
       configVersion: 'v1',
@@ -103,7 +100,7 @@ describe('alphasiftApi', () => {
     expect(post).not.toHaveBeenCalled();
   });
 
-  it('loads strategies from the AlphaSift API', async () => {
+  it('loads strategies from the built-in screening API', async () => {
     get.mockResolvedValueOnce({
       data: {
         enabled: true,
@@ -122,14 +119,14 @@ describe('alphasiftApi', () => {
 
     const result = await alphasiftApi.getStrategies();
 
-    expect(get).toHaveBeenCalledWith('/api/v1/alphasift/strategies', { timeout: 300000 });
+    expect(get).toHaveBeenCalledWith('/api/v1/screening/strategies', { timeout: 300000 });
     expect(result.enabled).toBe(true);
     expect(result.strategyCount).toBe(1);
     expect(result.strategies[0].id).toBe('dual_low');
     expect(result.strategies[0].marketScope).toEqual(['cn']);
   });
 
-  it('loads hotspot themes from the AlphaSift API', async () => {
+  it('loads hotspot themes from the built-in screening API', async () => {
     get.mockResolvedValueOnce({
       data: {
         enabled: true,
@@ -160,7 +157,7 @@ describe('alphasiftApi', () => {
 
     const result = await alphasiftApi.getHotspots({ provider: 'akshare', top: 12, refresh: true });
 
-    expect(get).toHaveBeenCalledWith('/api/v1/alphasift/hotspots', {
+    expect(get).toHaveBeenCalledWith('/api/v1/screening/hotspots', {
       params: { provider: 'akshare', top: 12, refresh: true, include_details: true },
       timeout: 300000,
     });
@@ -212,7 +209,7 @@ describe('alphasiftApi', () => {
 
     const result = await alphasiftApi.getHotspotDetail({ topic: '玻璃基板', provider: 'akshare' });
 
-    expect(get).toHaveBeenCalledWith('/api/v1/alphasift/hotspots/%E7%8E%BB%E7%92%83%E5%9F%BA%E6%9D%BF', {
+    expect(get).toHaveBeenCalledWith('/api/v1/screening/hotspots/%E7%8E%BB%E7%92%83%E5%9F%BA%E6%9D%BF', {
       params: { provider: 'akshare', refresh: false },
       timeout: 300000,
     });
@@ -235,7 +232,7 @@ describe('alphasiftApi', () => {
     await alphasiftApi.screen({ market: 'cn', strategy: 'dual_low', maxResults: 3 });
 
     expect(post).toHaveBeenCalledWith(
-      '/api/v1/alphasift/screen',
+      '/api/v1/screening/screen',
       { market: 'cn', strategy: 'dual_low', max_results: 3 },
       { timeout: 180000 }
     );
@@ -257,7 +254,7 @@ describe('alphasiftApi', () => {
     const result = await alphasiftApi.startScreen({ market: 'cn', strategy: 'dual_low', maxResults: 3 });
 
     expect(post).toHaveBeenCalledWith(
-      '/api/v1/alphasift/screen/tasks',
+      '/api/v1/screening/screen/tasks',
       { market: 'cn', strategy: 'dual_low', max_results: 3 }
     );
     expect(result.taskId).toBe('screen-task-1');
@@ -285,7 +282,7 @@ describe('alphasiftApi', () => {
 
     const result = await alphasiftApi.getScreenTask('screen-task-1');
 
-    expect(get).toHaveBeenCalledWith('/api/v1/alphasift/screen/tasks/screen-task-1');
+    expect(get).toHaveBeenCalledWith('/api/v1/screening/screen/tasks/screen-task-1');
     expect(result.taskId).toBe('screen-task-1');
     expect(result.result?.candidateCount).toBe(0);
     expect(result.result?.dailyEnriched).toBe(true);

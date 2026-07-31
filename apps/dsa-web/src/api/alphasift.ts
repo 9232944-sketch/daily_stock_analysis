@@ -3,25 +3,21 @@ import { systemConfigApi } from './systemConfig';
 import { toCamelCase } from './utils';
 
 const ALPHASIFT_SCREEN_TIMEOUT_MS = 180000;
-const ALPHASIFT_INSTALL_TIMEOUT_MS = 300000;
+const ALPHASIFT_REQUEST_TIMEOUT_MS = 300000;
 export const ALPHASIFT_CONFIG_CHANGED_EVENT = 'alphasift-config-changed';
 export const SYSTEM_CONFIG_CHANGED_EVENT = 'dsa-system-config-changed';
 
 export type AlphaSiftStatus = {
   enabled: boolean;
   available: boolean;
-  installSpecIsDefault: boolean;
+  engine?: 'builtin' | string;
   contractVersion?: string | null;
   version?: string | null;
   strategyCount?: number | null;
+  referenceProject?: string | null;
+  referenceRevision?: string | null;
   sourceHealth?: Record<string, Record<string, Record<string, unknown>>>;
   diagnostics?: Record<string, string>;
-};
-
-export type AlphaSiftInstallResponse = {
-  installed: boolean;
-  alreadyInstalled: boolean;
-  installSpecIsDefault: boolean;
 };
 
 export type AlphaSiftCandidate = {
@@ -258,12 +254,12 @@ async function setAlphaSiftEnabled(value: 'true' | 'false'): Promise<void> {
 
 export const alphasiftApi = {
   async getStatus(): Promise<AlphaSiftStatus> {
-    const response = await apiClient.get<Record<string, unknown>>('/api/v1/alphasift/status');
+    const response = await apiClient.get<Record<string, unknown>>('/api/v1/screening/status');
     return toCamelCase<AlphaSiftStatus>(response.data);
   },
 
   async screen(payload: { market: string; strategy: string; maxResults: number }): Promise<AlphaSiftScreenResponse> {
-    const response = await apiClient.post<Record<string, unknown>>('/api/v1/alphasift/screen', {
+    const response = await apiClient.post<Record<string, unknown>>('/api/v1/screening/screen', {
       market: payload.market,
       strategy: payload.strategy,
       max_results: payload.maxResults,
@@ -272,7 +268,7 @@ export const alphasiftApi = {
   },
 
   async startScreen(payload: { market: string; strategy: string; maxResults: number }): Promise<AlphaSiftScreenAccepted> {
-    const response = await apiClient.post<Record<string, unknown>>('/api/v1/alphasift/screen/tasks', {
+    const response = await apiClient.post<Record<string, unknown>>('/api/v1/screening/screen/tasks', {
       market: payload.market,
       strategy: payload.strategy,
       max_results: payload.maxResults,
@@ -281,24 +277,24 @@ export const alphasiftApi = {
   },
 
   async getScreenTask(taskId: string): Promise<AlphaSiftScreenTaskStatus> {
-    const response = await apiClient.get<Record<string, unknown>>(`/api/v1/alphasift/screen/tasks/${encodeURIComponent(taskId)}`);
+    const response = await apiClient.get<Record<string, unknown>>(`/api/v1/screening/screen/tasks/${encodeURIComponent(taskId)}`);
     return toCamelCase<AlphaSiftScreenTaskStatus>(response.data);
   },
 
   async getStrategies(): Promise<AlphaSiftStrategiesResponse> {
-    const response = await apiClient.get<Record<string, unknown>>('/api/v1/alphasift/strategies', { timeout: ALPHASIFT_INSTALL_TIMEOUT_MS });
+    const response = await apiClient.get<Record<string, unknown>>('/api/v1/screening/strategies', { timeout: ALPHASIFT_REQUEST_TIMEOUT_MS });
     return toCamelCase<AlphaSiftStrategiesResponse>(response.data);
   },
 
   async getHotspots(payload: { provider?: string; top?: number; refresh?: boolean; includeDetails?: boolean } = {}): Promise<AlphaSiftHotspotsResponse> {
-    const response = await apiClient.get<Record<string, unknown>>('/api/v1/alphasift/hotspots', {
+    const response = await apiClient.get<Record<string, unknown>>('/api/v1/screening/hotspots', {
       params: {
         provider: payload.provider || 'akshare',
         top: payload.top ?? 12,
         refresh: payload.refresh ?? false,
         include_details: payload.includeDetails ?? true,
       },
-      timeout: ALPHASIFT_INSTALL_TIMEOUT_MS,
+      timeout: ALPHASIFT_REQUEST_TIMEOUT_MS,
     });
     const normalized = toCamelCase<AlphaSiftHotspotsResponse>(response.data);
     if (normalized.details) {
@@ -315,18 +311,13 @@ export const alphasiftApi = {
 
   async getHotspotDetail(payload: { topic: string; provider?: string; refresh?: boolean }): Promise<AlphaSiftHotspotDetail> {
     const response = await apiClient.get<Record<string, unknown>>(
-      `/api/v1/alphasift/hotspots/${encodeURIComponent(payload.topic)}`,
+      `/api/v1/screening/hotspots/${encodeURIComponent(payload.topic)}`,
       {
         params: { provider: payload.provider || 'akshare', refresh: payload.refresh ?? false },
-        timeout: ALPHASIFT_INSTALL_TIMEOUT_MS,
+        timeout: ALPHASIFT_REQUEST_TIMEOUT_MS,
       },
     );
     return toCamelCase<AlphaSiftHotspotDetail>(response.data);
-  },
-
-  async install(): Promise<AlphaSiftInstallResponse> {
-    const response = await apiClient.post<Record<string, unknown>>('/api/v1/alphasift/install', {}, { timeout: ALPHASIFT_INSTALL_TIMEOUT_MS });
-    return toCamelCase<AlphaSiftInstallResponse>(response.data);
   },
 
   async enable(): Promise<void> {
@@ -335,13 +326,13 @@ export const alphasiftApi = {
       const status = await alphasiftApi.getStatus();
       if (!status.available) {
         const reason = status.diagnostics?.reason ? `（${status.diagnostics.reason}）` : '';
-        throw new Error(`AlphaSift 适配层不可用${reason}。请确认后端已安装项目依赖，必要时执行 pip install -r requirements.txt 或重建 Docker/桌面后端。`);
+        throw new Error(`DSA 内建选股引擎不可用${reason}。请检查策略文件、后端依赖和服务日志。`);
       }
     } catch (error) {
       try {
         await setAlphaSiftEnabled('false');
       } catch {
-        // Preserve the original install/status failure for the caller.
+        // Preserve the original availability/status failure for the caller.
       }
       throw error;
     }

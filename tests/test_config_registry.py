@@ -151,11 +151,12 @@ class TestAstrBotFieldsRegistered(unittest.TestCase):
 
 
 class TestAlphaSiftFieldsRegistered(unittest.TestCase):
-    def test_install_spec_is_sensitive(self):
-        field = get_field_definition("ALPHASIFT_INSTALL_SPEC")
+    def test_builtin_screening_toggle_is_registered(self):
+        field = get_field_definition("ALPHASIFT_ENABLED")
 
-        self.assertTrue(field["is_sensitive"])
-        self.assertEqual(field["ui_control"], "password")
+        self.assertFalse(field["is_sensitive"])
+        self.assertEqual(field["ui_control"], "switch")
+        self.assertIn("built-in", field["description"].lower())
 
 
 class TestLLMUsageHMACFieldsRegistered(unittest.TestCase):

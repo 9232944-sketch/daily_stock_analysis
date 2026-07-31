@@ -100,8 +100,16 @@ router.include_router(
 
 router.include_router(
     alphasift.router,
+    prefix="/screening",
+    tags=["Screening"]
+)
+
+# Backward-compatible route for existing Web/desktop clients and bookmarks.
+router.include_router(
+    alphasift.router,
     prefix="/alphasift",
-    tags=["AlphaSift"]
+    tags=["Screening Compatibility"],
+    include_in_schema=False,
 )
 
 router.include_router(
