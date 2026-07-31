@@ -530,6 +530,58 @@ class ScreeningOpportunitiesApiTestCase(unittest.TestCase):
         self.assertIn("akshare returned no usable board rows", payload["source_errors"])
         discover.assert_called_once()
 
+    def test_hotspots_refresh_applies_source_timeout_and_falls_back_to_last_good_cache(self) -> None:
+        config = self._config(enabled=True)
+
+        class HangingProvider:
+            def stock_board_concept_name_em(self) -> pd.DataFrame:
+                time.sleep(0.1)
+                return pd.DataFrame([{"板块名称": "Should not arrive", "涨跌幅": 9.9}])
+
+            def stock_board_industry_name_em(self) -> pd.DataFrame:
+                time.sleep(0.1)
+                return pd.DataFrame([{"行业名称": "Should not arrive", "涨跌幅": 8.8}])
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            data_dir = Path(tmpdir) / "screening"
+            data_dir.mkdir(parents=True, exist_ok=True)
+            cache_path = data_dir / "hotspots.json"
+            cache_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 2,
+                        "generated_at": "2026-06-13T02:55:00Z",
+                        "hotspots": [
+                            {"topic": "Cache AI", "name": "Cache AI", "heat_score": 93.0},
+                            {"topic": "Cache Chip", "name": "Cache Chip", "heat_score": 88.0},
+                            {"topic": "Cache Copper", "name": "Cache Copper", "heat_score": 81.0},
+                        ],
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            with (
+                patch.dict(
+                    os.environ,
+                    {
+                        "SCREENING_DATA_DIR": str(data_dir),
+                        "SCREENING_SOURCE_CALL_TIMEOUT_SEC": "0.01",
+                    },
+                    clear=False,
+                ),
+                patch("src.services.screening_service._get_screening_status_snapshot", return_value=({}, True, {})),
+                patch("src.services.screening_service._resolve_hotspot_provider", return_value=("akshare", HangingProvider())),
+            ):
+                payload = self._hotspots(config=config, provider="akshare", top=1, refresh=True)
+
+        self.assertEqual(payload["hotspot_count"], 1)
+        self.assertEqual(payload["hotspots"][0]["topic"], "Cache AI")
+        self.assertEqual(payload["provider_used"], "last_good_cache")
+        self.assertTrue(payload["fallback_used"])
+        self.assertTrue(payload["stale"])
+        self.assertTrue(any("timed out after" in error for error in payload["source_errors"]))
+
     def test_hotspots_refresh_failure_without_cache_returns_friendly_empty_payload(self) -> None:
         config = self._config(enabled=True)
         discover = MagicMock(side_effect=RuntimeError("RemoteDisconnected('Remote end closed connection without response')"))

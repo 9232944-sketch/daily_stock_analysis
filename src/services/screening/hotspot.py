@@ -22,6 +22,7 @@ from src.services.screening.industry import (
     _safe_text,
     load_board_heat_trends,
 )
+from src.services.screening.source_guard import call_with_timeout, parse_source_timeout_seconds
 
 
 HOTSPOT_STAGES = (
@@ -31,6 +32,8 @@ HOTSPOT_STAGES = (
     "分歧放量",
     "降温退潮",
 )
+
+_HOTSPOT_CALL_TIMEOUT_SECONDS = 20.0
 
 
 @dataclass
@@ -1606,6 +1609,13 @@ def _hotspot_sort_key(item: HotspotSummary) -> tuple[float, float, float, float,
     return (score, item.heat_score, change, trend, rank_bonus)
 
 
+def _hotspot_call_timeout_seconds() -> float | None:
+    return parse_source_timeout_seconds(
+        "SCREENING_SOURCE_CALL_TIMEOUT_SEC",
+        default=_HOTSPOT_CALL_TIMEOUT_SECONDS,
+    )
+
+
 def _board_row_rank_key(item: dict[str, Any]) -> tuple[float, float, float]:
     heat = _safe_float(item.get("heat_score"))
     change = _safe_float(item.get("change_pct"))
@@ -1628,10 +1638,20 @@ def _call_provider_frame(
     if method is None:
         return None
     try:
-        frame = method(**kwargs) if kwargs else method()
+        frame = call_with_timeout(
+            method,
+            timeout_sec=_hotspot_call_timeout_seconds(),
+            label=f"hotspot source {provider_label or type(provider).__name__}.{method_name}",
+            **kwargs,
+        )
     except TypeError:
         try:
-            frame = method(kwargs.get("symbol")) if kwargs else method()
+            frame = call_with_timeout(
+                method,
+                kwargs.get("symbol"),
+                timeout_sec=_hotspot_call_timeout_seconds(),
+                label=f"hotspot source {provider_label or type(provider).__name__}.{method_name}",
+            )
         except Exception as exc:  # noqa: BLE001 - provider runtime instability is degraded.
             _record_provider_error(source_errors, provider_label, method_name, exc)
             return None
