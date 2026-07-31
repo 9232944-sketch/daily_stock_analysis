@@ -28,10 +28,10 @@ def test_dockerfile_bundles_builtin_screening_engine() -> None:
     dockerfile = (REPO_ROOT / "docker" / "Dockerfile").read_text(encoding="utf-8")
     requirements = (REPO_ROOT / "requirements.txt").read_text(encoding="utf-8")
 
-    assert "alphasift.git" not in requirements.lower()
+    assert "screening.git" not in requirements.lower()
     assert "pip install -r requirements.txt" in dockerfile
     assert "--mount=type=cache,target=/root/.cache/pip" in dockerfile
-    assert "import src.services.screening.dsa_adapter" in dockerfile
+    assert "import src.services.screening.pipeline" in dockerfile
 
 
 def test_docker_entrypoint_repairs_ownership_and_user_permissions() -> None:

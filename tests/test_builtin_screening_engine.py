@@ -19,14 +19,13 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 SCREENING_ROOT = REPO_ROOT / "src" / "services" / "screening"
 
 
-def test_external_alphasift_package_is_not_a_runtime_dependency() -> None:
+def test_screening_engine_is_collected_from_the_internal_package() -> None:
     requirements = (REPO_ROOT / "requirements.txt").read_text(encoding="utf-8").lower()
     dockerfile = (REPO_ROOT / "docker" / "Dockerfile").read_text(encoding="utf-8")
 
     assert "alphasift.git" not in requirements
     assert "#egg=alphasift" not in requirements
-    assert "import alphasift" not in dockerfile
-    assert "import src.services.screening.dsa_adapter" in dockerfile
+    assert "import src.services.screening.pipeline" in dockerfile
 
 
 def test_screening_routes_have_a_primary_prefix_and_no_install_endpoint() -> None:
@@ -39,9 +38,8 @@ def test_screening_routes_have_a_primary_prefix_and_no_install_endpoint() -> Non
 
     client = FastAPITestClient(app)
     assert client.request("OPTIONS", "/api/v1/screening/status").status_code != 404
-    assert client.request("OPTIONS", "/api/v1/alphasift/status").status_code != 404
+    assert client.request("OPTIONS", "/api/v1/alphasift/status").status_code == 404
     assert client.request("POST", "/api/v1/screening/install").status_code == 404
-    assert client.request("POST", "/api/v1/alphasift/install").status_code == 404
 
 
 def test_bundled_engine_keeps_source_and_license_notices() -> None:

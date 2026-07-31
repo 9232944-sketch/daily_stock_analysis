@@ -14,14 +14,14 @@ T = TypeVar("T")
 
 
 class SourceCallTimeout(TimeoutError):
-    """Raised when a source wrapper exceeds AlphaSift's caller-side timeout."""
+    """Raised when a source wrapper exceeds the screening caller-side timeout."""
 
 
 def parse_source_timeout_seconds(
     specific_env: str,
     *,
     default: float,
-    fallback_env: str = "ALPHASIFT_SOURCE_CALL_TIMEOUT_SEC",
+    fallback_env: str = "SCREENING_SOURCE_CALL_TIMEOUT_SEC",
 ) -> float | None:
     """Return a positive timeout, or ``None`` when timeout guarding is disabled."""
     raw = os.getenv(specific_env)
@@ -60,7 +60,7 @@ def call_with_timeout(
         except BaseException as exc:  # noqa: BLE001 - propagate worker failures to caller.
             result_queue.put((False, exc))
 
-    worker = threading.Thread(target=run, name=f"alphasift-source:{label}", daemon=True)
+    worker = threading.Thread(target=run, name=f"screening-source:{label}", daemon=True)
     worker.start()
     worker.join(float(timeout_sec))
     if worker.is_alive():

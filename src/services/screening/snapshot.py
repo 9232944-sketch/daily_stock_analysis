@@ -152,7 +152,7 @@ def _call_snapshot_wrapper(fetcher, *, source: str) -> pd.DataFrame:
 
 def _snapshot_call_timeout_seconds() -> float | None:
     return parse_source_timeout_seconds(
-        "ALPHASIFT_SNAPSHOT_CALL_TIMEOUT_SEC",
+        "SCREENING_SNAPSHOT_CALL_TIMEOUT_SEC",
         default=_SNAPSHOT_CALL_TIMEOUT_SECONDS,
     )
 
@@ -359,7 +359,7 @@ def _fetch_sina() -> pd.DataFrame:
     """Fetch A-share full-market snapshot directly from Sina Finance.
 
     Sina's market-center endpoint is a lightweight direct HTTP source with PE,
-    PB, turnover and market-cap fields. It gives AlphaSift another non-wrapper,
+    PB, turnover and market-cap fields. It gives the screening engine another non-wrapper,
     non-Eastmoney-first snapshot option before falling back to Eastmoney-heavy
     sources.
     """
@@ -493,11 +493,11 @@ def _build_eastmoney_session() -> requests.Session:
 
 def _eastmoney_request_interval_seconds() -> float:
     min_interval = _float_env(
-        "ALPHASIFT_EASTMONEY_MIN_INTERVAL_SEC",
+        "SCREENING_EASTMONEY_MIN_INTERVAL_SEC",
         _EM_REQUEST_MIN_INTERVAL_SECONDS,
     )
     jitter = _float_env(
-        "ALPHASIFT_EASTMONEY_JITTER_SEC",
+        "SCREENING_EASTMONEY_JITTER_SEC",
         _EM_REQUEST_JITTER_SECONDS,
     )
     return max(min_interval, 0.0) + random.uniform(0.0, max(jitter, 0.0))

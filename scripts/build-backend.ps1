@@ -52,8 +52,8 @@ if (-not (Test-PythonCode -Python $pythonBin -Code "import multipart, multipart.
 }
 
 Write-Host 'Checking built-in screening engine availability...'
-if (-not (Test-PythonCode -Python $pythonBin -Code "import src.services.screening.dsa_adapter")) {
-  throw 'src.services.screening.dsa_adapter is not importable.'
+if (-not (Test-PythonCode -Python $pythonBin -Code "import src.services.screening.pipeline")) {
+  throw 'src.services.screening.pipeline is not importable.'
 }
 
 Write-Host 'Checking Futu SDK availability...'
@@ -97,9 +97,9 @@ $hiddenImports = @(
   'api.v1.endpoints.history',
   'api.v1.endpoints.stocks',
   'api.v1.endpoints.health',
-  'api.v1.endpoints.alphasift',
+  'api.v1.endpoints.screening',
   'src.services.screening',
-  'src.services.screening.dsa_adapter',
+  'src.services.screening.pipeline',
   'api.v1.schemas',
   'api.v1.schemas.analysis',
   'api.v1.schemas.history',
@@ -111,7 +111,7 @@ $hiddenImports = @(
   'src.services.task_queue',
   'src.services.analysis_service',
   'src.services.history_service',
-  'src.services.alphasift_service',
+  'src.services.screening_service',
   'uvicorn.logging',
   'uvicorn.loops',
   'uvicorn.loops.auto',
@@ -161,7 +161,7 @@ if (-not (Test-Path $packagedEntry)) {
 }
 $previousProbe = $env:DSA_PACKAGED_IMPORT_PROBE
 try {
-  foreach ($module in @('src.services.screening.dsa_adapter', 'futu', 'orjson')) {
+  foreach ($module in @('src.services.screening.pipeline', 'futu', 'orjson')) {
     $env:DSA_PACKAGED_IMPORT_PROBE = $module
     $probeProcess = Start-Process -FilePath $packagedEntry -Wait -PassThru
     if ($probeProcess.ExitCode -ne 0) {

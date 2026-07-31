@@ -243,11 +243,11 @@ python main.py --webui-only
 
 ## 🧩 相關項目 (Related Projects)
 
-> DSA 聚焦日常分析報告；內建選股實作參考 AlphaSift，AlphaEvo 則用於策略驗證與進化。兩個上游專案仍獨立維護，可用於理解來源或延伸工作流。
+> DSA 聚焦日常分析報告；內建選股實作參考 AlphaSift，AlphaEvo 用於策略驗證與進化。
 
 | 項目 | 定位 |
 |------|------|
-| [AlphaSift](https://github.com/ZhuLinsen/alphasift) | DSA 內建選股引擎的參考專案；DSA 已內含相關實作，不需作為外掛安裝 |
+| [AlphaSift](https://github.com/ZhuLinsen/alphasift) | DSA 內建選股引擎的參考專案 |
 | [AlphaEvo](https://github.com/ZhuLinsen/alphaevo) | 策略回測與自我進化，用於驗證策略規則，並透過迭代探索策略參數與組合 |
 
 ## 📬 聯繫與合作

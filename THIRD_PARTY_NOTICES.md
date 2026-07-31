@@ -14,6 +14,5 @@ following notice applies to the files identified below.
 - License copy: `src/services/screening/LICENSE`
 
 The included code has been modified and integrated into
-`daily_stock_analysis`. It is maintained as a built-in implementation and does
-not require the external `alphasift` Python package at runtime. Per-file
-headers identify the source revision and modification status.
+`daily_stock_analysis`. Per-file headers identify the source revision and
+modification status.

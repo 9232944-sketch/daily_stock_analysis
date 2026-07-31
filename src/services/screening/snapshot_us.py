@@ -3,7 +3,7 @@
 # Licensed under Apache-2.0 and modified for daily_stock_analysis.
 """US equity snapshot via yfinance.
 
-Pluggable adapter for AlphaSift's L1 pipeline. Fetches a configurable
+US snapshot provider for the screening L1 pipeline. Fetches a configurable
 equity universe and returns the standard snapshot DataFrame schema.
 
 HK is not supported yet: there is no HK universe source or ticker
@@ -35,7 +35,7 @@ def fetch_us_universe(source: str = "auto") -> list[str]:
 
     Sources:
         sp500   — scrape S&P 500 from Wikipedia
-        env     — read ALPHASIFT_US_TICKERS (comma-separated)
+        env     — read SCREENING_US_TICKERS (comma-separated)
         default — hardcoded top-50 US large-caps
         auto    — try sp500 → env → default
     """
@@ -54,9 +54,9 @@ def fetch_us_universe(source: str = "auto") -> list[str]:
     if src == "sp500":
         return _fetch_sp500_tickers()
     elif src == "env":
-        raw = os.getenv("ALPHASIFT_US_TICKERS", "").strip()
+        raw = os.getenv("SCREENING_US_TICKERS", "").strip()
         if not raw:
-            raise ValueError("ALPHASIFT_US_TICKERS not set")
+            raise ValueError("SCREENING_US_TICKERS not set")
         return [t.strip() for t in raw.split(",") if t.strip()]
     elif src == "default":
         return list(_DEFAULT_US_UNIVERSE)
@@ -78,7 +78,7 @@ def fetch_us_snapshot(
     universe_source: str = "auto",
     max_workers: int = 8,
 ) -> pd.DataFrame:
-    """Fetch US equity snapshot in AlphaSift standard schema.
+    """Fetch a US equity snapshot in the screening schema.
 
     Uses yfinance to fetch current data for each ticker. Returns a
     DataFrame matching the standard snapshot columns: code, name, price,
@@ -218,7 +218,7 @@ def fetch_daily_history_yfinance(
     """Fetch daily OHLCV history for a US ticker via yfinance.
 
     Returns a DataFrame with columns: date, open, high, low, close, volume
-    matching the schema expected by alphasift.daily's enrichment logic.
+    matching the schema expected by the daily enrichment logic.
     """
     import yfinance as yf
 

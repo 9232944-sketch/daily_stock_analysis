@@ -37,7 +37,7 @@ def test_futu_sdk_is_pinned_and_verified_across_linux_distributions() -> None:
 
     assert requirements.count("futu-api==10.8.6808") == 1
     assert (
-        'python -c "import src.services.screening.dsa_adapter; import futu"'
+        'python -c "import src.services.screening.pipeline; import futu"'
         in dockerfile
     )
     assert "import futu" in _job_run_text(ci["jobs"]["backend-gate"])
@@ -75,8 +75,8 @@ def test_futu_sdk_is_collected_and_probed_in_desktop_backends() -> None:
 
     assert '"${PYTHON_BIN}" -c "import futu"' in macos_script
     assert 'cmd+=("--collect-all" "futu")' in macos_script
-    assert "for module in src.services.screening.dsa_adapter futu orjson" in macos_script
+    assert "for module in src.services.screening.pipeline futu orjson" in macos_script
 
     assert 'Test-PythonCode -Python $pythonBin -Code "import futu"' in windows_script
     assert "'--collect-all', 'futu'" in windows_script
-    assert "@('src.services.screening.dsa_adapter', 'futu', 'orjson')" in windows_script
+    assert "@('src.services.screening.pipeline', 'futu', 'orjson')" in windows_script

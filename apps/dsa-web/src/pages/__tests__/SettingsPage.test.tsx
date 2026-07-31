@@ -13,8 +13,8 @@ const {
   importEnv,
   runSchedulerNow,
   updateSystemConfig,
-  alphasiftEnable,
-  notifyAlphaSiftConfigChanged,
+  screeningEnable,
+  notifyScreeningConfigChanged,
   notifySystemConfigChanged,
   desktopCheckForUpdates,
   desktopGetUpdateState,
@@ -43,8 +43,8 @@ const {
   importEnv: vi.fn(),
   runSchedulerNow: vi.fn(),
   updateSystemConfig: vi.fn(),
-  alphasiftEnable: vi.fn(),
-  notifyAlphaSiftConfigChanged: vi.fn(),
+  screeningEnable: vi.fn(),
+  notifyScreeningConfigChanged: vi.fn(),
   notifySystemConfigChanged: vi.fn(),
   desktopCheckForUpdates: vi.fn(),
   desktopGetUpdateState: vi.fn(),
@@ -98,11 +98,11 @@ vi.mock('../../api/analysis', () => ({
   },
 }));
 
-vi.mock('../../api/alphasift', () => ({
-  alphasiftApi: {
-    enable: (...args: unknown[]) => alphasiftEnable(...args),
+vi.mock('../../api/screening', () => ({
+  screeningApi: {
+    enable: (...args: unknown[]) => screeningEnable(...args),
   },
-  notifyAlphaSiftConfigChanged: (...args: unknown[]) => notifyAlphaSiftConfigChanged(...args),
+  notifyScreeningConfigChanged: (...args: unknown[]) => notifyScreeningConfigChanged(...args),
   notifySystemConfigChanged: (...args: unknown[]) => notifySystemConfigChanged(...args),
 }));
 
@@ -583,10 +583,10 @@ describe('SettingsPage', () => {
     updateSystemConfig.mockResolvedValue({
       success: true,
       configVersion: 'v2',
-      updatedKeys: ['ALPHASIFT_ENABLED'],
+      updatedKeys: ['SCREENING_ENABLED'],
       reloadTriggered: true,
     });
-    alphasiftEnable.mockResolvedValue(undefined);
+    screeningEnable.mockResolvedValue(undefined);
     desktopGetUpdateState.mockResolvedValue({
       status: 'idle',
       currentVersion: '3.12.0',
@@ -1332,14 +1332,14 @@ describe('SettingsPage', () => {
     ]);
   });
 
-  it('notifies screening status after generic save when ALPHASIFT_ENABLED is set false', async () => {
+  it('notifies screening status after generic save when SCREENING_ENABLED is set false', async () => {
     save.mockResolvedValue({ success: true });
-    getChangedItems.mockReturnValue([{ key: 'ALPHASIFT_ENABLED', value: 'false' }]);
+    getChangedItems.mockReturnValue([{ key: 'SCREENING_ENABLED', value: 'false' }]);
 
     useSystemConfigMock.mockReturnValue(buildSystemConfigState({
       hasDirty: true,
       dirtyCount: 1,
-      getChangedItems: () => [{ key: 'ALPHASIFT_ENABLED', value: 'false' }],
+      getChangedItems: () => [{ key: 'SCREENING_ENABLED', value: 'false' }],
     }));
 
     render(<SettingsPage />);
@@ -1347,19 +1347,19 @@ describe('SettingsPage', () => {
     fireEvent.click(screen.getByRole('button', { name: /保存配置/ }));
 
     await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
-    expect(notifyAlphaSiftConfigChanged).toHaveBeenCalledTimes(1);
+    expect(notifyScreeningConfigChanged).toHaveBeenCalledTimes(1);
     expect(notifySystemConfigChanged).toHaveBeenCalledTimes(1);
-    expect(alphasiftEnable).not.toHaveBeenCalled();
+    expect(screeningEnable).not.toHaveBeenCalled();
   });
 
-  it('runs the AlphaSift enable flow after generic save when ALPHASIFT_ENABLED is set true', async () => {
+  it('runs the Screening enable flow after generic save when SCREENING_ENABLED is set true', async () => {
     save.mockResolvedValue({ success: true });
-    getChangedItems.mockReturnValue([{ key: 'ALPHASIFT_ENABLED', value: 'true' }]);
+    getChangedItems.mockReturnValue([{ key: 'SCREENING_ENABLED', value: 'true' }]);
 
     useSystemConfigMock.mockReturnValue(buildSystemConfigState({
       hasDirty: true,
       dirtyCount: 1,
-      getChangedItems: () => [{ key: 'ALPHASIFT_ENABLED', value: 'true' }],
+      getChangedItems: () => [{ key: 'SCREENING_ENABLED', value: 'true' }],
     }));
 
     render(<SettingsPage />);
@@ -1368,11 +1368,11 @@ describe('SettingsPage', () => {
 
     await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
     expect(notifySystemConfigChanged).toHaveBeenCalledTimes(1);
-    expect(alphasiftEnable).toHaveBeenCalledTimes(1);
-    expect(refreshAfterExternalSave).toHaveBeenCalledWith(['ALPHASIFT_ENABLED']);
+    expect(screeningEnable).toHaveBeenCalledTimes(1);
+    expect(refreshAfterExternalSave).toHaveBeenCalledWith(['SCREENING_ENABLED']);
   });
 
-  it('does not notify alphasift status when generic save updates other fields', async () => {
+  it('does not notify screening status when generic save updates other fields', async () => {
     save.mockResolvedValue({ success: true });
     useSystemConfigMock.mockReturnValue(buildSystemConfigState({
       hasDirty: true,
@@ -1386,10 +1386,10 @@ describe('SettingsPage', () => {
 
     await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
     expect(notifySystemConfigChanged).toHaveBeenCalledTimes(1);
-    expect(notifyAlphaSiftConfigChanged).not.toHaveBeenCalled();
+    expect(notifyScreeningConfigChanged).not.toHaveBeenCalled();
   });
 
-  it('runs AlphaSift enable flow from the settings card', async () => {
+  it('runs Screening enable flow from the settings card', async () => {
     const configState = buildSystemConfigState();
     useSystemConfigMock.mockReturnValue(buildSystemConfigState({
       activeCategory: 'data_source',
@@ -1397,12 +1397,12 @@ describe('SettingsPage', () => {
         ...configState.itemsByCategory,
         data_source: [
           {
-            key: 'ALPHASIFT_ENABLED',
+            key: 'SCREENING_ENABLED',
             value: 'false',
             rawValueExists: true,
             isMasked: false,
             schema: {
-              key: 'ALPHASIFT_ENABLED',
+              key: 'SCREENING_ENABLED',
               category: 'data_source',
               dataType: 'boolean',
               uiControl: 'switch',
@@ -1422,12 +1422,12 @@ describe('SettingsPage', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '开启选股' }));
 
-    await waitFor(() => expect(alphasiftEnable).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screeningEnable).toHaveBeenCalledTimes(1));
     expect(updateSystemConfig).not.toHaveBeenCalled();
-    expect(refreshAfterExternalSave).toHaveBeenCalledWith(['ALPHASIFT_ENABLED']);
+    expect(refreshAfterExternalSave).toHaveBeenCalledWith(['SCREENING_ENABLED']);
   });
 
-  it('maps ALPHASIFT_ENABLED to the built-in screening card instead of a generic field', () => {
+  it('maps SCREENING_ENABLED to the built-in screening card instead of a generic field', () => {
     const configState = buildSystemConfigState();
     useSystemConfigMock.mockReturnValue(buildSystemConfigState({
       activeCategory: 'data_source',
@@ -1435,12 +1435,12 @@ describe('SettingsPage', () => {
         ...configState.itemsByCategory,
         data_source: [
           {
-            key: 'ALPHASIFT_ENABLED',
+            key: 'SCREENING_ENABLED',
             value: 'false',
             rawValueExists: true,
             isMasked: false,
             schema: {
-              key: 'ALPHASIFT_ENABLED',
+              key: 'SCREENING_ENABLED',
               category: 'data_source',
               dataType: 'boolean',
               uiControl: 'switch',
@@ -1459,19 +1459,19 @@ describe('SettingsPage', () => {
     render(<SettingsPage />);
 
     expect(screen.getByRole('button', { name: '开启选股' })).toBeInTheDocument();
-    expect(screen.queryByTestId('settings-field-ALPHASIFT_ENABLED')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('settings-field-SCREENING_ENABLED')).not.toBeInTheDocument();
   });
 
-  it('scopes setup and AlphaSift helper cards to their related categories', async () => {
+  it('scopes setup and Screening helper cards to their related categories', async () => {
     const configState = buildSystemConfigState();
     const dataSourceItems = [
       {
-        key: 'ALPHASIFT_ENABLED',
+        key: 'SCREENING_ENABLED',
         value: 'false',
         rawValueExists: true,
         isMasked: false,
         schema: {
-          key: 'ALPHASIFT_ENABLED',
+          key: 'SCREENING_ENABLED',
           category: 'data_source',
           dataType: 'boolean',
           uiControl: 'switch',
@@ -2131,21 +2131,21 @@ describe('SettingsPage', () => {
     expect(await screen.findByText('已启用')).toBeInTheDocument();
   });
 
-  it('refreshes AlphaSift state when the enable flow fails', async () => {
+  it('refreshes Screening state when the enable flow fails', async () => {
     const configState = buildSystemConfigState();
-    alphasiftEnable.mockRejectedValueOnce(new Error('config update failed'));
+    screeningEnable.mockRejectedValueOnce(new Error('config update failed'));
     useSystemConfigMock.mockReturnValue(buildSystemConfigState({
       activeCategory: 'data_source',
       itemsByCategory: {
         ...configState.itemsByCategory,
         data_source: [
           {
-            key: 'ALPHASIFT_ENABLED',
+            key: 'SCREENING_ENABLED',
             value: 'false',
             rawValueExists: true,
             isMasked: false,
             schema: {
-              key: 'ALPHASIFT_ENABLED',
+              key: 'SCREENING_ENABLED',
               category: 'data_source',
               dataType: 'boolean',
               uiControl: 'switch',
@@ -2165,9 +2165,9 @@ describe('SettingsPage', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '开启选股' }));
 
-    await waitFor(() => expect(alphasiftEnable).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screeningEnable).toHaveBeenCalledTimes(1));
     expect(updateSystemConfig).not.toHaveBeenCalled();
-    expect(refreshAfterExternalSave).toHaveBeenCalledWith(['ALPHASIFT_ENABLED']);
+    expect(refreshAfterExternalSave).toHaveBeenCalledWith(['SCREENING_ENABLED']);
   });
 
   it('passes LLM channel support keys to the channel editor without rendering them as generic fields', async () => {

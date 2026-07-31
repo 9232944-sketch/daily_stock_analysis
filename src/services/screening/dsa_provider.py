@@ -4,7 +4,7 @@
 """DSA provider-context bridge.
 
 This module consumes DSA-owned callables passed through ``context["dsa"]``.
-It is intentionally best-effort: AlphaSift can use richer DSA data when
+It is intentionally best-effort: the screening engine can use richer DSA data when
 available, but screening should continue when one provider is slow or broken.
 """
 

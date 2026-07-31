@@ -14,7 +14,7 @@ from fastapi import APIRouter
 from api.v1.endpoints import (
     agent,
     alerts,
-    alphasift,
+    screening,
     analysis,
     auth,
     backtest,
@@ -99,17 +99,9 @@ router.include_router(
 )
 
 router.include_router(
-    alphasift.router,
+    screening.router,
     prefix="/screening",
     tags=["Screening"]
-)
-
-# Backward-compatible route for existing Web/desktop clients and bookmarks.
-router.include_router(
-    alphasift.router,
-    prefix="/alphasift",
-    tags=["Screening Compatibility"],
-    include_in_schema=False,
 )
 
 router.include_router(

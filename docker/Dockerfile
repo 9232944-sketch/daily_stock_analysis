@@ -61,7 +61,7 @@ COPY docker/entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
 # Verify globally bundled runtime dependencies without leaving SDK logs in the image.
 RUN mkdir -p /tmp/futu-sdk-smoke-home && \
-    HOME=/tmp/futu-sdk-smoke-home python -c "import src.services.screening.dsa_adapter; import futu" && \
+    HOME=/tmp/futu-sdk-smoke-home python -c "import src.services.screening.pipeline; import futu" && \
     rm -rf /tmp/futu-sdk-smoke-home
 
 # 确保数据目录存在并授权给 non-root 用户

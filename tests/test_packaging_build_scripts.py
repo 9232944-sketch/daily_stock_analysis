@@ -29,7 +29,7 @@ def test_windows_backend_build_script_collects_builtin_screening_engine() -> Non
     main_py = _read_text(REPO_ROOT / "main.py")
 
     assert "Checking built-in screening engine availability" in script
-    assert "import src.services.screening.dsa_adapter" in script
+    assert "import src.services.screening.pipeline" in script
     assert "--collect-all" in script
     assert "src.services.screening" in script
     assert "hiddenImports" in script
@@ -51,7 +51,7 @@ def test_macos_backend_build_script_collects_builtin_screening_engine() -> None:
     main_py = _read_text(REPO_ROOT / "main.py")
 
     assert "Checking built-in screening engine availability..." in script
-    assert "import src.services.screening.dsa_adapter" in script
+    assert "import src.services.screening.pipeline" in script
     assert "--collect-all" in script
     assert 'cmd+=("--collect-all" "src.services.screening")' in script
     assert "packaged_entry=\"${packaged_root}/stock_analysis\"" in script

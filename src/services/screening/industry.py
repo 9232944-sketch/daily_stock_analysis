@@ -439,12 +439,12 @@ def _resolve_akshare_board_cache_dir(cache_dir: str | Path | None | object) -> P
 
 def _default_akshare_board_cache_dir() -> Path:
     explicit = (
-        os.getenv("ALPHASIFT_INDUSTRY_PROVIDER_CACHE_DIR", "").strip()
+        os.getenv("SCREENING_INDUSTRY_PROVIDER_CACHE_DIR", "").strip()
         or os.getenv("INDUSTRY_PROVIDER_CACHE_DIR", "").strip()
     )
     if explicit:
         return Path(explicit)
-    data_dir = Path(os.getenv("ALPHASIFT_DATA_DIR", str(_PROJECT_ROOT / "data")))
+    data_dir = Path(os.getenv("SCREENING_DATA_DIR", str(_PROJECT_ROOT / "data")))
     return data_dir / "industry_provider_cache"
 
 
@@ -458,7 +458,7 @@ def _resolve_cache_ttl_seconds(
     if cache_ttl_hours is not None:
         return float(cache_ttl_hours) * 3600
     raw_hours = (
-        os.getenv("ALPHASIFT_INDUSTRY_PROVIDER_CACHE_TTL_HOURS", "").strip()
+        os.getenv("SCREENING_INDUSTRY_PROVIDER_CACHE_TTL_HOURS", "").strip()
         or os.getenv("INDUSTRY_PROVIDER_CACHE_TTL_HOURS", "").strip()
         or "24"
     )

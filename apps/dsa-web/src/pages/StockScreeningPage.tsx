@@ -28,20 +28,20 @@ import {
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import {
-  alphasiftApi,
-  type AlphaSiftCandidate,
-  type AlphaSiftHotspotDetail,
-  type AlphaSiftHotspot,
-  type AlphaSiftHotspotsResponse,
-  type AlphaSiftScreenResponse,
-  type AlphaSiftScreenTaskStatus,
-  type AlphaSiftStrategy,
-} from '../api/alphasift';
+  screeningApi,
+  type ScreeningCandidate,
+  type ScreeningHotspotDetail,
+  type ScreeningHotspot,
+  type ScreeningHotspotsResponse,
+  type ScreeningScreenResponse,
+  type ScreeningScreenTaskStatus,
+  type ScreeningStrategy,
+} from '../api/screening';
 import { formatParsedApiError, getParsedApiError, toApiErrorMessage, type ParsedApiError } from '../api/error';
 import { AppPage, Button, InlineAlert } from '../components/common';
 
 const MARKETS = [{ id: 'cn', label: 'A 股' }];
-const SCREEN_TASK_STORAGE_KEY = 'dsa.alphasift.activeScreenTask.v1';
+const SCREEN_TASK_STORAGE_KEY = 'dsa.screening.activeScreenTask.v1';
 const SCREEN_TASK_POLL_INTERVAL_MS = 2000;
 
 type PersistedScreenTask = {
@@ -105,7 +105,7 @@ const formatRecoverableScreenTaskPollingError = (error: ParsedApiError) => {
   return formatParsedApiError(error) || '暂时无法获取选股任务状态，稍后将自动重试。';
 };
 
-const formatScore = (score: AlphaSiftCandidate['score']) => {
+const formatScore = (score: ScreeningCandidate['score']) => {
   if (score == null || Number.isNaN(Number(score))) {
     return '-';
   }
@@ -140,7 +140,7 @@ const formatPercent = (value: unknown) => {
   return `${(Number(value) * 100).toFixed(0)}%`;
 };
 
-const getCandidateReason = (item: AlphaSiftCandidate) => {
+const getCandidateReason = (item: ScreeningCandidate) => {
   if (item.reason) {
     return item.reason;
   }
@@ -152,12 +152,12 @@ const getCandidateReason = (item: AlphaSiftCandidate) => {
   return '内建引擎返回了候选，但没有给出文字摘要。请查看下方因子、风险和原始字段。';
 };
 
-const getSignal = (item: AlphaSiftCandidate) => {
+const getSignal = (item: ScreeningCandidate) => {
   const rawSignal = item.raw.action ?? item.raw.signal ?? item.raw.recommendation;
   return typeof rawSignal === 'string' && rawSignal.trim() ? rawSignal : '观察';
 };
 
-const getFactorEntries = (item: AlphaSiftCandidate) =>
+const getFactorEntries = (item: ScreeningCandidate) =>
   Object.entries(item.factorScores || {})
     .filter(([, value]) => typeof value === 'number')
     .sort((a, b) => Number(b[1]) - Number(a[1]))
@@ -177,7 +177,7 @@ const truncateMessageDetail = (value: string, maxLength = MAX_MESSAGE_DETAIL_LEN
   return `${text.slice(0, maxLength - 1)}…`;
 };
 
-const summarizeAlphaSiftDiagnostic = (detail: string) => {
+const summarizeScreeningDiagnostic = (detail: string) => {
   if (/trade_cal returned no open trading days/i.test(detail)) {
     return '交易日历暂无可用开市日';
   }
@@ -228,26 +228,26 @@ const formatScreenMessage = (value: string) => {
     return '';
   }
   if (/^LLM ranking failed/i.test(value)) {
-    return `LLM 重排失败：${summarizeAlphaSiftDiagnostic(value)}，已回退到本地因子评分。`;
+    return `LLM 重排失败：${summarizeScreeningDiagnostic(value)}，已回退到本地因子评分。`;
   }
 
   const snapshotFallback = value.match(/^Snapshot source fallback:\s*(.+)$/i);
   if (snapshotFallback) {
     const parsed = parseSourceDiagnostic(snapshotFallback[1]);
     if (parsed) {
-      return `数据源降级：${parsed.source}（${summarizeAlphaSiftDiagnostic(parsed.detail)}）`;
+      return `数据源降级：${parsed.source}（${summarizeScreeningDiagnostic(parsed.detail)}）`;
     }
-    return `数据源降级：${summarizeAlphaSiftDiagnostic(snapshotFallback[1])}`;
+    return `数据源降级：${summarizeScreeningDiagnostic(snapshotFallback[1])}`;
   }
 
   const parsed = parseSourceDiagnostic(value);
   if (parsed && KNOWN_SNAPSHOT_SOURCES.has(parsed.source.toLowerCase())) {
-    return `数据源降级：${parsed.source}（${summarizeAlphaSiftDiagnostic(parsed.detail)}）`;
+    return `数据源降级：${parsed.source}（${summarizeScreeningDiagnostic(parsed.detail)}）`;
   }
   return truncateMessageDetail(value);
 };
 
-const getScreenMessages = (meta: AlphaSiftScreenResponse | null) => {
+const getScreenMessages = (meta: ScreeningScreenResponse | null) => {
   if (!meta) {
     return [];
   }
@@ -277,24 +277,24 @@ const formatScreenTaskFailure = (value: string | null | undefined) => {
   if (!text) {
     return '选股任务失败，请稍后重试。';
   }
-  return `选股任务失败：${summarizeAlphaSiftDiagnostic(text)}`;
+  return `选股任务失败：${summarizeScreeningDiagnostic(text)}`;
 };
 
-const ALPHASIFT_HOTSPOT_NO_CACHE_HINT = 'No cached AlphaSift hotspot snapshot. Click refresh to fetch live hotspots.';
-const ALPHASIFT_HOTSPOT_UNAVAILABLE_CODE = 'eastmoney_hotspot_unavailable';
+const SCREENING_HOTSPOT_NO_CACHE_HINT = 'No cached Screening hotspot snapshot. Click refresh to fetch live hotspots.';
+const SCREENING_HOTSPOT_UNAVAILABLE_CODE = 'eastmoney_hotspot_unavailable';
 
-const formatHotspotEmptyMessage = (result: AlphaSiftHotspotsResponse) => {
+const formatHotspotEmptyMessage = (result: ScreeningHotspotsResponse) => {
   const message = String(result.message || '').trim();
   const sourceErrors = result.sourceErrors || [];
-  if (message && sourceErrors.includes(ALPHASIFT_HOTSPOT_UNAVAILABLE_CODE)) {
+  if (message && sourceErrors.includes(SCREENING_HOTSPOT_UNAVAILABLE_CODE)) {
     return message;
   }
-  if (message === ALPHASIFT_HOTSPOT_NO_CACHE_HINT) {
+  if (message === SCREENING_HOTSPOT_NO_CACHE_HINT) {
     return '暂无缓存热点题材，展开后可点击刷新拉取实时数据。';
   }
   const sourceError = sourceErrors[0];
   if (sourceError) {
-    return `热点题材暂未返回数据：${summarizeAlphaSiftDiagnostic(sourceError)}`;
+    return `热点题材暂未返回数据：${summarizeScreeningDiagnostic(sourceError)}`;
   }
   return '热点题材暂未返回数据';
 };
@@ -312,7 +312,7 @@ const ScreenAlertMessage: React.FC<{ messages: string[] }> = ({ messages }) => {
   );
 };
 
-const hasLlmInsight = (item: AlphaSiftCandidate) =>
+const hasLlmInsight = (item: ScreeningCandidate) =>
   Boolean(
     item.llmThesis ||
       item.llmSector ||
@@ -322,7 +322,7 @@ const hasLlmInsight = (item: AlphaSiftCandidate) =>
       item.llmCatalysts?.length,
   );
 
-const getRouteTimeLabel = (item: AlphaSiftHotspotDetail['route'][number]) => {
+const getRouteTimeLabel = (item: ScreeningHotspotDetail['route'][number]) => {
   const rawTime = item.publishedAt || item.date || item.time || '';
   if (!rawTime) {
     return item.source || '待确认';
@@ -343,7 +343,7 @@ const getRouteTimeLabel = (item: AlphaSiftHotspotDetail['route'][number]) => {
   return rawTime;
 };
 
-const getHotspotRouteItems = (detail: AlphaSiftHotspotDetail) => {
+const getHotspotRouteItems = (detail: ScreeningHotspotDetail) => {
   const route = detail.route || [];
   if (route.length > 0) {
     return route;
@@ -356,7 +356,7 @@ const formatHotspotMetric = (value: unknown, digits = 1) => {
   return formatted === '-' ? '观察中' : formatted;
 };
 
-const getHotspotLeadersText = (item: AlphaSiftHotspot) => {
+const getHotspotLeadersText = (item: ScreeningHotspot) => {
   const leaders = (item.leaders || []).map((value) => String(value).trim()).filter(Boolean);
   if (leaders.length > 0) {
     return leaders.slice(0, 2).join('、');
@@ -364,7 +364,7 @@ const getHotspotLeadersText = (item: AlphaSiftHotspot) => {
   return '观察中';
 };
 
-const getHotspotSampleText = (item: AlphaSiftHotspot) => {
+const getHotspotSampleText = (item: ScreeningHotspot) => {
   if (item.sampleStockCount == null || Number.isNaN(Number(item.sampleStockCount))) {
     return '活跃股观察中';
   }
@@ -395,7 +395,7 @@ const formatHotspotUpdatedAt = (value: string | null) => {
   });
 };
 
-const getHotspotStrength = (item: AlphaSiftHotspot, index: number) => {
+const getHotspotStrength = (item: ScreeningHotspot, index: number) => {
   const heat = Number(item.heatScore ?? 0);
   const changePct = Number(item.changePct ?? 0);
   if (index === 0 || heat >= 90 || changePct >= 8) {
@@ -450,22 +450,22 @@ const StockScreeningPage: React.FC = () => {
   const [available, setAvailable] = useState(false);
   const [market, setMarket] = useState(restoredTask?.market || 'cn');
   const [strategy, setStrategy] = useState(restoredTask?.strategy || 'dual_low');
-  const [strategies, setStrategies] = useState<AlphaSiftStrategy[]>([]);
+  const [strategies, setStrategies] = useState<ScreeningStrategy[]>([]);
   const [maxResults, setMaxResults] = useState(restoredTask?.maxResults || 3);
-  const [candidates, setCandidates] = useState<AlphaSiftCandidate[]>([]);
-  const [hotspots, setHotspots] = useState<AlphaSiftHotspot[]>([]);
+  const [candidates, setCandidates] = useState<ScreeningCandidate[]>([]);
+  const [hotspots, setHotspots] = useState<ScreeningHotspot[]>([]);
   const [hotspotsUpdatedAt, setHotspotsUpdatedAt] = useState<string | null>(null);
   const [hotspotsExpanded, setHotspotsExpanded] = useState(false);
   const [selectedHotspotTopic, setSelectedHotspotTopic] = useState<string | null>(null);
   const selectedHotspotTopicRef = useRef<string | null>(null);
   const hotspotDetailRequestIdRef = useRef(0);
-  const hotspotDetailsByTopicRef = useRef<Record<string, AlphaSiftHotspotDetail>>({});
-  const [hotspotDetail, setHotspotDetail] = useState<AlphaSiftHotspotDetail | null>(null);
+  const hotspotDetailsByTopicRef = useRef<Record<string, ScreeningHotspotDetail>>({});
+  const [hotspotDetail, setHotspotDetail] = useState<ScreeningHotspotDetail | null>(null);
   const [loadingHotspotDetail, setLoadingHotspotDetail] = useState(false);
   const [hotspotDetailError, setHotspotDetailError] = useState('');
   const [loadingHotspots, setLoadingHotspots] = useState(false);
   const [hotspotError, setHotspotError] = useState('');
-  const [screenMeta, setScreenMeta] = useState<AlphaSiftScreenResponse | null>(null);
+  const [screenMeta, setScreenMeta] = useState<ScreeningScreenResponse | null>(null);
   const [expandedCode, setExpandedCode] = useState<string | null>(null);
   const [loading, setLoading] = useState(Boolean(restoredTask?.taskId));
   const [enabling, setEnabling] = useState(false);
@@ -490,7 +490,7 @@ const StockScreeningPage: React.FC = () => {
   const isScreeningEnabled = enabled && available;
   const statusText = isScreeningEnabled ? '选股已开启' : '选股未开启';
 
-  const applyScreenResult = useCallback((result: AlphaSiftScreenResponse) => {
+  const applyScreenResult = useCallback((result: ScreeningScreenResponse) => {
     const nextCandidates = result.candidates || [];
     setScreenMeta(result);
     setCandidates(nextCandidates);
@@ -522,7 +522,7 @@ const StockScreeningPage: React.FC = () => {
     setHotspotDetail((currentDetail) => (currentDetail?.topic === topic ? currentDetail : null));
     setHotspotDetailError('');
     try {
-      const detail = await alphasiftApi.getHotspotDetail({ topic, provider: 'akshare', refresh: options.refresh ?? false });
+      const detail = await screeningApi.getHotspotDetail({ topic, provider: 'akshare', refresh: options.refresh ?? false });
       if (!canApplyRequest()) {
         return;
       }
@@ -548,7 +548,7 @@ const StockScreeningPage: React.FC = () => {
     setLoadingStrategies(true);
     try {
       setStrategyLoadError('');
-      const result = await alphasiftApi.getStrategies();
+      const result = await screeningApi.getStrategies();
       const loadedStrategies = result.strategies || [];
       setStrategies(loadedStrategies);
       if (loadedStrategies.length > 0) {
@@ -568,7 +568,7 @@ const StockScreeningPage: React.FC = () => {
     setLoadingHotspots(true);
     setHotspotError('');
     try {
-      const result = await alphasiftApi.getHotspots({ provider: 'akshare', top: 12, refresh });
+      const result = await screeningApi.getHotspots({ provider: 'akshare', top: 12, refresh });
       const nextHotspots = result.hotspots || [];
       const nextDetails = result.details || {};
       hotspotDetailsByTopicRef.current = {
@@ -627,7 +627,7 @@ const StockScreeningPage: React.FC = () => {
     });
   }, []);
 
-  const handleAnalyzeHotspotStock = useCallback((stock: AlphaSiftHotspotDetail['stocks'][number]) => {
+  const handleAnalyzeHotspotStock = useCallback((stock: ScreeningHotspotDetail['stocks'][number]) => {
     const stockCode = String(stock.code || '').trim();
     if (!stockCode) {
       return;
@@ -638,7 +638,7 @@ const StockScreeningPage: React.FC = () => {
         stockCode,
         stockName,
         autoAnalyze: true,
-        selectionSource: 'alphasift_hotspot',
+        selectionSource: 'screening_hotspot',
       },
     });
   }, [navigate]);
@@ -656,7 +656,7 @@ const StockScreeningPage: React.FC = () => {
 
   useEffect(() => {
     let active = true;
-    alphasiftApi
+    screeningApi
       .getStatus()
       .then((status) => {
         if (!active) {
@@ -695,7 +695,7 @@ const StockScreeningPage: React.FC = () => {
       setLoading(false);
     }
 
-    function applyTaskStatus(task: AlphaSiftScreenTaskStatus) {
+    function applyTaskStatus(task: ScreeningScreenTaskStatus) {
       const nextProgress = Number(task.progress ?? 0);
       setTaskProgress(Number.isFinite(nextProgress) ? nextProgress : 0);
       setTaskMessage(task.message || '');
@@ -734,7 +734,7 @@ const StockScreeningPage: React.FC = () => {
 
     async function pollTask() {
       try {
-        const task = await alphasiftApi.getScreenTask(pollingTaskId);
+        const task = await screeningApi.getScreenTask(pollingTaskId);
         if (!active) {
           return;
         }
@@ -771,13 +771,13 @@ const StockScreeningPage: React.FC = () => {
     setEnabling(true);
     setError('');
     try {
-      await alphasiftApi.enable();
+      await screeningApi.enable();
       setEnabled(true);
       setAvailable(true);
       await loadStrategies();
     } catch (err) {
       try {
-        const status = await alphasiftApi.getStatus();
+        const status = await screeningApi.getStatus();
         setEnabled(status.enabled);
         setAvailable(status.available);
       } catch {
@@ -818,7 +818,7 @@ const StockScreeningPage: React.FC = () => {
     setTaskProgress(0);
     setTaskMessage('正在提交选股任务...');
     try {
-      const task = await alphasiftApi.startScreen({ market, strategy, maxResults });
+      const task = await screeningApi.startScreen({ market, strategy, maxResults });
       persistScreenTask({
         taskId: task.taskId,
         market,
@@ -858,7 +858,7 @@ const StockScreeningPage: React.FC = () => {
         <InlineAlert
           variant="info"
           title="内建选股未开启"
-          message="点击后写入兼容配置 ALPHASIFT_ENABLED=true；选股代码和策略已随 DSA 一同提供，不需要安装外部插件。"
+          message="点击后启用 SCREENING_ENABLED，并开放内建策略选股入口。"
           action={
             <Button size="sm" isLoading={enabling} loadingText="开启中..." onClick={() => void handleEnable()}>
               开启选股
@@ -871,14 +871,14 @@ const StockScreeningPage: React.FC = () => {
         <InlineAlert
           variant="warning"
           title="内建选股引擎不可用"
-          message="请检查后端日志、策略文件和基础数据依赖后重启服务；该能力不依赖外部 AlphaSift 包或运行时安装接口。"
+          message="请检查后端日志、策略文件和基础数据依赖后重启服务。"
         />
       ) : null}
 
       <InlineAlert
         variant="warning"
         title="实验功能与风险提示"
-        message="内建选股实现参考 AlphaSift，仍处于实验性质。结果仅用于研究和辅助判断，不构成投资建议；市场有风险，交易决策和损益由使用者自行承担。"
+        message="内建选股仍处于实验性质。结果仅用于研究和辅助判断，不构成投资建议；市场有风险，交易决策和损益由使用者自行承担。"
       />
 
       {loading ? (
@@ -900,7 +900,7 @@ const StockScreeningPage: React.FC = () => {
             <div>
               <h2 className="text-lg font-bold tracking-normal text-foreground">热点题材</h2>
               <p className="mt-1 text-xs leading-5 text-secondary-text">
-                热点逻辑参考 AlphaSift hotspot 能力；capital_heat、balanced_alpha 等策略会把 theme_heat 纳入评分。
+                capital_heat、balanced_alpha 等策略会把热点题材的 theme_heat 纳入评分。
               </p>
             </div>
           </div>
@@ -1133,7 +1133,7 @@ const StockScreeningPage: React.FC = () => {
         <div className="mb-4 flex items-center justify-between gap-3">
           <div>
             <h2 className="text-sm font-semibold text-foreground">选择策略</h2>
-            <p className="mt-1 text-xs text-secondary-text">策略随 DSA 内建提供，实现参考 AlphaSift；DSA 会补充行情、基本面和新闻上下文。</p>
+            <p className="mt-1 text-xs text-secondary-text">DSA 会为内建策略候选补充行情、基本面和新闻上下文。</p>
           </div>
           <span className="rounded-full border border-cyan/30 bg-cyan/10 px-3 py-1 text-xs font-semibold text-cyan">
             {selectedStrategyTag}

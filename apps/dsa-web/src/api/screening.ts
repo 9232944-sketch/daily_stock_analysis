@@ -2,12 +2,12 @@ import apiClient from './index';
 import { systemConfigApi } from './systemConfig';
 import { toCamelCase } from './utils';
 
-const ALPHASIFT_SCREEN_TIMEOUT_MS = 180000;
-const ALPHASIFT_REQUEST_TIMEOUT_MS = 300000;
-export const ALPHASIFT_CONFIG_CHANGED_EVENT = 'alphasift-config-changed';
+const SCREENING_SCREEN_TIMEOUT_MS = 180000;
+const SCREENING_REQUEST_TIMEOUT_MS = 300000;
+export const SCREENING_CONFIG_CHANGED_EVENT = 'screening-config-changed';
 export const SYSTEM_CONFIG_CHANGED_EVENT = 'dsa-system-config-changed';
 
-export type AlphaSiftStatus = {
+export type ScreeningStatus = {
   enabled: boolean;
   available: boolean;
   engine?: 'builtin' | string;
@@ -20,7 +20,7 @@ export type AlphaSiftStatus = {
   diagnostics?: Record<string, string>;
 };
 
-export type AlphaSiftCandidate = {
+export type ScreeningCandidate = {
   rank: number;
   code: string;
   name: string;
@@ -71,7 +71,7 @@ export type AlphaSiftCandidate = {
   raw: Record<string, unknown>;
 };
 
-export type AlphaSiftStrategy = {
+export type ScreeningStrategy = {
   id: string;
   name: string;
   title?: string;
@@ -84,13 +84,13 @@ export type AlphaSiftStrategy = {
   market?: string;
 };
 
-export type AlphaSiftStrategiesResponse = {
+export type ScreeningStrategiesResponse = {
   enabled: boolean;
-  strategies: AlphaSiftStrategy[];
+  strategies: ScreeningStrategy[];
   strategyCount: number;
 };
 
-export type AlphaSiftHotspot = {
+export type ScreeningHotspot = {
   topic: string;
   name?: string;
   source?: string;
@@ -114,7 +114,7 @@ export type AlphaSiftHotspot = {
   staleAgeHours?: number | null;
 };
 
-export type AlphaSiftHotspotRouteItem = {
+export type ScreeningHotspotRouteItem = {
   title: string;
   description: string;
   source?: string;
@@ -124,7 +124,7 @@ export type AlphaSiftHotspotRouteItem = {
   url?: string;
 };
 
-export type AlphaSiftHotspotStock = {
+export type ScreeningHotspotStock = {
   code?: string;
   name?: string;
   changePct?: number | null;
@@ -138,7 +138,7 @@ export type AlphaSiftHotspotStock = {
   fallbackUsed?: boolean;
 };
 
-export type AlphaSiftHotspotDetail = {
+export type ScreeningHotspotDetail = {
   enabled: boolean;
   provider: string;
   topic: string;
@@ -147,10 +147,10 @@ export type AlphaSiftHotspotDetail = {
   aliases?: string[];
   summary?: string;
   summaryDetail?: Record<string, unknown>;
-  route: AlphaSiftHotspotRouteItem[];
-  timeline?: AlphaSiftHotspotRouteItem[];
-  stocks: AlphaSiftHotspotStock[];
-  leaderStocks?: AlphaSiftHotspotStock[];
+  route: ScreeningHotspotRouteItem[];
+  timeline?: ScreeningHotspotRouteItem[];
+  stocks: ScreeningHotspotStock[];
+  leaderStocks?: ScreeningHotspotStock[];
   stockCount: number;
   sourceErrors?: string[];
   qualityStatus?: 'available' | 'partial' | 'stale' | 'failed' | string;
@@ -163,7 +163,7 @@ export type AlphaSiftHotspotDetail = {
   resolverCandidates?: Record<string, unknown>[];
 };
 
-export type AlphaSiftHotspotsResponse = {
+export type ScreeningHotspotsResponse = {
   enabled: boolean;
   provider: string;
   providerUsed?: string;
@@ -174,14 +174,14 @@ export type AlphaSiftHotspotsResponse = {
   stale?: boolean;
   staleAgeHours?: number | null;
   message?: string | null;
-  hotspots: AlphaSiftHotspot[];
+  hotspots: ScreeningHotspot[];
   hotspotCount: number;
-  details?: Record<string, AlphaSiftHotspotDetail>;
+  details?: Record<string, ScreeningHotspotDetail>;
 };
 
-export type AlphaSiftScreenResponse = {
+export type ScreeningScreenResponse = {
   enabled: boolean;
-  candidates: AlphaSiftCandidate[];
+  candidates: ScreeningCandidate[];
   candidateCount: number;
   runId?: string;
   strategy?: string;
@@ -212,7 +212,7 @@ export type AlphaSiftScreenResponse = {
   portfolioConcentrationNotes?: string[];
 };
 
-export type AlphaSiftScreenAccepted = {
+export type ScreeningScreenAccepted = {
   taskId: string;
   traceId?: string | null;
   status: 'pending' | 'processing' | 'completed' | 'failed' | string;
@@ -222,18 +222,18 @@ export type AlphaSiftScreenAccepted = {
   maxResults: number;
 };
 
-export type AlphaSiftScreenTaskStatus = {
+export type ScreeningScreenTaskStatus = {
   taskId: string;
   traceId?: string | null;
   status: 'pending' | 'processing' | 'completed' | 'failed' | string;
   progress?: number | null;
   message?: string | null;
   error?: string | null;
-  result?: AlphaSiftScreenResponse | null;
+  result?: ScreeningScreenResponse | null;
 };
 
-export function notifyAlphaSiftConfigChanged(): void {
-  window.dispatchEvent(new Event(ALPHASIFT_CONFIG_CHANGED_EVENT));
+export function notifyScreeningConfigChanged(): void {
+  window.dispatchEvent(new Event(SCREENING_CONFIG_CHANGED_EVENT));
   notifySystemConfigChanged();
 }
 
@@ -241,52 +241,52 @@ export function notifySystemConfigChanged(): void {
   window.dispatchEvent(new Event(SYSTEM_CONFIG_CHANGED_EVENT));
 }
 
-async function setAlphaSiftEnabled(value: 'true' | 'false'): Promise<void> {
+async function setScreeningEnabled(value: 'true' | 'false'): Promise<void> {
   const config = await systemConfigApi.getConfig(false);
   await systemConfigApi.update({
     configVersion: config.configVersion,
     maskToken: config.maskToken,
     reloadNow: true,
-    items: [{ key: 'ALPHASIFT_ENABLED', value }],
+    items: [{ key: 'SCREENING_ENABLED', value }],
   });
-  notifyAlphaSiftConfigChanged();
+  notifyScreeningConfigChanged();
 }
 
-export const alphasiftApi = {
-  async getStatus(): Promise<AlphaSiftStatus> {
+export const screeningApi = {
+  async getStatus(): Promise<ScreeningStatus> {
     const response = await apiClient.get<Record<string, unknown>>('/api/v1/screening/status');
-    return toCamelCase<AlphaSiftStatus>(response.data);
+    return toCamelCase<ScreeningStatus>(response.data);
   },
 
-  async screen(payload: { market: string; strategy: string; maxResults: number }): Promise<AlphaSiftScreenResponse> {
+  async screen(payload: { market: string; strategy: string; maxResults: number }): Promise<ScreeningScreenResponse> {
     const response = await apiClient.post<Record<string, unknown>>('/api/v1/screening/screen', {
       market: payload.market,
       strategy: payload.strategy,
       max_results: payload.maxResults,
-    }, { timeout: ALPHASIFT_SCREEN_TIMEOUT_MS });
-    return toCamelCase<AlphaSiftScreenResponse>(response.data);
+    }, { timeout: SCREENING_SCREEN_TIMEOUT_MS });
+    return toCamelCase<ScreeningScreenResponse>(response.data);
   },
 
-  async startScreen(payload: { market: string; strategy: string; maxResults: number }): Promise<AlphaSiftScreenAccepted> {
+  async startScreen(payload: { market: string; strategy: string; maxResults: number }): Promise<ScreeningScreenAccepted> {
     const response = await apiClient.post<Record<string, unknown>>('/api/v1/screening/screen/tasks', {
       market: payload.market,
       strategy: payload.strategy,
       max_results: payload.maxResults,
     });
-    return toCamelCase<AlphaSiftScreenAccepted>(response.data);
+    return toCamelCase<ScreeningScreenAccepted>(response.data);
   },
 
-  async getScreenTask(taskId: string): Promise<AlphaSiftScreenTaskStatus> {
+  async getScreenTask(taskId: string): Promise<ScreeningScreenTaskStatus> {
     const response = await apiClient.get<Record<string, unknown>>(`/api/v1/screening/screen/tasks/${encodeURIComponent(taskId)}`);
-    return toCamelCase<AlphaSiftScreenTaskStatus>(response.data);
+    return toCamelCase<ScreeningScreenTaskStatus>(response.data);
   },
 
-  async getStrategies(): Promise<AlphaSiftStrategiesResponse> {
-    const response = await apiClient.get<Record<string, unknown>>('/api/v1/screening/strategies', { timeout: ALPHASIFT_REQUEST_TIMEOUT_MS });
-    return toCamelCase<AlphaSiftStrategiesResponse>(response.data);
+  async getStrategies(): Promise<ScreeningStrategiesResponse> {
+    const response = await apiClient.get<Record<string, unknown>>('/api/v1/screening/strategies', { timeout: SCREENING_REQUEST_TIMEOUT_MS });
+    return toCamelCase<ScreeningStrategiesResponse>(response.data);
   },
 
-  async getHotspots(payload: { provider?: string; top?: number; refresh?: boolean; includeDetails?: boolean } = {}): Promise<AlphaSiftHotspotsResponse> {
+  async getHotspots(payload: { provider?: string; top?: number; refresh?: boolean; includeDetails?: boolean } = {}): Promise<ScreeningHotspotsResponse> {
     const response = await apiClient.get<Record<string, unknown>>('/api/v1/screening/hotspots', {
       params: {
         provider: payload.provider || 'akshare',
@@ -294,11 +294,11 @@ export const alphasiftApi = {
         refresh: payload.refresh ?? false,
         include_details: payload.includeDetails ?? true,
       },
-      timeout: ALPHASIFT_REQUEST_TIMEOUT_MS,
+      timeout: SCREENING_REQUEST_TIMEOUT_MS,
     });
-    const normalized = toCamelCase<AlphaSiftHotspotsResponse>(response.data);
+    const normalized = toCamelCase<ScreeningHotspotsResponse>(response.data);
     if (normalized.details) {
-      const detailsByTopic: Record<string, AlphaSiftHotspotDetail> = {};
+      const detailsByTopic: Record<string, ScreeningHotspotDetail> = {};
       Object.values(normalized.details).forEach((detail) => {
         if (detail?.topic) {
           detailsByTopic[detail.topic] = detail;
@@ -309,28 +309,28 @@ export const alphasiftApi = {
     return normalized;
   },
 
-  async getHotspotDetail(payload: { topic: string; provider?: string; refresh?: boolean }): Promise<AlphaSiftHotspotDetail> {
+  async getHotspotDetail(payload: { topic: string; provider?: string; refresh?: boolean }): Promise<ScreeningHotspotDetail> {
     const response = await apiClient.get<Record<string, unknown>>(
       `/api/v1/screening/hotspots/${encodeURIComponent(payload.topic)}`,
       {
         params: { provider: payload.provider || 'akshare', refresh: payload.refresh ?? false },
-        timeout: ALPHASIFT_REQUEST_TIMEOUT_MS,
+        timeout: SCREENING_REQUEST_TIMEOUT_MS,
       },
     );
-    return toCamelCase<AlphaSiftHotspotDetail>(response.data);
+    return toCamelCase<ScreeningHotspotDetail>(response.data);
   },
 
   async enable(): Promise<void> {
-    await setAlphaSiftEnabled('true');
+    await setScreeningEnabled('true');
     try {
-      const status = await alphasiftApi.getStatus();
+      const status = await screeningApi.getStatus();
       if (!status.available) {
         const reason = status.diagnostics?.reason ? `（${status.diagnostics.reason}）` : '';
         throw new Error(`DSA 内建选股引擎不可用${reason}。请检查策略文件、后端依赖和服务日志。`);
       }
     } catch (error) {
       try {
-        await setAlphaSiftEnabled('false');
+        await setScreeningEnabled('false');
       } catch {
         // Preserve the original availability/status failure for the caller.
       }

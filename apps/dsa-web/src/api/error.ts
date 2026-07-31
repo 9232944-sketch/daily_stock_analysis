@@ -343,7 +343,7 @@ export function parseApiError(error: unknown): ParsedApiError {
     });
   }
 
-  if (errorCode === 'alphasift_unavailable' || includesAny(matchText, ['内建选股引擎初始化失败'])) {
+  if (errorCode === 'screening_unavailable' || includesAny(matchText, ['内建选股引擎初始化失败'])) {
     return createParsedApiError({
       title: '内建选股引擎未就绪',
       message: rawMessage,
@@ -353,17 +353,7 @@ export function parseApiError(error: unknown): ParsedApiError {
     });
   }
 
-  if (errorCode === 'alphasift_adapter_unavailable') {
-    return createParsedApiError({
-      title: '内建选股适配层不可用',
-      message: '当前 DSA 内建选股适配层初始化失败，请检查后端日志。',
-      category: 'http_error',
-      rawMessage,
-      status,
-    });
-  }
-
-  if (errorCode === 'alphasift_screen_task_not_found') {
+  if (errorCode === 'screening_screen_task_not_found') {
     return createParsedApiError({
       title: '选股任务不可恢复',
       message: '服务端没有找到这次选股任务，可能后端已重启或任务记录已清理，请重新运行选股。',
@@ -373,7 +363,7 @@ export function parseApiError(error: unknown): ParsedApiError {
     });
   }
 
-  if (errorCode === 'alphasift_screen_failed') {
+  if (errorCode === 'screening_screen_failed') {
     return createParsedApiError({
       title: '选股失败',
       message: '内建选股引擎访问外部行情、快照或模型服务失败，请稍后重试，或检查网络与代理设置。',

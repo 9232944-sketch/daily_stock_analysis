@@ -1412,7 +1412,7 @@ def _build_summary_route_item(
         f"stage {summary.stage}" if summary.stage else "",
         "leaders " + ", ".join(leaders[:3]) if leaders else "",
     ]
-    source = summary.provider_used or summary.source or "alphasift_hotspot"
+    source = summary.provider_used or summary.source or "screening_hotspot"
     return HotspotRouteItem(
         date=_event_day(datetime.now(timezone.utc).isoformat()),
         title="Current fermentation",

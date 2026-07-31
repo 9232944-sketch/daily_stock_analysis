@@ -73,8 +73,8 @@ def _apply_env_file_values(file_values: dict[str, str]) -> None:
 
 def _env_file_candidates_from_env() -> list[Path]:
     raw_values = [
-        os.getenv("ALPHASIFT_ENV_FILE", ""),
-        os.getenv("ALPHASIFT_ENV_FILES", ""),
+        os.getenv("SCREENING_ENV_FILE", ""),
+        os.getenv("SCREENING_ENV_FILES", ""),
     ]
     paths: list[Path] = []
     for raw in raw_values:
@@ -123,7 +123,7 @@ def _resolve_snapshot_source_priority() -> list[str]:
 
 
 def _resolve_fallback_snapshot_path(data_dir: Path) -> Path | None:
-    for name in ("ALPHASIFT_FALLBACK_SNAPSHOT_PATH", "FALLBACK_SNAPSHOT_PATH"):
+    for name in ("SCREENING_FALLBACK_SNAPSHOT_PATH", "FALLBACK_SNAPSHOT_PATH"):
         raw = os.getenv(name)
         if raw is None:
             continue
@@ -253,15 +253,15 @@ class Config:
         _load_env_file()
         channels = _parse_llm_channels_env()
         llm_model = _resolve_llm_model(channels)
-        data_dir = Path(os.getenv("ALPHASIFT_DATA_DIR", str(_PROJECT_ROOT / "data")))
+        data_dir = Path(os.getenv("SCREENING_DATA_DIR", str(_PROJECT_ROOT / "data")))
         fallback_snapshot_path = _resolve_fallback_snapshot_path(data_dir)
         daily_history_cache_dir = (
-            _parse_optional_path_env("ALPHASIFT_DAILY_HISTORY_CACHE_DIR")
+            _parse_optional_path_env("SCREENING_DAILY_HISTORY_CACHE_DIR")
             or _parse_optional_path_env("DAILY_HISTORY_CACHE_DIR")
             or data_dir / "daily_history"
         )
         industry_provider_cache_dir = (
-            _parse_optional_path_env("ALPHASIFT_INDUSTRY_PROVIDER_CACHE_DIR")
+            _parse_optional_path_env("SCREENING_INDUSTRY_PROVIDER_CACHE_DIR")
             or _parse_optional_path_env("INDUSTRY_PROVIDER_CACHE_DIR")
             or data_dir / "industry_provider_cache"
         )
@@ -320,7 +320,7 @@ class Config:
                 0,
                 int(
                     os.getenv(
-                        "ALPHASIFT_INDUSTRY_PROVIDER_CACHE_TTL_HOURS",
+                        "SCREENING_INDUSTRY_PROVIDER_CACHE_TTL_HOURS",
                         os.getenv("INDUSTRY_PROVIDER_CACHE_TTL_HOURS", "24"),
                     )
                 ),
@@ -349,7 +349,7 @@ class Config:
                 0,
                 int(
                     os.getenv(
-                        "ALPHASIFT_DAILY_HISTORY_CACHE_TTL_HOURS",
+                        "SCREENING_DAILY_HISTORY_CACHE_TTL_HOURS",
                         os.getenv("DAILY_HISTORY_CACHE_TTL_HOURS", "24"),
                     )
                 ),

@@ -45,7 +45,7 @@ log "Checking python-multipart availability..."
 "${PYTHON_BIN}" -c "import multipart, multipart.multipart"
 
 log "Checking built-in screening engine availability..."
-"${PYTHON_BIN}" -c "import src.services.screening.dsa_adapter"
+"${PYTHON_BIN}" -c "import src.services.screening.pipeline"
 
 log "Checking Futu SDK availability..."
 "${PYTHON_BIN}" -c "import futu"
@@ -83,7 +83,7 @@ hidden_imports=(
   "api.v1.endpoints.history"
   "api.v1.endpoints.stocks"
   "api.v1.endpoints.health"
-  "api.v1.endpoints.alphasift"
+  "api.v1.endpoints.screening"
   "api.v1.schemas"
   "api.v1.schemas.analysis"
   "api.v1.schemas.history"
@@ -95,9 +95,9 @@ hidden_imports=(
   "src.services.task_queue"
   "src.services.analysis_service"
   "src.services.history_service"
-  "src.services.alphasift_service"
+  "src.services.screening_service"
   "src.services.screening"
-  "src.services.screening.dsa_adapter"
+  "src.services.screening.pipeline"
   "orjson"
   "uvicorn.logging"
   "uvicorn.loops"
@@ -147,7 +147,7 @@ if ! "${packaged_entry}" --help >/tmp/dsa-packaged-help.log 2>&1; then
   exit 1
 fi
 
-for module in src.services.screening.dsa_adapter futu orjson; do
+for module in src.services.screening.pipeline futu orjson; do
   if DSA_PACKAGED_IMPORT_PROBE="${module}" "${packaged_entry}" >/tmp/dsa-packaged-import.log 2>&1; then
     cat /tmp/dsa-packaged-import.log
   else

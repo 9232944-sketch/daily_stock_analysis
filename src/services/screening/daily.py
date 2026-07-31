@@ -331,7 +331,7 @@ def _call_daily_wrapper(fetcher, source: str, *args, **kwargs) -> pd.DataFrame:
 
 def _daily_call_timeout_seconds() -> float | None:
     return parse_source_timeout_seconds(
-        "ALPHASIFT_DAILY_CALL_TIMEOUT_SEC",
+        "SCREENING_DAILY_CALL_TIMEOUT_SEC",
         default=_DAILY_CALL_TIMEOUT_SECONDS,
     )
 

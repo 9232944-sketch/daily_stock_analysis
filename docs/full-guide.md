@@ -1565,7 +1565,7 @@ FastAPI 提供 RESTful API 服务，支持配置管理和触发分析。
 - 🧪 **今日状态/任务刷新防抖** - 首页「今日」与「自选」通过带有时区感知的历史区间判断并发起分页历史查询；任务完成后由最新一次 stock bar 刷新成功才清除失败态，避免旧请求乱序覆盖新状态导致重复提交
 - 🧭 **首次配置提示** - 首页会读取只读配置状态，缺少 LLM 主渠道、自选股等基础项时提示缺口并引导进入系统设置
 - 📊 **实时进度** - 分析任务状态实时更新，支持多任务并行；普通分析链路在进入 LLM 阶段后会优先尝试 LiteLLM 流式生成，并通过任务 SSE 回灌更细粒度的 `message/progress`
-- 🧪 **内建选股任务可恢复** - 选股实现参考 AlphaSift，但代码和策略随 DSA 发布且无需外部插件；页面提交后台任务后轮询状态，切换页面再返回会恢复当前任务进度或最终结果
+- 🧪 **内建选股任务可恢复** - 选股实现参考 AlphaSift；页面提交后台任务后轮询状态，切换页面再返回会恢复当前任务进度或最终结果
 - 🗂️ **大盘复盘任务可见性** - 首页触发大盘复盘后会返回 `task_id` 并轮询 `GET /api/v1/analysis/status/{task_id}`，在进行中/完成/失败场景给出可见反馈，失败时直接透出报错内容
 - 🗂️ **市场复盘历史独立入口** - 大盘复盘历史通过专用入口与普通个股历史隔离；建议通过 `stock_code=MARKET` + `report_type=market_review` 直接查询与回放大盘复盘记录
 - 🧾 **市场复盘历史可复用** - 大盘复盘任务会持久化到分析历史，`report_type` 为 `market_review`，可直接通过历史列表/详情打开对应 Markdown 或详情页，不会重新触发分析重算
@@ -1593,7 +1593,7 @@ FastAPI 提供 RESTful API 服务，支持配置管理和触发分析。
 | `/api/v1/analysis/tasks/stream` | GET (SSE) | 订阅任务实时状态流；`task_progress` 可选携带 `flow_event` 增量运行流事件 |
 | `/api/v1/analysis/tasks/{task_id}/flow` | GET | 查询 active task 的运行流快照 |
 | `/api/v1/analysis/status/{task_id}` | GET | 查询任务状态 |
-| `/api/v1/screening/screen/tasks` | POST | 后台提交内建选股任务（需先开启兼容开关 `ALPHASIFT_ENABLED`） |
+| `/api/v1/screening/screen/tasks` | POST | 后台提交内建选股任务（需先开启 `SCREENING_ENABLED`） |
 | `/api/v1/screening/screen/tasks/{task_id}` | GET | 查询内建选股任务状态与完成结果 |
 | `/api/v1/history` | GET | 查询分析历史 |
 | `/api/v1/history/{record_id}/diagnostics` | GET | 查询历史报告运行诊断摘要与脱敏复制文本 |
