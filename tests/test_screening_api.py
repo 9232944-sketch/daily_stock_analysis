@@ -19,6 +19,7 @@ import threading
 
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
+import pandas as pd
 
 try:
     import litellm  # noqa: F401
@@ -2628,6 +2629,67 @@ class ScreeningOpportunitiesApiTestCase(unittest.TestCase):
         self.assertEqual(captured["retries"], 4)
         self.assertEqual(captured["cache_dir"], Path("data/screening/daily_history"))
         self.assertEqual(captured["cache_ttl_seconds"], 321.0)
+
+    def test_fetch_daily_history_wraps_tencent_and_sina_with_daily_timeout(self) -> None:
+        import src.services.screening.daily as daily_module
+
+        wrapped_calls: list[dict[str, object]] = []
+
+        def fake_wrapper(fetcher, source: str, *args, **kwargs):
+            wrapped_calls.append(
+                {
+                    "fetcher": fetcher.__name__,
+                    "source": source,
+                    "args": args,
+                    "kwargs": kwargs,
+                }
+            )
+            return pd.DataFrame(
+                [
+                    {
+                        "date": "2026-06-03",
+                        "open": 10.0,
+                        "high": 10.5,
+                        "low": 9.8,
+                        "close": 10.2,
+                        "volume": 123400,
+                    }
+                ]
+            )
+
+        with patch.object(daily_module, "_call_daily_wrapper", side_effect=fake_wrapper):
+            tencent_result = daily_module.fetch_daily_history(
+                "1",
+                lookback_days=20,
+                source="tencent",
+                retries=0,
+            )
+            sina_result = daily_module.fetch_daily_history(
+                "2",
+                lookback_days=30,
+                source="sina",
+                retries=0,
+            )
+
+        self.assertEqual(
+            wrapped_calls,
+            [
+                {
+                    "fetcher": "_fetch_daily_tencent",
+                    "source": "tencent",
+                    "args": ("000001",),
+                    "kwargs": {"lookback_days": 20},
+                },
+                {
+                    "fetcher": "_fetch_daily_sina",
+                    "source": "sina",
+                    "args": ("000002",),
+                    "kwargs": {"lookback_days": 30},
+                },
+            ],
+        )
+        self.assertEqual(tencent_result.attrs["daily_source"], "tencent")
+        self.assertEqual(sina_result.attrs["daily_source"], "sina")
 
     def test_dsa_daily_history_bridge_writes_last_good_cache_on_dsa_success(self) -> None:
         import src.services.screening.daily as daily_module

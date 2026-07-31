@@ -815,6 +815,8 @@ test('desktop update backup list preserves Screening caches', (t) => {
   assert.ok(files.includes(path.join('data', 'screening', 'hotspot.history.jsonl')));
   assert.ok(files.includes(path.join('data', 'screening', 'hotspot_details')));
   assert.ok(files.includes(path.join('data', 'screening', 'snapshot.last_good.json')));
+  assert.ok(files.includes(path.join('data', 'screening', 'daily_history')));
+  assert.ok(files.includes(path.join('data', 'screening', 'industry_provider_cache')));
 });
 
 test('desktop update backup and restore preserve generation and Agent backend env keys', (t) => {

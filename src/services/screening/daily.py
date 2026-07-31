@@ -224,12 +224,16 @@ def fetch_daily_history(
                         lookback_days=lookback_days,
                     )
                 elif current == "tencent":
-                    result = _fetch_daily_tencent(
+                    result = _call_daily_wrapper(
+                        _fetch_daily_tencent,
+                        current,
                         normalized_code,
                         lookback_days=normalized_lookback_days,
                     )
                 elif current == "sina":
-                    result = _fetch_daily_sina(
+                    result = _call_daily_wrapper(
+                        _fetch_daily_sina,
+                        current,
                         normalized_code,
                         lookback_days=normalized_lookback_days,
                     )
