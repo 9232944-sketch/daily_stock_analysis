@@ -8,6 +8,8 @@ import logging
 import os
 from dataclasses import dataclass
 
+from src.llm.errors import call_litellm_with_param_recovery
+from src.llm.generation_params import apply_litellm_generation_params
 from src.services.screening.models import Pick
 from src.services.screening.normalize import (
     bounded_float as _bounded_float,
@@ -519,35 +521,28 @@ def _call_llm(
             channels=channels or [],
         ):
             kwargs["messages"] = messages
-            kwargs["temperature"] = temperature
             kwargs["timeout"] = timeout_sec
             kwargs["num_retries"] = 0
             if max_tokens is not None and int(max_tokens) > 0:
                 kwargs["max_tokens"] = int(max_tokens)
             if json_mode:
                 kwargs["response_format"] = {"type": "json_object"}
+            kwargs = _apply_screening_litellm_generation_params(
+                kwargs,
+                model=candidate_model,
+                temperature=temperature,
+            )
             try:
-                response = litellm.completion(**kwargs)
+                response = _call_screening_litellm_completion(
+                    lambda request_kwargs: litellm.completion(**request_kwargs),
+                    model=candidate_model,
+                    call_kwargs=kwargs,
+                )
                 return response.choices[0].message.content or ""
             except Exception as exc:
                 last_error = exc
                 if _is_timeout_error(exc):
                     raise
-                if json_mode and "response_format" in kwargs and _is_json_mode_unsupported(exc):
-                    # Some providers do not support JSON mode. Retry the same
-                    # request without it before moving to fallback models. Do
-                    # not do this for timeout/connection failures: a local
-                    # OpenAI-compatible server may keep generating after the
-                    # client timeout, so a blind retry can duplicate expensive
-                    # work while the first request is still running.
-                    retry_kwargs = dict(kwargs)
-                    retry_kwargs.pop("response_format", None)
-                    try:
-                        response = litellm.completion(**retry_kwargs)
-                        return response.choices[0].message.content or ""
-                    except Exception as retry_exc:
-                        last_error = retry_exc
-                        continue
                 continue
 
     if last_error is not None:
@@ -825,7 +820,6 @@ def _call_litellm_router(
             kwargs = {
                 "model": model,
                 "messages": messages,
-                "temperature": temperature,
                 "timeout": timeout_sec,
                 "num_retries": 0,
             }
@@ -833,20 +827,78 @@ def _call_litellm_router(
                 kwargs["max_tokens"] = int(max_tokens)
             if json_mode:
                 kwargs["response_format"] = {"type": "json_object"}
+            kwargs = _apply_screening_litellm_generation_params(
+                kwargs,
+                model=model,
+                temperature=temperature,
+                model_list=model_list,
+            )
             try:
-                response = router.completion(**kwargs)
+                response = _call_screening_litellm_completion(
+                    lambda request_kwargs: router.completion(**request_kwargs),
+                    model=model,
+                    call_kwargs=kwargs,
+                    model_list=model_list,
+                )
                 return response.choices[0].message.content or ""
-            except Exception as exc:
-                if "response_format" in kwargs and _is_json_mode_unsupported(exc):
-                    kwargs.pop("response_format", None)
-                    response = router.completion(**kwargs)
-                    return response.choices[0].message.content or ""
+            except Exception:
                 raise
     except Exception as exc:
         if _is_timeout_error(exc):
             raise
         logger.warning("LiteLLM router config failed, falling back to direct calls: %s", exc)
     return None
+
+
+def _apply_screening_litellm_generation_params(
+    call_kwargs: dict[str, object],
+    *,
+    model: str,
+    temperature: float | None,
+    model_list: list[dict[str, object]] | None = None,
+) -> dict[str, object]:
+    return apply_litellm_generation_params(
+        call_kwargs,
+        model,
+        temperature,
+        model_list=model_list,
+    )
+
+
+def _call_screening_litellm_completion(
+    call,
+    *,
+    model: str,
+    call_kwargs: dict[str, object],
+    model_list: list[dict[str, object]] | None = None,
+):
+    try:
+        return call_litellm_with_param_recovery(
+            call,
+            model=model,
+            call_kwargs=call_kwargs,
+            model_list=model_list,
+            logger=logger,
+            log_label="[Screening LiteLLM]",
+        )
+    except Exception as exc:
+        if "response_format" not in call_kwargs or not _is_json_mode_unsupported(exc):
+            raise
+        # Some providers do not support JSON mode. Retry the same request
+        # without it before moving to fallback models. Do not do this for
+        # timeout/connection failures: a local OpenAI-compatible server may
+        # keep generating after the client timeout, so a blind retry can
+        # duplicate expensive work while the first request is still running.
+        retry_kwargs = dict(call_kwargs)
+        retry_kwargs.pop("response_format", None)
+        return call_litellm_with_param_recovery(
+            call,
+            model=model,
+            call_kwargs=retry_kwargs,
+            model_list=model_list,
+            logger=logger,
+            log_label="[Screening LiteLLM]",
+        )
 
 
 def _silence_litellm_logs(litellm) -> None:
