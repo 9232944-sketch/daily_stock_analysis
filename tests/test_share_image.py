@@ -464,6 +464,69 @@ def test_single_stock_dashboard_title_routes_to_stock_poster():
     assert '<span class="code">AAPL</span>' in html
 
 
+def test_single_stock_dashboard_prefers_parenthesized_numeric_code_after_st_prefix():
+    html = build_share_image_html(
+        """# 2026-07-31 决策仪表盘
+
+## 🟡 *ST 海越 (600387)
+
+> 2026-07-31 15:30 | 评分：**62** | 中性
+
+### 核心结论
+
+**观望**：等待趋势进一步确认。
+""",
+        generated_on=date(2026, 7, 31),
+    )
+
+    assert 'class="poster stock"' in html
+    assert "个股决策卡" in html
+    assert "ST 海越" in html
+    assert '<span class="code">600387</span>' in html
+
+
+def test_single_stock_dashboard_uses_trailing_parenthesized_us_ticker():
+    html = build_share_image_html(
+        """# 2026-07-31 Decision Dashboard
+
+## IBM (IBM)
+
+> 2026-07-31 15:30 | Score: **64** | Neutral
+
+### Core Conclusion
+
+**Hold**: Wait for a clearer breakout.
+""",
+        generated_on=date(2026, 7, 31),
+    )
+
+    assert 'class="poster stock"' in html
+    assert "个股决策卡" in html
+    assert "IBM" in html
+    assert '<span class="code">IBM</span>' in html
+
+
+def test_single_stock_dashboard_uses_numeric_code_prefix_with_trailing_name():
+    html = build_share_image_html(
+        """# 2026-07-31 决策仪表盘
+
+## 600519 贵州茅台
+
+> 2026-07-31 15:30 | 评分：**72** | 看多
+
+### 核心结论
+
+**买入**：回调到支撑区可分批关注。
+""",
+        generated_on=date(2026, 7, 31),
+    )
+
+    assert 'class="poster stock"' in html
+    assert "个股决策卡" in html
+    assert "贵州茅台" in html
+    assert '<span class="code">600519</span>' in html
+
+
 def test_multi_stock_daily_report_uses_generic_poster_and_keeps_all_stocks():
     html = build_share_image_html(
         """# 股票分析报告

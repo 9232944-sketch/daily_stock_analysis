@@ -38,6 +38,7 @@ _DATE_RE = re.compile(r"\b(20\d{2}-\d{2}-\d{2})(?:[ T]\d{2}:\d{2}(?::\d{2})?)?\b
 _CODE_RE = re.compile(
     r"(?:\(|（)?((?:(?i:sh|sz|bj|hk))?\d{5,6}(?:\.[A-Z]{2})?|(?<![A-Za-z])[A-Z]{1,5}(?![A-Za-z]))(?:\)|）)?",
 )
+_NUMERIC_CODE_RE = re.compile(r"(?:(?i:sh|sz|bj|hk))?\d{5,6}(?:\.[A-Z]{2})?")
 _NA_VALUES = {"", "-", "--", "n/a", "na", "none", "null", "暂无", "暂无数据"}
 _MARKET_LABEL_PATTERNS = (
     (
@@ -294,19 +295,41 @@ def _market_label(text: str) -> str:
     return ""
 
 
+def _stock_heading_entry(raw_title: str) -> Optional[tuple[str, str]]:
+    def _heading_name(fragment: str) -> str:
+        name = _plain(fragment).strip(" -—()（）")
+        return re.sub(r"\b(?:分析报告|analysis report)$", "", name, flags=re.IGNORECASE).strip()
+
+    def _is_parenthesized(match: re.Match[str]) -> bool:
+        start, end = match.span(1)
+        return start > 0 and raw_title[start - 1] in "(（" and end < len(raw_title) and raw_title[end] in ")）"
+
+    trailing_candidate: Optional[tuple[str, str]] = None
+    leading_candidate: Optional[tuple[str, str]] = None
+    for match in _CODE_RE.finditer(raw_title):
+        code = match.group(1).upper()
+        name = _heading_name(raw_title[: match.start()])
+        if name:
+            if _is_parenthesized(match):
+                return name, code
+            if leading_candidate is None:
+                leading_candidate = (name, code)
+            continue
+        if _NUMERIC_CODE_RE.fullmatch(code):
+            trailing_name = _heading_name(raw_title[match.end() :])
+            if trailing_name and trailing_candidate is None:
+                trailing_candidate = (trailing_name, code)
+    return trailing_candidate or leading_candidate
+
+
 def _stock_headings(markdown_text: str) -> list[tuple[str, str]]:
     found: list[tuple[str, str]] = []
     for raw_title, _body, level in _extract_sections(markdown_text):
         if level > 2 or _MARKET_RE.search(raw_title) or _DASHBOARD_RE.search(raw_title):
             continue
-        match = _CODE_RE.search(raw_title)
-        if not match:
-            continue
-        code = match.group(1).upper()
-        name = _plain(raw_title[: match.start()]).strip(" -—()（）")
-        name = re.sub(r"\b(?:分析报告|analysis report)$", "", name, flags=re.IGNORECASE).strip()
-        if name:
-            found.append((name, code))
+        entry = _stock_heading_entry(raw_title)
+        if entry:
+            found.append(entry)
     return found
 
 
@@ -352,16 +375,20 @@ def _stock_data(markdown_text: str, generated_on: date) -> StockPoster:
         name, code = headings[0]
     else:
         first_title = next((title for title, _body, _level in _extract_sections(markdown_text)), "个股分析")
-        match = _CODE_RE.search(first_title)
-        if match and match.start() == 0:
-            # US ticker-only titles (and titles containing escaped HTML) read
-            # better as one title than as an empty name plus a detached code.
-            code = ""
-            name = _plain(first_title)
+        entry = _stock_heading_entry(first_title)
+        if entry:
+            name, code = entry
         else:
-            code = match.group(1).upper() if match else ""
-            name = _plain(first_title[: match.start()] if match else first_title)
-        name = re.sub(r"(?:分析报告|analysis report)$", "", name, flags=re.IGNORECASE).strip()
+            match = _CODE_RE.search(first_title)
+            if match and match.start() == 0:
+                # US ticker-only titles (and titles containing escaped HTML) read
+                # better as one title than as an empty name plus a detached code.
+                code = ""
+                name = _plain(first_title)
+            else:
+                code = match.group(1).upper() if match else ""
+                name = _plain(first_title[: match.start()] if match else first_title)
+            name = re.sub(r"(?:分析报告|analysis report)$", "", name, flags=re.IGNORECASE).strip()
 
     score_match = re.search(r"(?:评分|score)\s*[:：]?\s*\*{0,2}(\d{1,3})", markdown_text, re.IGNORECASE)
     core = _section(markdown_text, "核心结论", "core conclusion", "核心判断")
