@@ -1,7 +1,10 @@
 # -*- coding: utf-8 -*-
 """Regression contracts for the DSA-owned screening implementation."""
 
+import os
 from pathlib import Path
+import tempfile
+from unittest.mock import patch
 
 import pandas as pd
 from fastapi import FastAPI
@@ -9,11 +12,13 @@ from fastapi.testclient import TestClient as FastAPITestClient
 
 from api.v1.router import router
 from src.services.screening import REFERENCE_REVISION
+from src.services.screening import pipeline as screening_pipeline
 from src.services.screening.filter import apply_hard_filters
-from src.services.screening.models import HardFilterConfig, ScreeningConfig
+from src.services.screening.config import Config as ScreeningRuntimeConfig
+from src.services.screening.models import HardFilterConfig, ScreeningConfig, Strategy
 from src.services.screening.scorer import compute_screen_scores
 from src.services.screening import snapshot as screening_snapshot
-from src.services.screening.strategy import load_all_strategies
+from src.services.screening.strategy import list_strategies, load_all_strategies
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -75,6 +80,105 @@ def test_bundled_strategies_are_loaded_from_the_internal_package() -> None:
         "volume_breakout",
     }
     assert strategies["dual_low"].screening.factor_weights["value"] < 0.40
+
+
+def test_list_strategies_preserves_legacy_strategies_dir_override() -> None:
+    strategy_yaml = """
+name: custom_demo
+display_name: 自定义策略
+description: custom strategy
+screening:
+  enabled: true
+  market_scope: [cn]
+  hard_filters: {}
+  factor_weights:
+    value: 1.0
+  max_output: 3
+""".strip()
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        strategy_path = Path(temp_dir) / "custom_demo.yaml"
+        strategy_path.write_text(strategy_yaml, encoding="utf-8")
+
+        with patch.dict(os.environ, {"STRATEGIES_DIR": temp_dir}, clear=False):
+            config = ScreeningRuntimeConfig.from_env()
+            strategies = list_strategies()
+
+    assert config.strategies_dir == Path(temp_dir)
+    assert [item.name for item in strategies] == ["custom_demo"]
+
+
+def test_pipeline_passes_daily_history_cache_settings_to_enrichment(monkeypatch) -> None:
+    snapshot_df = pd.DataFrame(
+        [
+            {
+                "code": "000001",
+                "name": "Ping An",
+                "price": 10.0,
+                "change_pct": 1.2,
+                "amount": 200_000_000.0,
+            }
+        ]
+    )
+    snapshot_df.attrs.update({
+        "snapshot_source": "sina",
+        "source_errors": [],
+        "fallback_used": False,
+    })
+    strategy = Strategy(
+        name="demo",
+        display_name="Demo",
+        description="demo",
+        screening=ScreeningConfig(
+            enabled=True,
+            market_scope=["cn"],
+            hard_filters=HardFilterConfig(),
+            factor_weights={"value": 1.0},
+            max_output=3,
+        ),
+    )
+    config = ScreeningRuntimeConfig(
+        strategies_dir=SCREENING_ROOT / "strategies",
+        daily_enrich_enabled=True,
+        daily_history_cache_dir=Path("/tmp/daily-history-cache"),
+        daily_history_cache_ttl_hours=6,
+        post_analyzers=[],
+        risk_enabled=False,
+        portfolio_diversity_enabled=False,
+    )
+    captured: dict[str, object] = {}
+
+    def fake_enrich_daily_features(df: pd.DataFrame, **kwargs):
+        captured.update(kwargs)
+        enriched = df.copy()
+        enriched["daily_source"] = "cache"
+        enriched.attrs["daily_errors"] = []
+        enriched.attrs["daily_success_count"] = len(enriched)
+        enriched.attrs["daily_source_counts"] = {"cache": len(enriched)}
+        enriched.attrs["daily_quality_flag_counts"] = {}
+        enriched.attrs["daily_source_order_notes"] = []
+        enriched.attrs["daily_source_health"] = {}
+        return enriched
+
+    monkeypatch.setattr(screening_pipeline, "load_all_strategies", lambda _path: {"demo": strategy})
+    monkeypatch.setattr(screening_pipeline, "fetch_snapshot_with_fallback", lambda *args, **kwargs: snapshot_df.copy())
+    monkeypatch.setattr(screening_pipeline, "apply_hard_filters", lambda df, _filters: df.copy())
+    monkeypatch.setattr(
+        screening_pipeline,
+        "compute_screen_scores",
+        lambda df, _screening: df.assign(screen_score=88.0),
+    )
+    monkeypatch.setattr(screening_pipeline, "enrich_daily_features", fake_enrich_daily_features)
+    monkeypatch.setattr(screening_pipeline, "apply_dsa_provider_context", lambda picks, _context: [])
+    monkeypatch.setattr(screening_pipeline, "apply_risk_overlay", lambda picks, **kwargs: (picks, []))
+    monkeypatch.setattr(screening_pipeline, "apply_portfolio_overlay", lambda picks, **kwargs: (picks, []))
+    monkeypatch.setattr(screening_pipeline, "run_post_analyzers", lambda picks, **kwargs: (picks, []))
+
+    result = screening_pipeline.screen("demo", use_llm=False, config=config)
+
+    assert captured["cache_dir"] == Path("/tmp/daily-history-cache")
+    assert captured["cache_ttl_seconds"] == 6 * 60 * 60
+    assert result.daily_enriched is True
 
 
 def test_hard_filter_and_factor_scoring_keep_core_semantics() -> None:
@@ -156,3 +260,22 @@ def test_snapshot_schema_mismatch_counts_toward_source_circuit_breaker(
     assert calls == ["efinance"]
     assert result.attrs["snapshot_source"] == "efinance"
     assert "temporarily disabled" in result.attrs["source_errors"][0]
+
+
+def test_sina_snapshot_uses_timeout_wrapper(monkeypatch) -> None:
+    expected = pd.DataFrame([{"code": "000001"}])
+    captured: dict[str, object] = {}
+
+    def fake_wrapper(fetcher, *, source: str) -> pd.DataFrame:
+        captured["fetcher"] = fetcher
+        captured["source"] = source
+        return expected
+
+    monkeypatch.setattr(screening_snapshot, "_call_snapshot_wrapper", fake_wrapper)
+    monkeypatch.setattr(screening_snapshot, "_fetch_sina", lambda: expected)
+
+    result = screening_snapshot.fetch_cn_snapshot("sina")
+
+    assert result is expected
+    assert captured["source"] == "sina"
+    assert captured["fetcher"] is screening_snapshot._fetch_sina

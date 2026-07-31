@@ -49,7 +49,7 @@ def fetch_cn_snapshot(source: str = "efinance") -> pd.DataFrame:
     Raises RuntimeError if the source is unavailable.
     """
     if source == "sina":
-        return _fetch_sina()
+        return _call_snapshot_wrapper(_fetch_sina, source=source)
     elif source == "efinance":
         return _call_snapshot_wrapper(_fetch_efinance, source=source)
     elif source == "akshare_em":

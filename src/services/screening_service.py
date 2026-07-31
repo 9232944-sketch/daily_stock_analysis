@@ -1664,6 +1664,8 @@ def _screening_dsa_daily_history_provider() -> Iterator[None]:
         lookback_days: int = 120,
         source: str = "akshare",
         retries: int = 2,
+        cache_dir: str | Path | None = None,
+        cache_ttl_seconds: float | None = None,
     ) -> Any:
         try:
             dsa_df, dsa_source = get_dsa_daily_history(code, lookback_days=lookback_days)
@@ -1678,7 +1680,14 @@ def _screening_dsa_daily_history_provider() -> Iterator[None]:
                 source,
                 exc,
             )
-        return original_fetch(code, lookback_days=lookback_days, source=source, retries=retries)
+        return original_fetch(
+            code,
+            lookback_days=lookback_days,
+            source=source,
+            retries=retries,
+            cache_dir=cache_dir,
+            cache_ttl_seconds=cache_ttl_seconds,
+        )
 
     with _SCREENING_RUNTIME_ENV_LOCK:
         setattr(daily_module, "fetch_daily_history", fetch_daily_history_with_dsa)

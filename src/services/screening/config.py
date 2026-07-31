@@ -139,6 +139,10 @@ def _default_strategies_dir() -> Path:
     return _PACKAGE_DIR / "strategies"
 
 
+def _resolve_strategies_dir() -> Path:
+    return _parse_optional_path_env("STRATEGIES_DIR") or _default_strategies_dir()
+
+
 @dataclass
 class Config:
     """Runtime configuration, loaded from env vars."""
@@ -308,7 +312,7 @@ class Config:
             snapshot_fallback_max_age_hours=_parse_optional_float_env(
                 "SNAPSHOT_FALLBACK_MAX_AGE_HOURS"
             ),
-            strategies_dir=_default_strategies_dir(),
+            strategies_dir=_resolve_strategies_dir(),
             industry_map_files=[
                 Path(item)
                 for item in _parse_csv_env("INDUSTRY_MAP_FILES", [])

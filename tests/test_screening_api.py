@@ -2596,6 +2596,39 @@ class ScreeningOpportunitiesApiTestCase(unittest.TestCase):
         self.assertEqual(captured["daily_source"], "akshare")
         self.assertEqual(payload["candidate_count"], 0)
 
+    def test_dsa_daily_history_bridge_preserves_cache_kwargs_for_screening_fallback(self) -> None:
+        import src.services.screening.daily as daily_module
+
+        captured: dict[str, object] = {}
+        expected = object()
+
+        def fallback_fetch(code: str, **kwargs):
+            captured["code"] = code
+            captured.update(kwargs)
+            return expected
+
+        with (
+            patch.object(daily_module, "fetch_daily_history", new=fallback_fetch),
+            patch("src.services.screening_service.get_dsa_daily_history", side_effect=RuntimeError("dsa unavailable")),
+            screening_service._screening_dsa_daily_history_provider(),
+        ):
+            result = daily_module.fetch_daily_history(
+                "000001",
+                lookback_days=90,
+                source="auto",
+                retries=4,
+                cache_dir=Path("data/screening/daily_history"),
+                cache_ttl_seconds=321.0,
+            )
+
+        self.assertIs(result, expected)
+        self.assertEqual(captured["code"], "000001")
+        self.assertEqual(captured["lookback_days"], 90)
+        self.assertEqual(captured["source"], "auto")
+        self.assertEqual(captured["retries"], 4)
+        self.assertEqual(captured["cache_dir"], Path("data/screening/daily_history"))
+        self.assertEqual(captured["cache_ttl_seconds"], 321.0)
+
     def test_screen_preserves_explicit_openai_base_url_without_openai_channel(self) -> None:
         config = Config(
             screening_enabled=True,

@@ -215,6 +215,8 @@ def screen(
                 lookback_days=config.daily_lookback_days,
                 source=config.daily_source,
                 fetch_retries=config.daily_fetch_retries,
+                cache_dir=config.daily_history_cache_dir,
+                cache_ttl_seconds=config.daily_history_cache_ttl_hours * 3600,
                 max_workers=config.daily_fetch_max_workers,
             )
             daily_enriched = True
