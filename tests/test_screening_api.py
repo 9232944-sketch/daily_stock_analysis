@@ -2629,6 +2629,60 @@ class ScreeningOpportunitiesApiTestCase(unittest.TestCase):
         self.assertEqual(captured["cache_dir"], Path("data/screening/daily_history"))
         self.assertEqual(captured["cache_ttl_seconds"], 321.0)
 
+    def test_dsa_daily_history_bridge_writes_last_good_cache_on_dsa_success(self) -> None:
+        import src.services.screening.daily as daily_module
+
+        cache_dir = Path("data/screening/daily_history")
+        cache_path = cache_dir / "000001.auto.90.json"
+
+        with (
+            patch.object(
+                daily_module,
+                "fetch_daily_history",
+                new=MagicMock(side_effect=AssertionError("Screening fallback should not run")),
+            ),
+            patch(
+                "src.services.screening_service.get_dsa_daily_history",
+                return_value=(
+                    [
+                        {
+                            "trade_date": "20260603",
+                            "close": "10.5",
+                            "vol": "123400",
+                        }
+                    ],
+                    "EfinanceFetcher",
+                ),
+            ),
+            patch.object(daily_module, "_daily_history_cache_path", return_value=cache_path) as cache_path_mock,
+            patch.object(daily_module, "_write_daily_history_cache") as cache_write_mock,
+            screening_service._screening_dsa_daily_history_provider(),
+        ):
+            result = daily_module.fetch_daily_history(
+                "000001",
+                lookback_days=90,
+                source="auto",
+                retries=2,
+                cache_dir=cache_dir,
+                cache_ttl_seconds=321.0,
+            )
+
+        self.assertEqual(result.attrs["source"], "dsa:EfinanceFetcher")
+        self.assertEqual(result.attrs["daily_source"], "dsa:EfinanceFetcher")
+        self.assertEqual(result.attrs["daily_requested_source"], "auto")
+        cache_path_mock.assert_called_once_with(
+            cache_dir,
+            code="000001",
+            source="auto",
+            lookback_days=90,
+        )
+        cache_write_mock.assert_called_once()
+        self.assertEqual(cache_write_mock.call_args.args[0], cache_path)
+        self.assertIs(cache_write_mock.call_args.args[1], result)
+        self.assertEqual(cache_write_mock.call_args.kwargs["code"], "000001")
+        self.assertEqual(cache_write_mock.call_args.kwargs["source"], "auto")
+        self.assertEqual(cache_write_mock.call_args.kwargs["lookback_days"], 90)
+
     def test_screen_preserves_explicit_openai_base_url_without_openai_channel(self) -> None:
         config = Config(
             screening_enabled=True,

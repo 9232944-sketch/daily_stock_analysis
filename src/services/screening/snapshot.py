@@ -55,7 +55,7 @@ def fetch_cn_snapshot(source: str = "efinance") -> pd.DataFrame:
     elif source == "akshare_em":
         return _call_snapshot_wrapper(_fetch_akshare_em, source=source)
     elif source == "em_datacenter":
-        return _fetch_em_datacenter()
+        return _call_snapshot_wrapper(_fetch_em_datacenter, source=source)
     elif source == "tushare":
         return _call_snapshot_wrapper(_fetch_tushare, source=source)
     else:

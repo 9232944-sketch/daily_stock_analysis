@@ -4,6 +4,7 @@
 import os
 from pathlib import Path
 import tempfile
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pandas as pd
@@ -181,6 +182,79 @@ def test_pipeline_passes_daily_history_cache_settings_to_enrichment(monkeypatch)
     assert result.daily_enriched is True
 
 
+def test_pipeline_uses_ranker_success_flag_instead_of_partial_llm_scores(monkeypatch) -> None:
+    snapshot_df = pd.DataFrame(
+        [
+            {
+                "code": "000001",
+                "name": "Ping An",
+                "price": 10.0,
+                "change_pct": 1.2,
+                "amount": 200_000_000.0,
+            }
+        ]
+    )
+    snapshot_df.attrs.update({
+        "snapshot_source": "sina",
+        "source_errors": [],
+        "fallback_used": False,
+    })
+    strategy = Strategy(
+        name="demo",
+        display_name="Demo",
+        description="demo",
+        screening=ScreeningConfig(
+            enabled=True,
+            market_scope=["cn"],
+            hard_filters=HardFilterConfig(),
+            factor_weights={"value": 1.0},
+            max_output=3,
+        ),
+    )
+    config = ScreeningRuntimeConfig(
+        strategies_dir=SCREENING_ROOT / "strategies",
+        llm_model="openai/gpt-5-mini",
+        llm_api_key="test-key",
+        post_analyzers=[],
+        risk_enabled=False,
+        portfolio_diversity_enabled=False,
+    )
+
+    def fake_ranker(picks, *_args, **_kwargs):
+        leaked_pick = picks[0]
+        leaked_pick.llm_score = 99.0
+        return SimpleNamespace(
+            picks=picks,
+            ranked=False,
+            market_view="",
+            selection_logic="",
+            portfolio_risk="",
+            coverage=0.5,
+            errors=["coverage below threshold"],
+        )
+
+    monkeypatch.setattr(screening_pipeline, "load_all_strategies", lambda _path: {"demo": strategy})
+    monkeypatch.setattr(screening_pipeline, "fetch_snapshot_with_fallback", lambda *args, **kwargs: snapshot_df.copy())
+    monkeypatch.setattr(screening_pipeline, "apply_hard_filters", lambda df, _filters: df.copy())
+    monkeypatch.setattr(
+        screening_pipeline,
+        "compute_screen_scores",
+        lambda df, _screening: df.assign(screen_score=88.0),
+    )
+    monkeypatch.setattr(screening_pipeline, "apply_dsa_provider_context", lambda picks, _context: [])
+    monkeypatch.setattr(screening_pipeline, "rank_candidates_with_metadata", fake_ranker)
+    monkeypatch.setattr(screening_pipeline, "apply_risk_overlay", lambda picks, **kwargs: (picks, []))
+    monkeypatch.setattr(screening_pipeline, "apply_portfolio_overlay", lambda picks, **kwargs: (picks, []))
+    monkeypatch.setattr(screening_pipeline, "run_post_analyzers", lambda picks, **kwargs: (picks, []))
+
+    result = screening_pipeline.screen("demo", use_llm=True, config=config)
+
+    assert result.llm_ranked is False
+    assert result.picks[0].llm_score is None
+    assert result.picks[0].final_score == result.picks[0].screen_score
+    assert "LLM ranking failed: fell back to screen_score" in result.degradation
+
+
 def test_hard_filter_and_factor_scoring_keep_core_semantics() -> None:
     frame = pd.DataFrame(
         [
@@ -279,3 +353,48 @@ def test_sina_snapshot_uses_timeout_wrapper(monkeypatch) -> None:
     assert result is expected
     assert captured["source"] == "sina"
     assert captured["fetcher"] is screening_snapshot._fetch_sina
+
+
+def test_em_datacenter_snapshot_uses_timeout_wrapper(monkeypatch) -> None:
+    expected = pd.DataFrame([{"code": "000001"}])
+    captured: dict[str, object] = {}
+
+    def fake_wrapper(fetcher, *, source: str) -> pd.DataFrame:
+        captured["fetcher"] = fetcher
+        captured["source"] = source
+        return expected
+
+    monkeypatch.setattr(screening_snapshot, "_call_snapshot_wrapper", fake_wrapper)
+    monkeypatch.setattr(screening_snapshot, "_fetch_em_datacenter", lambda: expected)
+
+    result = screening_snapshot.fetch_cn_snapshot("em_datacenter")
+
+    assert result is expected
+    assert captured["source"] == "em_datacenter"
+    assert captured["fetcher"] is screening_snapshot._fetch_em_datacenter
+
+
+def test_em_datacenter_timeout_falls_back_to_last_good_snapshot(tmp_path, monkeypatch) -> None:
+    cached = pd.DataFrame(
+        [{"code": "000001", "name": "Ping An", "price": 10.0, "volume_ratio": 1.5}]
+    )
+    cached.attrs["snapshot_source"] = "cached:last_good"
+    cache_path = tmp_path / "snapshot-cache.json"
+    screening_snapshot._write_last_good_snapshot(cache_path, cached)
+
+    def fake_wrapper(fetcher, *, source: str) -> pd.DataFrame:
+        assert source == "em_datacenter"
+        assert fetcher is screening_snapshot._fetch_em_datacenter
+        raise RuntimeError("snapshot source em_datacenter timed out")
+
+    monkeypatch.setattr(screening_snapshot, "_call_snapshot_wrapper", fake_wrapper)
+
+    result = screening_snapshot.fetch_snapshot_with_fallback(
+        ["em_datacenter"],
+        required_columns=["volume_ratio"],
+        fallback_snapshot_path=cache_path,
+    )
+
+    assert result.attrs["fallback_used"] is True
+    assert result.attrs["snapshot_source"] == "last_good_cache"
+    assert result.loc[0, "code"] == "000001"

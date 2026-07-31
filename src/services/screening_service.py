@@ -1671,7 +1671,35 @@ def _screening_dsa_daily_history_provider() -> Iterator[None]:
             dsa_df, dsa_source = get_dsa_daily_history(code, lookback_days=lookback_days)
             normalized = _normalize_dsa_daily_history(dsa_df)
             if normalized is not None and not normalized.empty:
-                normalized.attrs["source"] = f"dsa:{dsa_source}"
+                resolved_source = f"dsa:{dsa_source}"
+                normalized_code = code
+                normalize_code = getattr(daily_module, "_normalize_daily_code", None)
+                if callable(normalize_code):
+                    normalized_code = normalize_code(code)
+                normalized.attrs["source"] = resolved_source
+                normalized.attrs["daily_source"] = resolved_source
+                normalized.attrs["daily_requested_source"] = source
+                normalized.attrs["daily_source_order"] = [resolved_source]
+                normalized.attrs["daily_source_order_notes"] = []
+                normalized.attrs["source_errors"] = []
+                normalized.attrs["daily_source_health"] = {}
+                if cache_dir is not None:
+                    cache_path_builder = getattr(daily_module, "_daily_history_cache_path", None)
+                    cache_writer = getattr(daily_module, "_write_daily_history_cache", None)
+                    if callable(cache_path_builder) and callable(cache_writer):
+                        cache_path = cache_path_builder(
+                            cache_dir,
+                            code=normalized_code,
+                            source=source,
+                            lookback_days=int(lookback_days),
+                        )
+                        cache_writer(
+                            cache_path,
+                            normalized,
+                            code=normalized_code,
+                            source=source,
+                            lookback_days=int(lookback_days),
+                        )
                 return normalized
         except Exception as exc:
             logger.warning(

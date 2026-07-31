@@ -3,6 +3,7 @@
 # Licensed under Apache-2.0 and modified for daily_stock_analysis.
 """Main pipeline — orchestrates L1 → L2 → result."""
 
+import copy
 import logging
 import uuid
 from pathlib import Path
@@ -316,6 +317,7 @@ def screen(
     # 6.5. Host-provided candidate context, e.g. DSA realtime quote,
     # fundamentals, and news. This runs before LLM ranking so L2 can use it.
     degradation.extend(apply_dsa_provider_context(picks, context))
+    llm_fallback_picks = [copy.deepcopy(pick) for pick in picks]
 
     # 7. L2 LLM ranking
     llm_ranked = False
@@ -406,8 +408,9 @@ def screen(
         llm_portfolio_risk = llm_result.portfolio_risk
         llm_coverage = llm_result.coverage
         llm_parse_errors = llm_result.errors
-        llm_ranked = any(p.llm_score is not None for p in picks)
+        llm_ranked = llm_result.ranked
         if not llm_ranked:
+            picks = llm_fallback_picks
             degradation.append("LLM ranking failed: fell back to screen_score")
             for i, p in enumerate(picks):
                 p.rank = i + 1

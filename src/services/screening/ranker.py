@@ -3,6 +3,7 @@
 # Licensed under Apache-2.0 and modified for daily_stock_analysis.
 """L2 LLM ranker — relative ranking of shortlisted candidates."""
 
+import copy
 import json
 import logging
 import os
@@ -603,7 +604,12 @@ def _parse_ranking_response_detail(response: str, candidates: list[Pick]) -> Ran
         logger.warning("LLM ranking JSON has no ranked list")
         return RankingParseResult(candidates, 0.0, errors)
 
-    code_to_pick = {_normalize_code(p.code): p for p in candidates if _normalize_code(p.code)}
+    # Parse into detached picks so partial/low-coverage results never mutate the
+    # caller's candidate list before coverage validation passes.
+    working_candidates = [copy.deepcopy(pick) for pick in candidates]
+    code_to_pick = {
+        _normalize_code(p.code): p for p in working_candidates if _normalize_code(p.code)
+    }
 
     ranked = []
     matched = 0

@@ -8,7 +8,8 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from src.llm.generation_params import clear_litellm_generation_param_recovery_cache
-from src.services.screening.ranker import _call_llm
+from src.services.screening.models import Pick
+from src.services.screening.ranker import _call_llm, rank_candidates_with_metadata
 
 
 def _response(content: str = "ok") -> SimpleNamespace:
@@ -108,3 +109,39 @@ model_list:
     assert result == "ok"
     assert router_calls[0]["temperature"] == 1.0
     assert "temperature" not in router_calls[1]
+
+
+def test_rank_candidates_with_metadata_does_not_mutate_candidates_when_coverage_is_low() -> None:
+    candidates = [
+        Pick(rank=1, code="600519", name="贵州茅台", final_score=90.0, screen_score=90.0),
+        Pick(rank=2, code="000001", name="平安银行", final_score=80.0, screen_score=80.0),
+    ]
+    response = """
+    {
+      "ranked": [
+        {
+          "code": "600519",
+          "reason": "partial coverage",
+          "risk": "watch valuation",
+          "llm_score": 95,
+          "sector": "Baijiu"
+        }
+      ]
+    }
+    """.strip()
+
+    with patch("src.services.screening.ranker._call_llm", return_value=response):
+        result = rank_candidates_with_metadata(
+            candidates,
+            "test hints",
+            "test-key",
+            "openai/gpt-5-mini",
+            min_coverage=0.75,
+            max_retries=0,
+        )
+
+    assert result.ranked is False
+    assert result.picks is candidates
+    assert candidates[0].llm_score is None
+    assert candidates[0].risk_summary == ""
+    assert candidates[0].llm_sector == ""
