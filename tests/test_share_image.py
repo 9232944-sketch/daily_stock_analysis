@@ -185,6 +185,73 @@ def test_english_company_name_is_not_mistaken_for_a_ticker():
     assert '<span class="code">AAPL</span>' in html
 
 
+def test_dotted_us_ticker_is_preserved_in_stock_heading():
+    html = build_share_image_html(
+        "## Berkshire Hathaway (BRK.B)\n\n> 2026-07-31 | Score: **70** | Bullish",
+        generated_on=date(2026, 7, 31),
+    )
+
+    assert "Berkshire Hathaway" in html
+    assert '<span class="code">BRK.B</span>' in html
+
+
+def test_korean_market_review_heading_uses_market_poster():
+    html = build_share_image_html(
+        "# 미국 시황 리뷰\n\n## 지수 구조\n\n| 지수 | 최신 | 涨跌幅 |\n| --- | --- | --- |\n| S&P 500 | 6200 | +0.8% |",
+        generated_on=date(2026, 7, 31),
+    )
+
+    assert 'class="poster market"' in html
+    assert "多股决策摘要" not in html
+    assert "美股市场复盘" in html
+
+
+def test_korean_multi_market_review_skips_root_wrapper_segment():
+    html = build_share_image_html(
+        """# 🎯 시황 리뷰
+
+> 여러 시장 마감 요약.
+
+# 미국 시황 리뷰
+
+## 2026-07-31 미국 시황 리뷰
+
+### 1. 시장 요약
+
+- **시장 신호**: 66/100 (건설적, 위험 선호)
+
+### 2. 주요 지수
+
+| 지수 | 최신 | 등락률 |
+| --- | --- | --- |
+| S&P 500 | 6200 | +0.8% |
+
+> 다음 시장 시황 리뷰
+
+# 홍콩 시황 리뷰
+
+## 2026-07-31 홍콩 시황 리뷰
+
+### 1. 시장 요약
+
+- **시장 신호**: 58/100 (중립, 선별)
+
+### 2. 주요 지수
+
+| 지수 | 최신 | 등락률 |
+| --- | --- | --- |
+| Hang Seng | 18200 | +1.2% |
+""",
+        generated_on=date(2026, 7, 31),
+    )
+
+    assert 'class="poster market"' in html
+    assert "多市场复盘" in html
+    assert "美股市场复盘" in html
+    assert "港股市场复盘" in html
+    assert "여러 시장 마감 요약" not in html
+
+
 def test_stock_report_market_snapshot_does_not_route_to_market_poster():
     html = build_share_image_html(
         """# Apple Inc. (AAPL)

@@ -25,10 +25,10 @@ PROJECT_URL = "https://github.com/ZhuLinsen/daily_stock_analysis"
 XIAOHONGSHU_URL = "http://xhslink.com/m/tU520DWCKT"
 _ASSET_DIR = Path(__file__).resolve().parent / "assets" / "share_image"
 _MARKET_RE = re.compile(
-    r"(?:大盘复盘|市场复盘|market\s+(?:review|recap))", re.IGNORECASE
+    r"(?:大盘复盘|市场复盘|market\s+(?:review|recap)|시황\s*리뷰)", re.IGNORECASE
 )
 _MARKET_SCOPE_RE = re.compile(
-    r"(?:A股|港股|美股|日股|韩股|\b(?:cn|hk|us|jp|kr)\b|a[-\s]?share|hong\s+kong|japan|korea|u\.?s\.?)",
+    r"(?:A股|港股|美股|日股|韩股|中国\s*A주|미국|홍콩|일본|한국|\b(?:cn|hk|us|jp|kr)\b|a[-\s]?share|hong\s+kong|japan|korea|u\.?s\.?)",
     re.IGNORECASE,
 )
 _DASHBOARD_RE = re.compile(r"(?:决策仪表盘|decision\s+dashboard)", re.IGNORECASE)
@@ -36,7 +36,7 @@ _HEADING_RE = re.compile(r"^(#{1,4})\s+(.+?)\s*$", re.MULTILINE)
 _QUOTE_RE = re.compile(r"^\s*>\s+(.+?)\s*$", re.MULTILINE)
 _DATE_RE = re.compile(r"\b(20\d{2}-\d{2}-\d{2})(?:[ T]\d{2}:\d{2}(?::\d{2})?)?\b")
 _CODE_RE = re.compile(
-    r"(?:\(|（)?((?:(?i:sh|sz|bj|hk))?\d{5,6}(?:\.[A-Z]{2})?|(?<![A-Za-z])[A-Z]{1,5}(?![A-Za-z]))(?:\)|）)?",
+    r"(?:\(|（)?((?:(?i:sh|sz|bj|hk))?\d{5,6}(?:\.[A-Z]{2})?|(?<![A-Za-z])[A-Z]{1,5}(?:\.[A-Z])?(?![A-Za-z]))(?:\)|）)?",
 )
 _NUMERIC_CODE_RE = re.compile(r"(?:(?i:sh|sz|bj|hk))?\d{5,6}(?:\.[A-Z]{2})?")
 _NA_VALUES = {"", "-", "--", "n/a", "na", "none", "null", "暂无", "暂无数据"}
@@ -44,26 +44,26 @@ _MARKET_LABEL_PATTERNS = (
     (
         "A股",
         re.compile(
-            r"(?:A\s*股|a[-\s]?share|\bcn\s+market\s+(?:review|recap)\b|\bchina\b)",
+            r"(?:A\s*股|a[-\s]?share|\bcn\s+market\s+(?:review|recap)\b|\bchina\b|중국\s*A주)",
             re.IGNORECASE,
         ),
     ),
     (
         "港股",
         re.compile(
-            r"(?:港\s*股|\bhk\s+market\s+(?:review|recap)\b|hong\s+kong)",
+            r"(?:港\s*股|\bhk\s+market\s+(?:review|recap)\b|hong\s+kong|홍콩)",
             re.IGNORECASE,
         ),
     ),
     (
         "美股",
         re.compile(
-            r"(?:美\s*股|\b(?:u\.?s\.?|us)\s+market\s+(?:review|recap)\b|united\s+states)",
+            r"(?:美\s*股|\b(?:u\.?s\.?|us)\s+market\s+(?:review|recap)\b|united\s+states|미국)",
             re.IGNORECASE,
         ),
     ),
-    ("日股", re.compile(r"(?:日\s*股|japan)", re.IGNORECASE)),
-    ("韩股", re.compile(r"(?:韩\s*股|korea)", re.IGNORECASE)),
+    ("日股", re.compile(r"(?:日\s*股|japan|일본)", re.IGNORECASE)),
+    ("韩股", re.compile(r"(?:韩\s*股|korea|한국)", re.IGNORECASE)),
 )
 
 
