@@ -31,6 +31,18 @@ from src.config import Config, get_configured_llm_models
 from src.services.screening import REFERENCE_PROJECT, REFERENCE_REVISION, __version__ as SCREENING_VERSION
 from src.services.screening import hotspot as screening_hotspot
 from src.services.screening.pipeline import screen as run_screening_pipeline
+from src.services.screening.ranker import (
+    _apply_screening_litellm_generation_params as apply_screening_litellm_generation_params,
+)
+from src.services.screening.ranker import (
+    _build_litellm_attempts as build_screening_litellm_attempts,
+)
+from src.services.screening.ranker import (
+    _call_litellm_router as call_screening_litellm_router,
+)
+from src.services.screening.ranker import (
+    _call_screening_litellm_completion as call_screening_litellm_completion,
+)
 from src.services.screening.strategy import list_strategies as load_screening_strategies
 from src.storage import DatabaseManager
 
@@ -518,7 +530,7 @@ def _truncate_text(text: str, max_chars: int) -> str:
 
 
 def _summarize_hotspot_news_event_with_llm(*, topic: str, text: str, config: Config) -> str:
-    model, _fallback_models = _resolve_screening_llm_models(config)
+    model, fallback_models = _resolve_screening_llm_models(config)
     if not _env_text(model) or not text:
         return ""
     try:
@@ -530,17 +542,66 @@ def _summarize_hotspot_news_event_with_llm(*, topic: str, text: str, config: Con
             "不要输出完整报道、股票价格流水、免责声明或投资建议。\n\n"
             f"题材：{topic}\n新闻：{text}"
         )
+        messages = [
+            {"role": "system", "content": "你是A股题材事件摘要助手，只输出一句短摘要。"},
+            {"role": "user", "content": prompt},
+        ]
+        channels = _normalize_dsa_llm_channels(config)
+        model_list = _build_screening_litellm_model_list(config, channels)
+        model_chain = _dedupe_strings([model, *(fallback_models or [])])
+        config_path = _env_text(config.litellm_config_path)
         with _screening_litellm_headers(config):
-            response = litellm.completion(
-                model=model,
-                messages=[
-                    {"role": "system", "content": "你是A股题材事件摘要助手，只输出一句短摘要。"},
-                    {"role": "user", "content": prompt},
-                ],
-                temperature=0.2,
-                max_tokens=120,
-                timeout=8,
-            )
+            if config_path:
+                router_result = call_screening_litellm_router(
+                    litellm,
+                    config_path=config_path,
+                    model_chain=model_chain,
+                    messages=messages,
+                    temperature=0.2,
+                    json_mode=False,
+                    timeout_sec=8,
+                    max_tokens=120,
+                )
+                if router_result:
+                    return _clean_hotspot_llm_summary(router_result)
+            response = None
+            last_error: Exception | None = None
+            for candidate_model in model_chain:
+                for kwargs in _build_hotspot_summary_litellm_attempts(
+                    candidate_model,
+                    config=config,
+                    channels=channels,
+                    model_list=model_list,
+                ):
+                    kwargs["messages"] = messages
+                    kwargs["timeout"] = 8
+                    kwargs["num_retries"] = 0
+                    kwargs["max_tokens"] = 120
+                    kwargs = apply_screening_litellm_generation_params(
+                        kwargs,
+                        model=candidate_model,
+                        temperature=0.2,
+                        model_list=model_list or None,
+                    )
+                    try:
+                        response = call_screening_litellm_completion(
+                            lambda request_kwargs: litellm.completion(**request_kwargs),
+                            model=candidate_model,
+                            call_kwargs=kwargs,
+                            model_list=model_list or None,
+                        )
+                        break
+                    except Exception as exc:
+                        last_error = exc
+                        if "timeout" in str(exc).lower() or "timed out" in str(exc).lower():
+                            raise
+                        continue
+                if response is not None:
+                    break
+            if response is None:
+                if last_error is not None:
+                    raise last_error
+                raise RuntimeError("No LLM model configured")
         return _clean_hotspot_llm_summary(_extract_litellm_message_content(response))
     except Exception as exc:
         logger.info("Screening hotspot LLM event summary skipped for %s: %s", topic, exc)
@@ -1192,7 +1253,8 @@ class ScreeningService:
             normalized["fallback_used"] = True
             normalized["provider"] = provider_name
         if not _hotspot_route_has_external_event(normalized.get("route")):
-            search_routes = _build_hotspot_event_routes_from_search(topic_text, self.config)
+            with _screening_runtime_env(self.config):
+                search_routes = _build_hotspot_event_routes_from_search(topic_text, self.config)
             if search_routes:
                 route = normalized.get("route")
                 normalized["route"] = search_routes + (route if isinstance(route, list) else [])
@@ -1237,6 +1299,7 @@ class ScreeningService:
         candidates = _normalize_candidates(raw_data)
         selected = candidates[:max_results]
         selected, dsa_enrichment = _enrich_candidates_with_dsa(selected)
+        warnings = _collect_screening_warning_messages(raw_data)
         response = {
             "enabled": True,
             "candidates": selected,
@@ -1253,7 +1316,8 @@ class ScreeningService:
             "llm_portfolio_risk": raw_data.get("llm_portfolio_risk") or "",
             "llm_coverage": raw_data.get("llm_coverage"),
             "llm_parse_errors": _list_text_values(raw_data.get("llm_parse_errors")),
-            "warnings": _list_text_values(raw_data.get("warnings")),
+            "degradation": _list_text_values(raw_data.get("degradation")),
+            "warnings": warnings,
             "source_errors": _list_text_values(raw_data.get("source_errors")),
             "dsa_enrichment": dsa_enrichment,
             "deep_analysis_requested": raw_data.get("deep_analysis_requested"),
@@ -1637,7 +1701,7 @@ def _summarize_screening_source_history(runs: List[Dict[str, Any]]) -> Dict[str,
             selected["last_seen_at"] = created_at
 
         errors = _list_text_values(run.get("source_errors"))
-        warnings = _list_text_values(run.get("warnings"))
+        warnings = _collect_screening_warning_messages(run)
         if errors or any("fallback" in warning.lower() or "降级" in warning for warning in warnings):
             fallback_runs += 1
         for error in errors:
@@ -2986,6 +3050,71 @@ def _resolve_screening_llm_models(config: Config) -> Tuple[str, List[str]]:
     return primary, fallback_models
 
 
+def _build_hotspot_summary_litellm_attempts(
+    model: str,
+    *,
+    config: Config,
+    channels: List[Dict[str, Any]],
+    model_list: List[Dict[str, Any]],
+) -> List[Dict[str, object]]:
+    attempts: List[Dict[str, object]] = []
+    for entry in model_list:
+        if not isinstance(entry, dict):
+            continue
+        params = entry.get("litellm_params")
+        if not isinstance(params, dict):
+            continue
+        names = _dedupe_strings([entry.get("model_name"), params.get("model")])
+        if not _screening_model_route_matches(model, names):
+            continue
+        kwargs: Dict[str, object] = {"model": model}
+        api_key = _env_text(params.get("api_key"))
+        api_base = _env_text(params.get("api_base") or params.get("base_url"))
+        if api_key:
+            kwargs["api_key"] = api_key
+        if api_base:
+            kwargs["api_base"] = api_base
+        attempts.append(kwargs)
+    attempts.extend(
+        build_screening_litellm_attempts(
+            model,
+            api_key=_env_text(getattr(config, "llm_api_key", "")),
+            base_url=_env_text(getattr(config, "llm_base_url", "")),
+            channels=channels,
+        )
+    )
+    return _unique_hotspot_summary_litellm_attempts(attempts)
+
+
+def _screening_model_route_matches(model: str, route_models: List[str]) -> bool:
+    normalized_model = _env_text(model)
+    if not normalized_model:
+        return False
+    normalized_routes = {_env_text(item) for item in route_models if _env_text(item)}
+    if normalized_model in normalized_routes:
+        return True
+    model_suffix = normalized_model.split("/", 1)[-1]
+    return any(model_suffix == route_model.split("/", 1)[-1] for route_model in normalized_routes)
+
+
+def _unique_hotspot_summary_litellm_attempts(
+    attempts: List[Dict[str, object]],
+) -> List[Dict[str, object]]:
+    result: List[Dict[str, object]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for attempt in attempts:
+        key = (
+            _env_text(attempt.get("model")),
+            _env_text(attempt.get("api_key")),
+            _env_text(attempt.get("api_base")),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(attempt)
+    return result
+
+
 def _is_managed_litellm_model(model: str) -> bool:
     text = _env_text(model)
     if not text:
@@ -3059,6 +3188,18 @@ def _dedupe_strings(values: Any) -> List[str]:
         result.append(text)
         seen.add(text)
     return result
+
+
+def _collect_screening_warning_messages(payload: Dict[str, Any]) -> List[str]:
+    warnings: List[str] = []
+    seen: set[str] = set()
+    for key in ("warnings", "degradation"):
+        for value in _list_text_values(payload.get(key)):
+            if value in seen:
+                continue
+            seen.add(value)
+            warnings.append(value)
+    return warnings
 
 
 def _env_text(value: Any) -> str:

@@ -1177,6 +1177,109 @@ class ScreeningOpportunitiesApiTestCase(unittest.TestCase):
         self.assertNotIn("完整产业链背景", payload["route"][0]["description"])
         search_service.search_stock_news.assert_called_once()
 
+    def test_hotspot_detail_reuses_screening_litellm_routes_and_temperature_compatibility(self) -> None:
+        config = Config(
+            screening_enabled=True,
+            litellm_model="openai/gpt-5-mini",
+            openai_api_keys=["dsa-openai-key"],
+            openai_base_url="https://openai-compatible.example/v1",
+            llm_model_list=[
+                {
+                    "model_name": "openai/gpt-5-mini",
+                    "litellm_params": {
+                        "model": "openai/gpt-5-mini",
+                        "api_key": "dsa-openai-key",
+                        "api_base": "https://openai-compatible.example/v1",
+                        "extra_headers": {"x-tenant": "dsa"},
+                    },
+                },
+            ],
+            bocha_api_keys=["test-key"],
+        )
+        provider = screening_service.DsaEastMoneyHotspotProvider()
+        provider.hotspot_detail = MagicMock(return_value={
+            "topic": "钼",
+            "summary": "钼 当前涨跌幅 10.00%。",
+            "route": [{"title": "当日发酵", "description": "钼板块异动。", "source": "eastmoney_board_change"}],
+            "stocks": [],
+            "stock_count": 0,
+            "source_errors": [],
+        })
+        search_service = MagicMock()
+        search_service.search_stock_news.return_value = SimpleNamespace(
+            success=True,
+            provider="Bocha",
+            results=[
+                SimpleNamespace(
+                    title="以钼代钨带动小金属行情",
+                    snippet="以钼代钨带动小金属行情，市场关注材料替代和供需偏紧。",
+                    url="https://example.com/news",
+                    source="ExampleNews",
+                    published_date="2026-06-12",
+                )
+            ],
+        )
+        completion_calls: List[Dict[str, Any]] = []
+        env_snapshots: List[Dict[str, Any]] = []
+
+        def completion_impl(**kwargs: Any) -> Any:
+            completion_calls.append(dict(kwargs))
+            env_snapshots.append(
+                {
+                    "LITELLM_MODEL": screening_service.os.environ.get("LITELLM_MODEL"),
+                    "OPENAI_API_KEY": screening_service.os.environ.get("OPENAI_API_KEY"),
+                    "OPENAI_BASE_URL": screening_service.os.environ.get("OPENAI_BASE_URL"),
+                }
+            )
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(content="钼价上行带动小金属与相关产业链发酵。")
+                    )
+                ]
+            )
+
+        fake_litellm = SimpleNamespace(completion=completion_impl)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with (
+                patch.dict(
+                    os.environ,
+                    {
+                        "SCREENING_DATA_DIR": str(Path(tmpdir) / "screening"),
+                        "LITELLM_MODEL": "outer/model",
+                        "OPENAI_API_KEY": "outer-openai-key",
+                        "OPENAI_BASE_URL": "https://outer-openai.example/v1",
+                    },
+                    clear=False,
+                ),
+                patch.dict(sys.modules, {"litellm": fake_litellm}, clear=False),
+                patch("src.services.screening_service._get_screening_status_snapshot", return_value=({}, True, {})),
+                patch("src.services.screening_service._resolve_hotspot_provider", return_value=("akshare", provider)),
+                patch("src.services.screening_service.screening_hotspot", new=SimpleNamespace()),
+                patch("src.search_service.SearchService", return_value=search_service),
+            ):
+                payload = self._hotspot_detail(config=config, provider="akshare", topic="钼")
+                self.assertEqual(os.environ.get("LITELLM_MODEL"), "outer/model")
+                self.assertEqual(os.environ.get("OPENAI_API_KEY"), "outer-openai-key")
+                self.assertEqual(os.environ.get("OPENAI_BASE_URL"), "https://outer-openai.example/v1")
+
+        self.assertEqual(payload["route"][0]["description"], "钼价上行带动小金属与相关产业链发酵。")
+        self.assertEqual(completion_calls[0]["model"], "openai/gpt-5-mini")
+        self.assertEqual(completion_calls[0]["api_key"], "dsa-openai-key")
+        self.assertEqual(
+            completion_calls[0]["api_base"],
+            "https://openai-compatible.example/v1",
+        )
+        self.assertEqual(completion_calls[0]["extra_headers"], {"x-tenant": "dsa"})
+        self.assertNotIn("temperature", completion_calls[0])
+        self.assertEqual(env_snapshots[0]["LITELLM_MODEL"], "openai/gpt-5-mini")
+        self.assertEqual(env_snapshots[0]["OPENAI_API_KEY"], "dsa-openai-key")
+        self.assertEqual(
+            env_snapshots[0]["OPENAI_BASE_URL"],
+            "https://openai-compatible.example/v1",
+        )
+
     def test_hotspot_detail_prefers_timeline_when_engine_route_is_empty(self) -> None:
         config = self._config(enabled=True)
         provider = screening_service.DsaEastMoneyHotspotProvider()
@@ -1769,6 +1872,7 @@ class ScreeningOpportunitiesApiTestCase(unittest.TestCase):
                     "llm_ranked": True,
                     "llm_coverage": 1.0,
                     "warnings": "fallback",
+                    "degradation": ["Snapshot source fallback: em_datacenter: retry from cache"],
                     "source_errors": "sina timeout",
                     "llm_parse_errors": "retry parsed partial JSON",
                     "deep_analysis_requested": False,
@@ -1813,7 +1917,14 @@ class ScreeningOpportunitiesApiTestCase(unittest.TestCase):
         self.assertEqual(payload["after_filter_count"], 5)
         self.assertEqual(payload["llm_ranked"], True)
         self.assertEqual(payload["llm_coverage"], 1.0)
-        self.assertEqual(payload["warnings"], ["fallback"])
+        self.assertEqual(
+            payload["warnings"],
+            ["fallback", "Snapshot source fallback: em_datacenter: retry from cache"],
+        )
+        self.assertEqual(
+            payload["degradation"],
+            ["Snapshot source fallback: em_datacenter: retry from cache"],
+        )
         self.assertEqual(payload["source_errors"], ["sina timeout"])
         self.assertEqual(payload["llm_parse_errors"], ["retry parsed partial JSON"])
         self.assertEqual(payload["candidate_count"], 1)

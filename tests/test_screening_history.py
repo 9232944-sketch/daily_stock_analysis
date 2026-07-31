@@ -80,6 +80,84 @@ class ScreeningHistoryTestCase(unittest.TestCase):
         self.assertEqual(history["run_count"], 1)
         self.assertNotIn("result", history["runs"][0])
 
+    def test_screen_maps_pipeline_degradation_into_warning_contract(self) -> None:
+        raw_result = {
+            "run_id": "screen-run-degradation",
+            "strategy": "dual_low",
+            "market": "cn",
+            "snapshot_source": "sina",
+            "snapshot_count": 5000,
+            "after_filter_count": 12,
+            "llm_ranked": False,
+            "daily_enriched": False,
+            "source_errors": ["efinance: request timed out"],
+            "degradation": [
+                "Snapshot source fallback: efinance: request timed out",
+                "LLM ranking failed: fell back to screen_score",
+            ],
+            "candidates": [
+                {
+                    "rank": 1,
+                    "code": "600519",
+                    "name": "贵州茅台",
+                    "final_score": 88.5,
+                    "ranking_reason": "低估值与流动性通过",
+                }
+            ],
+        }
+        service = ScreeningService(self.config, db_manager=self.db)
+
+        with (
+            patch(
+                "src.services.screening_service._get_screening_status_snapshot",
+                return_value=({}, True, None),
+            ),
+            patch(
+                "src.services.screening_service._call_screening_screen",
+                return_value=raw_result,
+            ),
+            patch(
+                "src.services.screening_service._enrich_candidates_with_dsa",
+                side_effect=lambda candidates: (
+                    candidates,
+                    {
+                        "enabled": True,
+                        "requested_count": 1,
+                        "enriched_count": 0,
+                        "warnings": [],
+                    },
+                ),
+            ),
+        ):
+            response = service.screen(strategy="dual_low", market="cn", max_results=3)
+
+        self.assertEqual(
+            response["warnings"],
+            [
+                "Snapshot source fallback: efinance: request timed out",
+                "LLM ranking failed: fell back to screen_score",
+            ],
+        )
+        self.assertEqual(
+            response["degradation"],
+            [
+                "Snapshot source fallback: efinance: request timed out",
+                "LLM ranking failed: fell back to screen_score",
+            ],
+        )
+        stored = self.db.get_screening_run("screen-run-degradation")
+        self.assertIsNotNone(stored)
+        assert stored is not None
+        self.assertEqual(stored["warnings"], response["warnings"])
+        self.assertEqual(stored["result"]["warnings"], response["warnings"])
+        self.assertEqual(stored["result"]["degradation"], response["degradation"])
+
+        history = service.history(limit=10, strategy="dual_low", market="cn")
+        self.assertEqual(history["runs"][0]["warnings"], response["warnings"])
+
+        source_history = service.source_history(limit=10)
+        self.assertEqual(source_history["fallback_runs"], 1)
+
     def test_save_is_idempotent_and_source_history_aggregates_failures(self) -> None:
         payload = {
             "run_id": "screen-run-2",
@@ -88,7 +166,8 @@ class ScreeningHistoryTestCase(unittest.TestCase):
             "snapshot_source": "sina",
             "candidate_count": 2,
             "source_errors": ["efinance: empty response"],
-            "warnings": ["Snapshot source fallback: efinance: empty response"],
+            "warnings": [],
+            "degradation": ["Snapshot source fallback: efinance: empty response"],
             "candidates": [],
         }
         self.assertEqual(self.db.save_screening_run(payload), 1)
@@ -98,6 +177,10 @@ class ScreeningHistoryTestCase(unittest.TestCase):
         runs = self.db.list_screening_runs(limit=10)
         self.assertEqual(len(runs), 1)
         self.assertEqual(runs[0]["candidate_count"], 3)
+        self.assertEqual(
+            runs[0]["warnings"],
+            ["Snapshot source fallback: efinance: empty response"],
+        )
 
         source_history = ScreeningService(
             self.config,

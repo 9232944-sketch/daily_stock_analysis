@@ -2206,19 +2206,22 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         run_id = str(payload.get("run_id") or "").strip()
         if not run_id:
             return 0
+        normalized_payload = dict(payload)
+        warnings = self._screening_warning_values(normalized_payload)
+        normalized_payload["warnings"] = warnings
 
         values = {
-            "strategy": str(payload.get("strategy") or "").strip() or "unknown",
-            "market": str(payload.get("market") or "").strip() or "cn",
-            "snapshot_source": str(payload.get("snapshot_source") or "").strip() or None,
-            "snapshot_count": self._optional_int(payload.get("snapshot_count")),
-            "after_filter_count": self._optional_int(payload.get("after_filter_count")),
-            "candidate_count": self._optional_int(payload.get("candidate_count")) or 0,
-            "llm_ranked": self._optional_bool(payload.get("llm_ranked")),
-            "daily_enriched": self._optional_bool(payload.get("daily_enriched")),
-            "source_errors_json": self._safe_json_dumps(payload.get("source_errors") or []),
-            "warnings_json": self._safe_json_dumps(payload.get("warnings") or []),
-            "result_json": self._safe_json_dumps(payload),
+            "strategy": str(normalized_payload.get("strategy") or "").strip() or "unknown",
+            "market": str(normalized_payload.get("market") or "").strip() or "cn",
+            "snapshot_source": str(normalized_payload.get("snapshot_source") or "").strip() or None,
+            "snapshot_count": self._optional_int(normalized_payload.get("snapshot_count")),
+            "after_filter_count": self._optional_int(normalized_payload.get("after_filter_count")),
+            "candidate_count": self._optional_int(normalized_payload.get("candidate_count")) or 0,
+            "llm_ranked": self._optional_bool(normalized_payload.get("llm_ranked")),
+            "daily_enriched": self._optional_bool(normalized_payload.get("daily_enriched")),
+            "source_errors_json": self._safe_json_dumps(normalized_payload.get("source_errors") or []),
+            "warnings_json": self._safe_json_dumps(warnings),
+            "result_json": self._safe_json_dumps(normalized_payload),
         }
 
         try:
@@ -2312,6 +2315,30 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         except (TypeError, ValueError):
             return []
         return decoded if isinstance(decoded, list) else []
+
+    @staticmethod
+    def _screening_text_list(value: Any) -> List[str]:
+        if isinstance(value, list):
+            result = []
+            for item in value:
+                text = str(item or "").strip()
+                if text:
+                    result.append(text)
+            return result
+        text = str(value or "").strip()
+        return [text] if text else []
+
+    @classmethod
+    def _screening_warning_values(cls, payload: Dict[str, Any]) -> List[str]:
+        warnings: List[str] = []
+        seen: set[str] = set()
+        for key in ("warnings", "degradation"):
+            for item in cls._screening_text_list(payload.get(key)):
+                if item in seen:
+                    continue
+                seen.add(item)
+                warnings.append(item)
+        return warnings
 
     @classmethod
     def _screening_run_to_dict(
