@@ -38,3 +38,15 @@ def test_markdown_to_file_renderer_receives_the_same_share_poster(tmp_path, monk
     assert 'class="poster stock"' in captured["html"]
     assert "项目主页二维码" in captured["html"]
     assert "小红书二维码" in captured["html"]
+
+
+def test_wkhtml_renderer_returns_none_when_share_poster_build_fails():
+    with patch("src.md2img.build_share_image_html", side_effect=FileNotFoundError("missing qr")):
+        assert _markdown_to_image_wkhtml("# 大盘复盘") is None
+
+
+def test_markdown_to_file_renderer_returns_none_when_share_poster_build_fails(monkeypatch):
+    monkeypatch.setattr("src.md2img.shutil.which", lambda _name: "m2f")
+
+    with patch("src.md2img.build_share_image_html", side_effect=FileNotFoundError("missing qr")):
+        assert _markdown_to_image_m2f("# 贵州茅台 600519") is None

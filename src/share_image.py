@@ -25,7 +25,11 @@ PROJECT_URL = "https://github.com/ZhuLinsen/daily_stock_analysis"
 XIAOHONGSHU_URL = "http://xhslink.com/m/tU520DWCKT"
 _ASSET_DIR = Path(__file__).resolve().parent / "assets" / "share_image"
 _MARKET_RE = re.compile(
-    r"(?:大盘|市场复盘|market\s+(?:review|recap)|market\b)", re.IGNORECASE
+    r"(?:大盘复盘|市场复盘|market\s+(?:review|recap))", re.IGNORECASE
+)
+_MARKET_SCOPE_RE = re.compile(
+    r"(?:A股|港股|美股|日股|韩股|\b(?:cn|hk|us|jp|kr)\b|a[-\s]?share|hong\s+kong|japan|korea|u\.?s\.?)",
+    re.IGNORECASE,
 )
 _DASHBOARD_RE = re.compile(r"(?:决策仪表盘|decision\s+dashboard)", re.IGNORECASE)
 _HEADING_RE = re.compile(r"^(#{1,4})\s+(.+?)\s*$", re.MULTILINE)
@@ -82,6 +86,12 @@ class MarketPoster:
     catalysts: list[str] = field(default_factory=list)
     plan: list[str] = field(default_factory=list)
     risks: list[str] = field(default_factory=list)
+
+
+@dataclass
+class MarketSegment:
+    title: str
+    markdown: str
 
 
 def _asset_data_uri(filename: str, mime_type: str) -> str:
@@ -265,6 +275,42 @@ def _stock_headings(markdown_text: str) -> list[tuple[str, str]]:
         if name:
             found.append((name, code))
     return found
+
+
+def _is_market_review_title(title: str) -> bool:
+    return bool(_MARKET_RE.search(_plain(title)))
+
+
+def _has_market_scope(title: str) -> bool:
+    return bool(_MARKET_SCOPE_RE.search(_plain(title)))
+
+
+def _market_segments(markdown_text: str) -> list[MarketSegment]:
+    top_level_matches = [
+        match
+        for match in _HEADING_RE.finditer(markdown_text or "")
+        if len(match.group(1)) == 1
+    ]
+    matches = [match for match in top_level_matches if _is_market_review_title(match.group(2))]
+    if len(matches) < 2:
+        return []
+    if top_level_matches and matches[0].start() == top_level_matches[0].start():
+        first_title = matches[0].group(2)
+        if not _has_market_scope(first_title):
+            scoped_matches = [match for match in top_level_matches if _has_market_scope(match.group(2))]
+            if len(scoped_matches) >= 2:
+                matches = scoped_matches
+
+    segments: list[MarketSegment] = []
+    for index, match in enumerate(matches):
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(markdown_text)
+        segments.append(
+            MarketSegment(
+                title=_plain(match.group(2)),
+                markdown=markdown_text[match.start() : end].strip(),
+            )
+        )
+    return segments
 
 
 def _stock_data(markdown_text: str, generated_on: date) -> StockPoster:
@@ -523,6 +569,14 @@ def _section_html(title: str, icon: str, content: str, class_name: str = "") -> 
     return f'<section class="poster-section {class_name}"><h2><b>{_escape(icon)}</b>{_escape(title)}</h2>{content}</section>'
 
 
+def _render_markdown_fragment(markdown_text: str) -> str:
+    return markdown2.markdown(
+        markdown_text,
+        extras=["tables", "fenced-code-blocks", "break-on-newline", "cuddled-lists"],
+        safe_mode="escape",
+    )
+
+
 def _stock_body(data: StockPoster, fallback_html: str) -> str:
     tone = _tone_for_action(data.action)
     score = f'<div class="signal-score"><span>评分</span><strong>{_escape(data.score)}</strong><small>/100</small></div>' if data.score else ""
@@ -598,6 +652,20 @@ def _generic_body(report_html: str) -> str:
     return f'<section class="report-fallback"><article class="report-content">{report_html}</article></section>'
 
 
+def _multi_market_body(segments: list[MarketSegment], generated_on: date) -> str:
+    blocks: list[str] = []
+    for segment in segments:
+        body_markdown = _HEADING_RE.sub("", segment.markdown, count=1).strip()
+        fallback_html = _render_markdown_fragment(body_markdown)
+        data = _market_data(segment.markdown, generated_on)
+        title = data.title or segment.title
+        blocks.append(
+            f'<section class="poster-section market-region-title"><h2><b>◎</b>{_escape(title)}</h2></section>'
+            f"{_market_body(data, fallback_html)}"
+        )
+    return "".join(blocks)
+
+
 def _footer(project_qr: str, xiaohongshu_qr: str, source_line: str) -> str:
     return f"""
     <footer class="poster-footer">
@@ -621,23 +689,29 @@ def build_share_image_html(markdown_text: str, *, generated_on: Optional[date] =
     headings = _extract_sections(markdown_text)
     first_title = headings[0][0] if headings else "Daily Stock Analysis"
     stock_headings = _stock_headings(markdown_text)
-    is_market = bool(_MARKET_RE.search(first_title) or _MARKET_RE.search(markdown_text[:400]))
-    is_dashboard = bool(_DASHBOARD_RE.search(first_title) and len(stock_headings) != 1)
-    report_kind = "market" if is_market else "dashboard" if is_dashboard else "stock"
+    market_segments = _market_segments(markdown_text)
+    candidate_market_titles = headings[:2]
+    is_market = any(
+        level <= 2 and _is_market_review_title(title)
+        for title, _body, level in candidate_market_titles
+    )
+    is_single_stock = len(stock_headings) == 1 and not _DASHBOARD_RE.search(first_title)
+    report_kind = "market" if is_market else "stock" if is_single_stock else "dashboard"
 
     body_markdown = _HEADING_RE.sub("", markdown_text, count=1).strip()
-    fallback_html = markdown2.markdown(
-        body_markdown,
-        extras=["tables", "fenced-code-blocks", "break-on-newline", "cuddled-lists"],
-        safe_mode="escape",
-    )
+    fallback_html = _render_markdown_fragment(body_markdown)
     stamp = _extract_date(markdown_text, generated)
     source_line = ""
     if report_kind == "market":
-        data = _market_data(markdown_text, generated)
-        title = data.title
-        subtitle = data.summary or "指数、宽度、主线与风险的收盘复盘"
-        content = _market_body(data, fallback_html)
+        if market_segments:
+            title = "多市场复盘"
+            subtitle = "按市场分段展示指数、主线与风险边界"
+            content = _multi_market_body(market_segments, generated)
+        else:
+            data = _market_data(markdown_text, generated)
+            title = data.title
+            subtitle = data.summary or "指数、宽度、主线与风险的收盘复盘"
+            content = _market_body(data, fallback_html)
     elif report_kind == "stock":
         data = _stock_data(markdown_text, generated)
         title = data.title

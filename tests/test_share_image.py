@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 
 from datetime import date
+from pathlib import Path
 
 from src.share_image import PROJECT_URL, build_share_image_html
 
@@ -182,3 +183,202 @@ def test_english_company_name_is_not_mistaken_for_a_ticker():
 
     assert "Apple Inc." in html
     assert '<span class="code">AAPL</span>' in html
+
+
+def test_stock_report_market_snapshot_does_not_route_to_market_poster():
+    html = build_share_image_html(
+        """# Apple Inc. (AAPL)
+
+## Core Conclusion
+
+**Buy**: Pullbacks into support remain actionable.
+
+## Market Snapshot
+
+| Current Price | Change % | Volume Ratio | Source |
+| --- | --- | --- | --- |
+| 210.15 | +1.5% | 1.2x | IEX |
+
+## Action Levels
+
+| Ideal Entry | Secondary Entry | Stop Loss | Target |
+| --- | --- | --- | --- |
+| 205-207 | 202-204 | 198 | 220 |
+
+## Risk Alerts
+
+- A failed earnings guide can break momentum.
+""",
+        generated_on=date(2026, 7, 31),
+    )
+
+    assert 'class="poster stock"' in html
+    assert "个股决策卡" in html
+    assert "Apple Inc." in html
+    assert "理想买入" in html
+    assert "A failed earnings guide can break momentum." in html
+
+
+def test_multi_market_review_keeps_every_region_in_share_image():
+    html = build_share_image_html(
+        """# A股大盘复盘
+
+## 2026-07-31 A股大盘复盘
+
+> 今日A股情绪修复。
+
+### 一、盘面总览
+
+- **盘面信号**：66/100（偏暖，可进攻）
+
+| 指标 | 数值 |
+| --- | --- |
+| 上涨/下跌 | 3200 / 1500 |
+
+### 二、指数结构
+
+| 指数 | 最新 | 涨跌幅 |
+| --- | --- | --- |
+| 上证指数 | 3200 | +0.80% |
+
+---
+
+> 以下为下一市场大盘复盘
+
+# 港股大盘复盘
+
+## 2026-07-31 港股大盘复盘
+
+> 今日港股科技反弹。
+
+### 一、盘面总览
+
+- **盘面信号**：61/100（偏暖，可进攻）
+
+| 指标 | 数值 |
+| --- | --- |
+| 上涨/下跌 | 900 / 700 |
+
+### 二、指数结构
+
+| 指数 | 最新 | 涨跌幅 |
+| --- | --- | --- |
+| 恒生指数 | 18200 | +1.20% |
+""",
+        generated_on=date(2026, 7, 31),
+    )
+
+    assert 'class="poster market"' in html
+    assert "多市场复盘" in html
+    assert "A股市场复盘" in html
+    assert "港股市场复盘" in html
+    assert "上证指数" in html
+    assert "恒生指数" in html
+
+
+def test_multi_market_review_ignores_root_wrapper_title_when_splitting_regions():
+    html = build_share_image_html(
+        """# 🎯 大盘复盘
+
+> 汇总多个市场的收盘观察。
+
+# A股大盘复盘
+
+## 2026-07-31 A股大盘复盘
+
+> 今日A股情绪修复。
+
+### 一、盘面总览
+
+- **盘面信号**：66/100（偏暖，可进攻）
+
+| 指标 | 数值 |
+| --- | --- |
+| 上涨/下跌 | 3200 / 1500 |
+
+### 二、指数结构
+
+| 指数 | 最新 | 涨跌幅 |
+| --- | --- | --- |
+| 上证指数 | 3200 | +0.80% |
+
+---
+
+> 以下为下一市场大盘复盘
+
+# 港股大盘复盘
+
+## 2026-07-31 港股大盘复盘
+
+> 今日港股科技反弹。
+
+### 一、盘面总览
+
+- **盘面信号**：61/100（偏暖，可进攻）
+
+| 指标 | 数值 |
+| --- | --- |
+| 上涨/下跌 | 900 / 700 |
+
+### 二、指数结构
+
+| 指数 | 最新 | 涨跌幅 |
+| --- | --- | --- |
+| 恒生指数 | 18200 | +1.20% |
+""",
+        generated_on=date(2026, 7, 31),
+    )
+
+    assert 'class="poster market"' in html
+    assert html.count("A股市场复盘") == 1
+    assert html.count("港股市场复盘") == 1
+    assert "汇总多个市场的收盘观察" not in html
+    assert "上证指数" in html
+    assert "恒生指数" in html
+
+
+def test_multi_stock_daily_report_uses_generic_poster_and_keeps_all_stocks():
+    html = build_share_image_html(
+        """# 股票分析报告
+
+## 📈 股票分析报告
+
+### 贵州茅台 (600519)
+
+**操作建议：买入** | **评分：72**
+
+### 宁德时代 (300750)
+
+**操作建议：观望** | **评分：61**
+""",
+        generated_on=date(2026, 7, 31),
+    )
+
+    assert 'class="poster dashboard"' in html
+    assert "贵州茅台" in html
+    assert "宁德时代" in html
+    assert '<span class="code">' not in html
+
+
+def test_brief_aggregate_report_without_single_stock_heading_uses_generic_poster():
+    html = build_share_image_html(
+        """# Stock Analysis Report
+
+## Summary
+
+- Buy leaders on pullbacks.
+- Avoid weak late-cycle names.
+""",
+        generated_on=date(2026, 7, 31),
+    )
+
+    assert 'class="poster dashboard"' in html
+    assert "Summary" in html
+    assert "Buy leaders on pullbacks." in html
+
+
+def test_desktop_backend_build_scripts_bundle_share_image_assets():
+    root = Path(__file__).resolve().parents[1]
+    for relative_path in ("scripts/build-backend.ps1", "scripts/build-backend-macos.sh"):
+        content = (root / relative_path).read_text(encoding="utf-8")
+        assert "src/assets/share_image" in content

@@ -82,8 +82,8 @@ def _markdown_to_image_wkhtml(markdown_text: str) -> Optional[bytes]:
         logger.debug("imgkit not installed, markdown_to_image unavailable")
         return None
 
-    html = build_share_image_html(markdown_text)
     try:
+        html = build_share_image_html(markdown_text)
         options = {
             "format": "png",
             "encoding": "UTF-8",
