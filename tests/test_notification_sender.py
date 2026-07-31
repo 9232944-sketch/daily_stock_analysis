@@ -1368,6 +1368,20 @@ class TestPushoverSender(unittest.TestCase):
         self.assertEqual(call_data["user"], "U")
         self.assertEqual(call_data["token"], "T")
 
+    @mock.patch("src.notification_sender.pushover_sender.requests.post")
+    def test_send_strips_hidden_market_region_metadata_from_plain_text(self, mock_post):
+        mock_post.return_value = _response(200, {"status": 1})
+        cfg = _config(pushover_user_key="U", pushover_api_token="T")
+        sender = PushoverSender(cfg)
+
+        result = sender.send_to_pushover("[dsa-market-region]: # (us)\n\n# 🎯 Market Review\n\nBody")
+
+        self.assertTrue(result)
+        call_data = mock_post.call_args[1]["data"]
+        self.assertNotIn("[dsa-market-region]", call_data["message"])
+        self.assertIn("🎯 Market Review", call_data["message"])
+        self.assertIn("Body", call_data["message"])
+
     @mock.patch("time.sleep")
     @mock.patch("src.notification_sender.pushover_sender.requests.post")
     def test_send_chunked_uses_test_timeout(self, mock_post, _mock_sleep):

@@ -3,6 +3,8 @@
 from datetime import date
 from pathlib import Path
 
+import pytest
+
 from src.share_image import PROJECT_URL, build_share_image_html
 
 
@@ -189,6 +191,30 @@ def test_stock_share_image_reads_notification_service_chinese_market_snapshot_he
     assert "数据源：腾讯财经" in html
 
 
+def test_stock_share_image_reads_close_only_market_snapshot_column():
+    html = build_share_image_html(
+        """# 贵州茅台 600519 分析报告
+
+## 核心结论
+
+**买入**：回调到支撑区可分批关注。
+
+### 当日行情
+
+| 收盘 | 涨跌幅 | 量比 | 换手率 |
+| --- | --- | --- | --- |
+| 1420.00 | +0.90% | 1.18 | 0.76% |
+""",
+        generated_on=date(2026, 7, 31),
+    )
+
+    assert "市场快照" in html
+    assert "1420.00" in html
+    assert "+0.90%" in html
+    assert "1.18" in html
+    assert "0.76%" in html
+
+
 def test_share_image_escapes_title_but_keeps_markdown_body_markup():
     html = build_share_image_html(
         "# AAPL <script>alert(1)</script>\n\n**结论**：关注。",
@@ -218,6 +244,24 @@ def test_dotted_us_ticker_is_preserved_in_stock_heading():
 
     assert "Berkshire Hathaway" in html
     assert '<span class="code">BRK.B</span>' in html
+
+
+@pytest.mark.parametrize(
+    ("heading", "company", "code"),
+    [
+        ("## 台积电 (2330.TW)", "台积电", "2330.TW"),
+        ("## 台塑化 (6505.TWO)", "台塑化", "6505.TWO"),
+        ("## 国泰永续高股息 (00878.TW)", "国泰永续高股息", "00878.TW"),
+    ],
+)
+def test_suffix_stock_code_is_preserved_in_stock_heading(heading, company, code):
+    html = build_share_image_html(
+        f"{heading}\n\n> 2026-07-31 | Score: **70** | Bullish",
+        generated_on=date(2026, 7, 31),
+    )
+
+    assert company in html
+    assert f'<span class="code">{code}</span>' in html
 
 
 def test_korean_market_review_heading_uses_market_poster():
@@ -616,6 +660,35 @@ def test_market_share_image_keeps_signal_card_without_breadth_for_hk_review():
     assert "Hang Seng held above prior support" in html
     assert "Signals are mixed; keep position sizing moderate" in html
     assert "市场宽度" not in html
+
+
+def test_market_share_image_parses_fallback_major_indices_bullets():
+    html = build_share_image_html(
+        """# US Market Recap
+
+## 2026-07-31 US Market Recap
+
+> Breadth and liquidity both improved.
+
+### 1. Market Summary
+
+- **Market Signal**: 66/100 (constructive, risk-on)
+- **Drivers**: Mega-cap tech led into the close.
+- **Guidance**: Stay selective and wait for confirmation.
+
+### 2. Major Indices
+- **S&P 500**: 5000.00 (↑0.50%)
+- **Nasdaq**: 18000.00 (↓0.20%)
+""",
+        generated_on=date(2026, 7, 31),
+    )
+
+    assert 'class="poster market"' in html
+    assert "S&amp;P 500" in html
+    assert "5000.00" in html
+    assert "↑0.50%" in html
+    assert "Nasdaq" in html
+    assert "↓0.20%" in html
 
 
 def test_single_stock_dashboard_title_routes_to_stock_poster():

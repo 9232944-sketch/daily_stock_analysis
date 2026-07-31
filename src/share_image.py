@@ -39,10 +39,15 @@ _MARKET_REGION_REF_RE = re.compile(
     r"^\[dsa-market-region\]:\s+#\s+\(\s*([a-z,]+)\s*\)\s*$",
     re.IGNORECASE | re.MULTILINE,
 )
-_CODE_RE = re.compile(
-    r"(?:\(|（)?((?:(?i:sh|sz|bj|hk))?\d{5,6}(?:\.[A-Z]{2})?|(?<![A-Za-z])[A-Z]{1,5}(?:\.[A-Z])?(?![A-Za-z]))(?:\)|）)?",
+_SUFFIXED_NUMERIC_CODE_PATTERN = (
+    r"(?:\d{6}\.(?:SH|SZ|SS|BJ|KS|KQ)|\d{1,5}\.HK|\d{4,6}\.(?:TWO|TW)|\d{4,5}\.T)"
 )
-_NUMERIC_CODE_RE = re.compile(r"(?:(?i:sh|sz|bj|hk))?\d{5,6}(?:\.[A-Z]{2})?")
+_CODE_RE = re.compile(
+    rf"(?:\(|（)?({_SUFFIXED_NUMERIC_CODE_PATTERN}|(?:(?i:sh|sz|bj|hk))?\d{{5,6}}(?:\.[A-Z]{{2}})?|(?<![A-Za-z])[A-Z]{{1,5}}(?:\.[A-Z])?(?![A-Za-z]))(?:\)|）)?",
+)
+_NUMERIC_CODE_RE = re.compile(
+    rf"(?:{_SUFFIXED_NUMERIC_CODE_PATTERN}|(?:(?i:sh|sz|bj|hk))?\d{{5,6}}(?:\.[A-Z]{{2}})?)"
+)
 _NA_VALUES = {"", "-", "--", "n/a", "na", "none", "null", "暂无", "暂无数据"}
 _MARKET_LABEL_PATTERNS = (
     (
@@ -440,7 +445,7 @@ def _stock_data(markdown_text: str, generated_on: date) -> StockPoster:
                 {_plain(header).lower(): _clean_value(value) for header, value in zip(table.headers, table.rows[0])}
             )
         snapshot_map.update(_table_map(table))
-    current = _mapped_value(snapshot_map, "当前价", "current price", "price", "收盘价", "close")
+    current = _mapped_value(snapshot_map, "当前价", "current price", "price", "收盘价", "收盘", "close")
     change = _mapped_value(snapshot_map, "涨跌幅", "change %", "change pct")
     ratio = _mapped_value(snapshot_map, "量比", "volume ratio")
     turnover = _mapped_value(snapshot_map, "换手率", "turnover rate")
@@ -568,6 +573,27 @@ def _parsed_breadth_metrics(overview: str) -> list[tuple[str, str]]:
     return [(label, value) for label, value in metrics if value]
 
 
+def _parse_index_bullets(index_section: str) -> list[tuple[str, str, str, str]]:
+    indices: list[tuple[str, str, str, str]] = []
+    for line in (index_section or "").splitlines():
+        match = re.match(
+            r"^\s*[-*+]\s+(?:\*\*)?(?P<name>[^:*]+?)(?:\*\*)?\s*[:：]\s*(?P<current>[^()\n]+?)\s*\((?P<change>[^)\n]+)\)\s*$",
+            line,
+        )
+        if not match:
+            continue
+        name = _clean_value(match.group("name"), limit=28)
+        current = _clean_value(match.group("current"), limit=18)
+        change = re.sub(r"\s+", " ", match.group("change")).strip()
+        if not (name and current and change):
+            continue
+        color = "green" if any(marker in change for marker in ("↑", "+")) else "red" if any(marker in change for marker in ("↓", "-")) else ""
+        indices.append((name, current, change, color))
+        if len(indices) >= 3:
+            break
+    return indices
+
+
 def _market_data(markdown_text: str, generated_on: date) -> MarketPoster:
     overview = _section(markdown_text, "盘面总览", "market summary", "breadth & liquidity")
     score_match = re.search(r"(?:盘面信号|市场信号|market signal)\*{0,2}\s*[:：]\s*(\d{1,3})/100(?:\s*[（(]([^，,)]+)[，,]\s*([^）)]+)[）)])?", markdown_text, re.IGNORECASE)
@@ -612,6 +638,14 @@ def _market_data(markdown_text: str, generated_on: date) -> MarketPoster:
                 if not row[change_i].strip().startswith("-"):
                     positive_color = color
                 poster.indices.append((row[name_i], row[current_i], row[change_i], color))
+    if not poster.indices:
+        poster.indices = _parse_index_bullets(index_section)
+        if poster.indices:
+            first_change = poster.indices[0][2]
+            if any(marker in first_change for marker in ("↑", "+")):
+                positive_color = "green"
+            elif any(marker in first_change for marker in ("↓", "-")):
+                positive_color = "red"
 
     breadth_table = _find_table(overview, "上涨", "成交额") or _find_table(overview, "breadth")
     if breadth_table:

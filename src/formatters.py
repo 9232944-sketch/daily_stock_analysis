@@ -233,6 +233,9 @@ def markdown_to_plain_text(markdown_text: str) -> str:
     移除 Markdown 格式标记，保留可读性
     """
     text = markdown_text
+
+    # 移除 Markdown reference definitions（例如隐藏元数据标记）
+    text = re.sub(r'^\[[^\]]+\]:\s+.*$', '', text, flags=re.MULTILINE)
     
     # 移除标题标记 # ## ###
     text = re.sub(r'^#{1,6}\s+', '', text, flags=re.MULTILINE)
