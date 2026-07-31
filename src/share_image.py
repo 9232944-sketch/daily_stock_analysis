@@ -39,6 +39,31 @@ _CODE_RE = re.compile(
     r"(?:\(|（)?((?:(?i:sh|sz|bj|hk))?\d{5,6}(?:\.[A-Z]{2})?|(?<![A-Za-z])[A-Z]{1,5}(?![A-Za-z]))(?:\)|）)?",
 )
 _NA_VALUES = {"", "-", "--", "n/a", "na", "none", "null", "暂无", "暂无数据"}
+_MARKET_LABEL_PATTERNS = (
+    (
+        "A股",
+        re.compile(
+            r"(?:A\s*股|a[-\s]?share|\bcn\s+market\s+(?:review|recap)\b|\bchina\b)",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "港股",
+        re.compile(
+            r"(?:港\s*股|\bhk\s+market\s+(?:review|recap)\b|hong\s+kong)",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "美股",
+        re.compile(
+            r"(?:美\s*股|\b(?:u\.?s\.?|us)\s+market\s+(?:review|recap)\b|united\s+states)",
+            re.IGNORECASE,
+        ),
+    ),
+    ("日股", re.compile(r"(?:日\s*股|japan)", re.IGNORECASE)),
+    ("韩股", re.compile(r"(?:韩\s*股|korea)", re.IGNORECASE)),
+)
 
 
 @dataclass
@@ -261,6 +286,14 @@ def _extract_date(markdown_text: str, fallback: date) -> str:
     return match.group(1) if match else fallback.isoformat()
 
 
+def _market_label(text: str) -> str:
+    scope = _plain(text)
+    for label, pattern in _MARKET_LABEL_PATTERNS:
+        if pattern.search(scope):
+            return label
+    return ""
+
+
 def _stock_headings(markdown_text: str) -> list[tuple[str, str]]:
     found: list[tuple[str, str]] = []
     for raw_title, _body, level in _extract_sections(markdown_text):
@@ -436,16 +469,52 @@ def _stock_data(markdown_text: str, generated_on: date) -> StockPoster:
 
 
 def _market_title(markdown_text: str) -> str:
-    # The report body may compare overseas markets.  The earliest explicit
-    # market mention near the title/summary is the report scope.
-    scope = markdown_text[:600]
-    matches = [
-        (scope.find(token), label)
-        for token, label in (("A股", "A股"), ("美股", "美股"), ("港股", "港股"), ("日股", "日股"), ("韩股", "韩股"))
-        if token in scope
-    ]
-    market = min(matches, default=(0, "A股"), key=lambda item: item[0])[1]
-    return f"{market}市场复盘"
+    first_title = next((title for title, _body, _level in _extract_sections(markdown_text)), "")
+    for candidate in (first_title, markdown_text[:600]):
+        market = _market_label(candidate)
+        if market:
+            return f"{market}市场复盘"
+    if _is_market_review_title(first_title):
+        return first_title
+    return "A股市场复盘"
+
+
+def _parsed_breadth_metrics(overview: str) -> list[tuple[str, str]]:
+    metrics: list[tuple[str, str]] = []
+    advance_match = re.search(
+        r"Advancers\s+([^/;\n]+?)\s*/\s*Decliners\s+([^/;\n]+?)(?:\s*/\s*Flat\s+([^;\n]+?))?(?=$|;|\n)",
+        overview or "",
+        flags=re.IGNORECASE,
+    )
+    if advance_match:
+        metrics.extend(
+            [
+                ("上涨", _clean_value(advance_match.group(1), limit=32)),
+                ("下跌", _clean_value(advance_match.group(2), limit=32)),
+            ]
+        )
+
+    limit_match = re.search(
+        r"Limit(?:-|\s)?up\s+([^/;\n]+?)\s*/\s*Limit(?:-|\s)?down\s+([^;\n]+?)(?=$|;|\n)",
+        overview or "",
+        flags=re.IGNORECASE,
+    )
+    if limit_match:
+        metrics.extend(
+            [
+                ("涨停", _clean_value(limit_match.group(1), limit=32)),
+                ("跌停", _clean_value(limit_match.group(2), limit=32)),
+            ]
+        )
+
+    turnover_match = re.search(
+        r"Turnover\s+(.+?)(?=$|;|\n)",
+        overview or "",
+        flags=re.IGNORECASE,
+    )
+    if turnover_match:
+        metrics.append(("成交额", _clean_value(turnover_match.group(1), limit=48)))
+    return [(label, value) for label, value in metrics if value]
 
 
 def _market_data(markdown_text: str, generated_on: date) -> MarketPoster:
@@ -515,6 +584,17 @@ def _market_data(markdown_text: str, generated_on: date) -> MarketPoster:
                 poster.breadth.append(("跌停", parts[1], negative_color))
         if amount:
             poster.breadth.append(("成交额", amount, "primary"))
+    if not poster.breadth:
+        for label, value in _parsed_breadth_metrics(overview):
+            if label == "上涨":
+                tone = positive_color
+            elif label in {"下跌", "跌停"}:
+                tone = "red" if positive_color == "green" else "green"
+            elif label == "涨停":
+                tone = positive_color
+            else:
+                tone = "primary"
+            poster.breadth.append((label, value, tone))
 
     sector_section = _section(markdown_text, "板块主线", "sector highlights")
     sector_table = _find_table(sector_section, "板块", "涨跌幅") or _find_table(sector_section, "sector", "change")
@@ -695,7 +775,7 @@ def build_share_image_html(markdown_text: str, *, generated_on: Optional[date] =
         level <= 2 and _is_market_review_title(title)
         for title, _body, level in candidate_market_titles
     )
-    is_single_stock = len(stock_headings) == 1 and not _DASHBOARD_RE.search(first_title)
+    is_single_stock = len(stock_headings) == 1
     report_kind = "market" if is_market else "stock" if is_single_stock else "dashboard"
 
     body_markdown = _HEADING_RE.sub("", markdown_text, count=1).strip()

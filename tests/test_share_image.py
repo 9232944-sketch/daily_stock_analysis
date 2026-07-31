@@ -337,6 +337,133 @@ def test_multi_market_review_ignores_root_wrapper_title_when_splitting_regions()
     assert "恒生指数" in html
 
 
+def test_english_multi_market_review_maps_region_titles_from_headings():
+    html = build_share_image_html(
+        """# US Market Recap
+
+## 2026-07-31 US Market Recap
+
+> US breadth improved into the close.
+
+### 1. Market Summary
+
+- **Market Signal**: 62/100 (constructive, risk-on)
+
+### 2. Index Commentary
+
+| Index | Last | Change % |
+| --- | --- | --- |
+| S&P 500 | 6500 | +0.80% |
+
+# HK Market Recap
+
+## 2026-07-31 HK Market Recap
+
+> Hong Kong tech outperformed.
+
+### 1. Market Summary
+
+- **Market Signal**: 58/100 (neutral, selective)
+
+### 2. Index Commentary
+
+| Index | Last | Change % |
+| --- | --- | --- |
+| Hang Seng Index | 18200 | +1.20% |
+""",
+        generated_on=date(2026, 7, 31),
+    )
+
+    assert 'class="poster market"' in html
+    assert "美股市场复盘" in html
+    assert "港股市场复盘" in html
+    assert "A股市场复盘" not in html
+
+
+def test_generic_market_review_does_not_treat_english_pronoun_us_as_us_market():
+    html = build_share_image_html(
+        """# 大盘复盘
+
+> This gives us more room to focus on the strongest sectors.
+
+## 2026-07-31 大盘复盘
+
+### 1. 盘面总览
+
+- **盘面信号**：60/100（中性，均衡）
+
+### 2. 指数结构
+
+| 指数 | 最新 | 涨跌幅 |
+| --- | --- | --- |
+| 上证指数 | 3400 | +0.20% |
+""",
+        generated_on=date(2026, 7, 31),
+    )
+
+    assert 'class="poster market"' in html
+    assert "大盘复盘" in html
+    assert "美股市场复盘" not in html
+
+
+def test_english_breadth_line_populates_structured_market_breadth_cards():
+    html = build_share_image_html(
+        """# US Market Recap
+
+## 2026-07-31 US Market Recap
+
+> Breadth and liquidity both improved.
+
+### 1. Market Summary
+
+- **Market Signal**: 66/100 (constructive, risk-on)
+- **Breadth**: Advancers 3200 / Decliners 1800 / Flat 100; Limit-up 88 / Limit-down 5; Turnover 14567 (CNY 100m)
+
+### 2. Major Indices
+
+| Index | Last | Change % |
+| --- | --- | --- |
+| S&P 500 | 6500 | +0.80% |
+""",
+        generated_on=date(2026, 7, 31),
+    )
+
+    assert 'class="poster market"' in html
+    assert "美股市场复盘" in html
+    assert "市场宽度" in html
+    assert "3200" in html
+    assert "1800" in html
+    assert "88" in html
+    assert "14567 (CNY 100m)" in html
+
+
+def test_single_stock_dashboard_title_routes_to_stock_poster():
+    html = build_share_image_html(
+        """# 2026-07-31 Decision Dashboard
+
+## Apple Inc. (AAPL)
+
+> 2026-07-31 15:30 | Score: **70** | Bullish
+
+### Core Conclusion
+
+**Buy**: Pullbacks into support remain actionable.
+
+### Action Levels
+
+| Ideal Entry | Secondary Entry | Stop Loss | Target |
+| --- | --- | --- | --- |
+| 205-207 | 202-204 | 198 | 220 |
+""",
+        generated_on=date(2026, 7, 31),
+    )
+
+    assert 'class="poster stock"' in html
+    assert "个股决策卡" in html
+    assert "Apple Inc." in html
+    assert '<span class="code">AAPL</span>' in html
+
+
 def test_multi_stock_daily_report_uses_generic_poster_and_keeps_all_stocks():
     html = build_share_image_html(
         """# 股票分析报告
