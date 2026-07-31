@@ -26,6 +26,7 @@ _TOP_LEVEL_KEYS = {
     "version",
     "category",
     "tags",
+    "analysis_skills",
     "style",
     "screening",
 }
@@ -239,6 +240,7 @@ def load_strategy(filepath: Path) -> Strategy:
         version=str(data.get("version", "1")),
         category=data.get("category", "trend"),
         tags=list(data.get("tags", []) or []),
+        analysis_skills=_string_list(data.get("analysis_skills")),
         style=_strategy_style(data, filepath),
         screening=screening,
     )
@@ -301,6 +303,7 @@ def list_strategies(strategies_dir: Path | None = None) -> list[StrategyInfo]:
             version=s.version,
             category=s.category,
             tags=s.tags,
+            analysis_skills=s.analysis_skills,
             market_scope=s.screening.market_scope,
             requires_daily_features=daily_required,
             data_requirements=_strategy_data_requirements(s, daily_required=daily_required),

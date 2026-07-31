@@ -7,6 +7,7 @@ description: 跌幅可控、流动性仍在、具备修复观察价值的反转�
 version: "1.1"
 category: reversal
 tags: [reversal, oversold, repair]
+analysis_skills: [bottom_volume]
 style:
   risk_profile: balanced
   holding_period: short_term

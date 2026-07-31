@@ -639,9 +639,28 @@ const StockScreeningPage: React.FC = () => {
         stockName,
         autoAnalyze: true,
         selectionSource: 'screening_hotspot',
+        skills: ['hot_theme'],
       },
     });
   }, [navigate]);
+
+  const handleAnalyzeCandidate = useCallback((candidate: ScreeningCandidate) => {
+    const stockCode = String(candidate.code || '').trim();
+    if (!stockCode) {
+      return;
+    }
+    const stockName = String(candidate.name || stockCode).trim();
+    const analysisSkills = (selectedStrategy?.analysisSkills || []).filter(Boolean);
+    navigate('/', {
+      state: {
+        stockCode,
+        stockName,
+        autoAnalyze: true,
+        selectionSource: 'screening_result',
+        ...(analysisSkills.length > 0 ? { skills: analysisSkills } : {}),
+      },
+    });
+  }, [navigate, selectedStrategy]);
 
   useEffect(() => {
     selectedHotspotTopicRef.current = selectedHotspotTopic;
@@ -1328,6 +1347,7 @@ const StockScreeningPage: React.FC = () => {
                       : '暂无 LLM 判断';
                   const dsaWarnings = item.dsaContext?.warnings || [];
                   const dsaNews = item.dsaNews || [];
+                  const dsaEvents = item.dsaEvents || [];
                   return (
                     <Fragment key={`${item.rank}-${item.code}`}>
                       <tr className="border-t border-border align-top transition-colors hover:bg-hover/50">
@@ -1366,6 +1386,13 @@ const StockScreeningPage: React.FC = () => {
                                 <div>
                                   <p className="text-xs font-semibold text-secondary-text">操作信号</p>
                                   <p className="mt-1 text-sm text-foreground">{getSignal(item)}</p>
+                                  <button
+                                    className="mt-2 rounded-lg border border-cyan/40 px-3 py-1.5 text-xs font-semibold text-cyan transition-colors hover:bg-cyan/10"
+                                    type="button"
+                                    onClick={() => handleAnalyzeCandidate(item)}
+                                  >
+                                    用 DSA 深度分析
+                                  </button>
                                 </div>
                                 {item.dsaAnalysisSummary ? (
                                   <div>
@@ -1434,6 +1461,20 @@ const StockScreeningPage: React.FC = () => {
                                       {dsaNews.slice(0, 3).map((newsItem, newsIndex) => (
                                         <li key={`${item.code}-dsa-news-${newsIndex}`}>
                                           {newsItem.title || newsItem.snippet || '-'}
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  ) : (
+                                    <p className="mt-1 text-sm text-secondary-text">无</p>
+                                  )}
+                                </div>
+                                <div>
+                                  <p className="text-xs font-semibold text-secondary-text">DSA 公告与事件</p>
+                                  {dsaEvents.length > 0 ? (
+                                    <ul className="mt-1 space-y-1 text-sm text-foreground">
+                                      {dsaEvents.slice(0, 3).map((eventItem, eventIndex) => (
+                                        <li key={`${item.code}-dsa-event-${eventIndex}`}>
+                                          {eventItem.title || eventItem.snippet || '-'}
                                         </li>
                                       ))}
                                     </ul>

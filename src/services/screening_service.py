@@ -16,6 +16,7 @@ import os
 import re
 import threading
 import time
+import uuid
 from contextvars import ContextVar
 from contextlib import contextmanager
 from dataclasses import asdict, is_dataclass
@@ -31,6 +32,7 @@ from src.services.screening import REFERENCE_PROJECT, REFERENCE_REVISION, __vers
 from src.services.screening import hotspot as screening_hotspot
 from src.services.screening.pipeline import screen as run_screening_pipeline
 from src.services.screening.strategy import list_strategies as load_screening_strategies
+from src.storage import DatabaseManager
 
 logger = logging.getLogger(__name__)
 
@@ -817,13 +819,15 @@ class ScreeningStrategyResponse(BaseModel):
     tags: List[str] = Field(default_factory=list)
     market_scope: List[str] = Field(default_factory=list)
     market: str = ""
+    analysis_skills: List[str] = Field(default_factory=list)
 
 
 class ScreeningService:
     """Coordinate the built-in screening engine with DSA-owned capabilities."""
 
-    def __init__(self, config: Config):
+    def __init__(self, config: Config, db_manager: Optional[DatabaseManager] = None):
         self.config = config
+        self.db_manager = db_manager
 
     def status(self) -> Dict[str, Any]:
         engine_status, available, diagnostics = _get_screening_status_snapshot()
@@ -853,6 +857,57 @@ class ScreeningService:
             "strategies": strategies,
             "strategy_count": len(strategies),
         }
+
+    def history(
+        self,
+        *,
+        limit: int = 20,
+        strategy: str = "",
+        market: str = "",
+    ) -> Dict[str, Any]:
+        _ensure_screening_enabled(self.config)
+        db_manager = self._require_history_database()
+        runs = db_manager.list_screening_runs(
+            limit=limit,
+            strategy=_env_text(strategy) or None,
+            market=_env_text(market) or None,
+        )
+        return {
+            "enabled": True,
+            "runs": runs,
+            "run_count": len(runs),
+        }
+
+    def history_detail(self, run_id: str) -> Dict[str, Any]:
+        _ensure_screening_enabled(self.config)
+        db_manager = self._require_history_database()
+        run = db_manager.get_screening_run(run_id)
+        if run is None:
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "error": "screening_run_not_found",
+                    "message": f"选股运行 {run_id} 不存在。",
+                },
+            )
+        return {"enabled": True, **run}
+
+    def source_history(self, *, limit: int = 100) -> Dict[str, Any]:
+        _ensure_screening_enabled(self.config)
+        db_manager = self._require_history_database()
+        runs = db_manager.list_screening_runs(limit=limit)
+        return _summarize_screening_source_history(runs)
+
+    def _require_history_database(self) -> DatabaseManager:
+        if self.db_manager is None:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "error": "screening_history_unavailable",
+                    "message": "DSA 数据库未注入，无法读取选股运行历史。",
+                },
+            )
+        return self.db_manager
 
     def hotspots(
         self,
@@ -1111,11 +1166,11 @@ class ScreeningService:
         candidates = _normalize_candidates(raw_data)
         selected = candidates[:max_results]
         selected, dsa_enrichment = _enrich_candidates_with_dsa(selected)
-        return {
+        response = {
             "enabled": True,
             "candidates": selected,
             "candidate_count": len(selected),
-            "run_id": raw_data.get("run_id"),
+            "run_id": raw_data.get("run_id") or uuid.uuid4().hex,
             "strategy": raw_data.get("strategy") or strategy,
             "market": raw_data.get("market") or market,
             "snapshot_count": raw_data.get("snapshot_count"),
@@ -1138,6 +1193,9 @@ class ScreeningService:
             "portfolio_diversity_enabled": raw_data.get("portfolio_diversity_enabled"),
             "portfolio_concentration_notes": raw_data.get("portfolio_concentration_notes") or [],
         }
+        if self.db_manager is not None:
+            self.db_manager.save_screening_run(response)
+        return response
 
 
 def _normalize_screening_hotspot_detail(detail: Any, *, provider: str, requested_topic: str) -> Dict[str, Any]:
@@ -1470,6 +1528,9 @@ def _normalize_strategy(raw: Any) -> Dict[str, Any]:
         tags=[str(tag) for tag in tags],
         market_scope=[str(market) for market in market_scope],
         market=str(item.get("market") or item.get("market_id") or ""),
+        analysis_skills=_list_text_values(
+            item.get("analysis_skills") or item.get("analysisSkills")
+        ),
     )
 
 
@@ -1479,6 +1540,61 @@ def _strategy_model(**kwargs: Any) -> Dict[str, Any]:
         return normalized.model_dump()
     except AttributeError:
         return normalized.dict()
+
+
+def _summarize_screening_source_history(runs: List[Dict[str, Any]]) -> Dict[str, Any]:
+    source_stats: Dict[str, Dict[str, Any]] = {}
+    fallback_runs = 0
+
+    def source_entry(source: str) -> Dict[str, Any]:
+        return source_stats.setdefault(
+            source,
+            {
+                "selected_runs": 0,
+                "error_count": 0,
+                "last_seen_at": None,
+                "error_samples": [],
+            },
+        )
+
+    for run in runs:
+        created_at = run.get("created_at")
+        selected_source = _env_text(run.get("snapshot_source")) or "unknown"
+        selected = source_entry(selected_source)
+        selected["selected_runs"] += 1
+        if not selected["last_seen_at"]:
+            selected["last_seen_at"] = created_at
+
+        errors = _list_text_values(run.get("source_errors"))
+        warnings = _list_text_values(run.get("warnings"))
+        if errors or any("fallback" in warning.lower() or "降级" in warning for warning in warnings):
+            fallback_runs += 1
+        for error in errors:
+            source = _screening_source_from_error(error)
+            entry = source_entry(source)
+            entry["error_count"] += 1
+            if not entry["last_seen_at"]:
+                entry["last_seen_at"] = created_at
+            samples = entry["error_samples"]
+            if error not in samples and len(samples) < 5:
+                samples.append(error)
+
+    return {
+        "enabled": True,
+        "runs_analyzed": len(runs),
+        "fallback_runs": fallback_runs,
+        "sources": dict(sorted(source_stats.items())),
+    }
+
+
+def _screening_source_from_error(error: str) -> str:
+    text = _env_text(error)
+    match = re.search(
+        r"(?:snapshot source fallback:\s*)?([a-zA-Z][a-zA-Z0-9_-]{1,31})\s*(?:after\s+\d+\s+attempts)?\s*:",
+        text,
+        flags=re.IGNORECASE,
+    )
+    return match.group(1).lower() if match else "unknown"
 
 
 def _ensure_supported_strategy(strategy: str) -> None:
@@ -1775,6 +1891,7 @@ class DsaEastMoneyHotspotProvider:
         "白银": "贵金属",
         "贵金属": "贵金属",
     }
+
     def __init__(self) -> None:
         import requests
 
@@ -2560,6 +2677,7 @@ def _build_screening_context(config: Config, *, max_results: Optional[int] = Non
                 "daily_history",
                 "realtime_quote",
                 "fundamental_context",
+                "stock_events",
             ],
             "get_candidate_context": get_dsa_candidate_context,
             "get_daily_history": get_dsa_daily_history,
@@ -2567,6 +2685,7 @@ def _build_screening_context(config: Config, *, max_results: Optional[int] = Non
             "get_fundamental_context": get_dsa_fundamental_context,
         },
     }
+
 
 @contextmanager
 def _screening_litellm_headers(config: Config) -> Iterator[None]:
@@ -2947,8 +3066,26 @@ def search_dsa_stock_news(stock_code: str, stock_name: str = "", max_results: in
         }
 
     response = service.search_stock_news(stock_code, stock_name or stock_code, max_results=max_results)
+    return _normalize_dsa_search_response(response, max_results=max_results)
+
+
+def search_dsa_stock_events(stock_code: str, stock_name: str = "", max_results: int = 3) -> Dict[str, Any]:
+    """Reuse DSA event search for earnings, reduction and announcement context."""
+    service = _get_dsa_search_service()
+    if not getattr(service, "is_available", False):
+        return {
+            "success": False,
+            "error": "DSA search service unavailable",
+            "results": [],
+        }
+
+    response = service.search_stock_events(stock_code, stock_name or stock_code)
+    return _normalize_dsa_search_response(response, max_results=max_results)
+
+
+def _normalize_dsa_search_response(response: Any, *, max_results: int) -> Dict[str, Any]:
     results = []
-    for item in getattr(response, "results", []) or []:
+    for item in (getattr(response, "results", []) or [])[:max(0, int(max_results))]:
         results.append(
             {
                 "title": getattr(item, "title", ""),
@@ -2981,6 +3118,7 @@ def get_dsa_candidate_context(
     context = _build_dsa_candidate_context(
         candidate,
         include_news=include_news,
+        include_events=include_news,
         include_fundamentals=include_fundamentals,
         profile=mode or "pre_rank_light",
     )
@@ -3061,6 +3199,7 @@ def _build_dsa_candidate_context(
     candidate: Dict[str, Any],
     *,
     include_news: bool = True,
+    include_events: bool = True,
     include_fundamentals: bool = True,
     profile: str = "post_rank_full",
 ) -> Dict[str, Any]:
@@ -3087,6 +3226,8 @@ def _build_dsa_candidate_context(
     )
     existing_news = existing_context.get("news") if isinstance(existing_context.get("news"), dict) else {}
     news: Dict[str, Any] = dict(existing_news) if existing_news else {"success": False, "results": []}
+    existing_events = existing_context.get("events") if isinstance(existing_context.get("events"), dict) else {}
+    events: Dict[str, Any] = dict(existing_events) if existing_events else {"success": False, "results": []}
     existing_warnings = existing_context.get("warnings") or []
     if isinstance(existing_warnings, list):
         warnings.extend(str(item) for item in existing_warnings if item)
@@ -3142,19 +3283,43 @@ def _build_dsa_candidate_context(
             "results": [],
         }
 
-    summary = _build_dsa_analysis_summary(candidate, quote, fundamentals, news)
+    if include_events:
+        if not _news_has_results(events):
+            try:
+                events = search_dsa_stock_events(
+                    code,
+                    _env_text(candidate.get("name")) or name or code,
+                    max_results=3,
+                )
+                if not events.get("success"):
+                    warnings.append(events.get("error") or "stock_events_unavailable")
+            except Exception as exc:  # noqa: BLE001
+                warnings.append(f"stock_events_failed: {exc}")
+                events = {"success": False, "error": str(exc), "results": []}
+    elif not _news_has_results(events):
+        events = {
+            "success": False,
+            "skipped": True,
+            "reason": "pre_rank_light_context",
+            "results": [],
+        }
+
+    summary = _build_dsa_analysis_summary(candidate, quote, fundamentals, news, events)
     context = {
-        "enriched": bool(quote or fundamentals or news.get("results")),
+        "enriched": bool(quote or fundamentals or news.get("results") or events.get("results")),
         "profile": profile,
         "news_included": bool(include_news),
+        "events_included": bool(include_events),
         "quote": quote,
         "fundamentals": fundamentals,
         "news": news,
+        "events": events,
         "warnings": _dedupe_strings(warnings),
     }
     return {
         "dsa_context": context,
         "dsa_news": news.get("results") or [],
+        "dsa_events": events.get("results") or [],
         "dsa_analysis_summary": summary,
     }
 
@@ -3192,6 +3357,7 @@ def _build_dsa_analysis_summary(
     quote: Dict[str, Any],
     fundamentals: Dict[str, Any],
     news: Dict[str, Any],
+    events: Optional[Dict[str, Any]] = None,
 ) -> str:
     parts: List[str] = []
     price = _first_non_empty(quote.get("price"), candidate.get("price"))
@@ -3214,6 +3380,13 @@ def _build_dsa_analysis_summary(
         titles = [title for title in titles if title]
         if titles:
             parts.append(f"DSA新闻：{'；'.join(titles[:2])}")
+
+    event_results = events.get("results") if isinstance(events, dict) else []
+    if isinstance(event_results, list) and event_results:
+        titles = [str(item.get("title") or "").strip() for item in event_results if isinstance(item, dict)]
+        titles = [title for title in titles if title]
+        if titles:
+            parts.append(f"DSA事件：{'；'.join(titles[:2])}")
 
     if not parts:
         return ""
@@ -3267,6 +3440,7 @@ def _normalize_candidate(raw: Any, rank: int) -> Dict[str, Any]:
     source = item.get("raw") if isinstance(item.get("raw"), dict) else item
     dsa_context = item.get("dsa_context") or source.get("dsa_context") or {}
     dsa_news = item.get("dsa_news") or source.get("dsa_news") or _extract_dsa_news_from_context(dsa_context)
+    dsa_events = item.get("dsa_events") or source.get("dsa_events") or _extract_dsa_events_from_context(dsa_context)
     dsa_analysis_summary = (
         item.get("dsa_analysis_summary")
         or source.get("dsa_analysis_summary")
@@ -3299,6 +3473,7 @@ def _normalize_candidate(raw: Any, rank: int) -> Dict[str, Any]:
         "factor_scores": item.get("factor_scores") or source.get("factor_scores") or {},
         "dsa_context": dsa_context,
         "dsa_news": dsa_news,
+        "dsa_events": dsa_events,
         "dsa_analysis_summary": dsa_analysis_summary,
         "post_analysis_summaries": item.get("post_analysis_summaries") or source.get("post_analysis_summaries") or {},
         "post_analysis_tags": item.get("post_analysis_tags") or source.get("post_analysis_tags") or [],
@@ -3314,6 +3489,21 @@ def _extract_dsa_news_from_context(context: Any) -> List[Dict[str, Any]]:
         results = news.get("results")
     elif isinstance(news, list):
         results = news
+    else:
+        results = None
+    if not isinstance(results, list):
+        return []
+    return [item for item in results if isinstance(item, dict)]
+
+
+def _extract_dsa_events_from_context(context: Any) -> List[Dict[str, Any]]:
+    if not isinstance(context, dict):
+        return []
+    events = context.get("events")
+    if isinstance(events, dict):
+        results = events.get("results")
+    elif isinstance(events, list):
+        results = events
     else:
         results = None
     if not isinstance(results, list):

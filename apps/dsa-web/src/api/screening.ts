@@ -58,9 +58,23 @@ export type ScreeningCandidate = {
       results?: Array<Record<string, unknown>>;
       error?: string | null;
     };
+    events?: {
+      success?: boolean;
+      query?: string;
+      provider?: string;
+      results?: Array<Record<string, unknown>>;
+      error?: string | null;
+    };
     warnings?: string[];
   };
   dsaNews?: Array<{
+    title?: string;
+    snippet?: string;
+    url?: string;
+    source?: string;
+    publishedDate?: string | null;
+  }>;
+  dsaEvents?: Array<{
     title?: string;
     snippet?: string;
     url?: string;
@@ -80,6 +94,7 @@ export type ScreeningStrategy = {
   category?: string;
   tag?: string;
   tags?: string[];
+  analysisSkills?: string[];
   marketScope?: string[];
   market?: string;
 };
@@ -232,6 +247,44 @@ export type ScreeningScreenTaskStatus = {
   result?: ScreeningScreenResponse | null;
 };
 
+export type ScreeningRunSummary = {
+  runId: string;
+  strategy: string;
+  market: string;
+  snapshotSource?: string;
+  snapshotCount?: number | null;
+  afterFilterCount?: number | null;
+  candidateCount: number;
+  llmRanked?: boolean | null;
+  dailyEnriched?: boolean | null;
+  sourceErrors?: string[];
+  warnings?: string[];
+  createdAt?: string | null;
+};
+
+export type ScreeningHistoryResponse = {
+  enabled: boolean;
+  runs: ScreeningRunSummary[];
+  runCount: number;
+};
+
+export type ScreeningRunDetail = ScreeningRunSummary & {
+  enabled: boolean;
+  result: ScreeningScreenResponse;
+};
+
+export type ScreeningSourceHistory = {
+  enabled: boolean;
+  runsAnalyzed: number;
+  fallbackRuns: number;
+  sources: Record<string, {
+    selectedRuns: number;
+    errorCount: number;
+    lastSeenAt?: string | null;
+    errorSamples: string[];
+  }>;
+};
+
 export function notifyScreeningConfigChanged(): void {
   window.dispatchEvent(new Event(SCREENING_CONFIG_CHANGED_EVENT));
   notifySystemConfigChanged();
@@ -279,6 +332,29 @@ export const screeningApi = {
   async getScreenTask(taskId: string): Promise<ScreeningScreenTaskStatus> {
     const response = await apiClient.get<Record<string, unknown>>(`/api/v1/screening/screen/tasks/${encodeURIComponent(taskId)}`);
     return toCamelCase<ScreeningScreenTaskStatus>(response.data);
+  },
+
+  async getHistory(payload: { limit?: number; strategy?: string; market?: string } = {}): Promise<ScreeningHistoryResponse> {
+    const response = await apiClient.get<Record<string, unknown>>('/api/v1/screening/history', {
+      params: {
+        limit: payload.limit ?? 20,
+        strategy: payload.strategy || undefined,
+        market: payload.market || undefined,
+      },
+    });
+    return toCamelCase<ScreeningHistoryResponse>(response.data);
+  },
+
+  async getRun(runId: string): Promise<ScreeningRunDetail> {
+    const response = await apiClient.get<Record<string, unknown>>(`/api/v1/screening/history/${encodeURIComponent(runId)}`);
+    return toCamelCase<ScreeningRunDetail>(response.data);
+  },
+
+  async getSourceHistory(limit = 100): Promise<ScreeningSourceHistory> {
+    const response = await apiClient.get<Record<string, unknown>>('/api/v1/screening/source-history', {
+      params: { limit },
+    });
+    return toCamelCase<ScreeningSourceHistory>(response.data);
   },
 
   async getStrategies(): Promise<ScreeningStrategiesResponse> {

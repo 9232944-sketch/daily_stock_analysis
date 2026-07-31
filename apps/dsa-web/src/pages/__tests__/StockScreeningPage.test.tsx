@@ -239,6 +239,7 @@ describe('StockScreeningPage', () => {
         stockName: '中际旭创',
         autoAnalyze: true,
         selectionSource: 'screening_hotspot',
+        skills: ['hot_theme'],
       },
     });
   });
@@ -801,6 +802,61 @@ describe('StockScreeningPage', () => {
     expect(screen.queryByText('旧策略股票')).not.toBeInTheDocument();
     expect(screen.getByText('等待运行')).toBeInTheDocument();
     expect(screen.getByText('当前策略：资金热度 · A 股')).toBeInTheDocument();
+  });
+
+  it('hands a screening candidate to DSA analysis with mapped skills', async () => {
+    getStrategies.mockResolvedValueOnce({
+      enabled: true,
+      strategies: [
+        {
+          id: 'dual_low',
+          name: '双低选股',
+          description: 'desc',
+          category: '价值',
+          analysisSkills: ['growth_quality'],
+        },
+      ],
+      strategyCount: 1,
+    });
+    getScreeningStatus.mockResolvedValueOnce({
+      enabled: true,
+      available: true,
+    });
+    screenStocks.mockResolvedValueOnce({
+      enabled: true,
+      candidates: [
+        {
+          rank: 1,
+          code: '600519',
+          name: '贵州茅台',
+          score: 88.5,
+          reason: '候选摘要',
+          raw: {},
+        },
+      ],
+      candidateCount: 1,
+    });
+
+    render(<StockScreeningPage />);
+
+    expect(await screen.findByText('选股已开启')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /运行选股/ }));
+    expect(await screen.findByText('贵州茅台')).toBeInTheDocument();
+    const expandButton = screen.queryByRole('button', { name: '展开查看' });
+    if (expandButton) {
+      fireEvent.click(expandButton);
+    }
+    fireEvent.click(screen.getByRole('button', { name: '用 DSA 深度分析' }));
+
+    expect(navigate).toHaveBeenCalledWith('/', {
+      state: {
+        stockCode: '600519',
+        stockName: '贵州茅台',
+        autoAnalyze: true,
+        selectionSource: 'screening_result',
+        skills: ['growth_quality'],
+      },
+    });
   });
 
   it('restores an in-flight screening task after remounting the page', async () => {

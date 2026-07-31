@@ -7,6 +7,7 @@ description: 成交量放大突破关键阻力位，趋势启动信号
 version: "1.2"
 category: trend
 tags: [momentum, volume, breakout]
+analysis_skills: [volume_breakout]
 style:
   risk_profile: aggressive
   holding_period: short_term

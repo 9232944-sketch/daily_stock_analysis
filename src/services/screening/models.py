@@ -86,6 +86,7 @@ class Strategy:
     version: str = "1"
     category: str = "trend"
     tags: list[str] = field(default_factory=list)
+    analysis_skills: list[str] = field(default_factory=list)
     style: StrategyStyle = field(default_factory=StrategyStyle)
     screening: ScreeningConfig = field(default_factory=ScreeningConfig)
 
@@ -100,6 +101,7 @@ class StrategyInfo:
     category: str
     tags: list[str]
     market_scope: list[str]
+    analysis_skills: list[str] = field(default_factory=list)
     requires_daily_features: bool = False
     data_requirements: list[str] = field(default_factory=list)
     required_snapshot_fields: list[str] = field(default_factory=list)

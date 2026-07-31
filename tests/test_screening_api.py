@@ -1822,6 +1822,14 @@ class ScreeningOpportunitiesApiTestCase(unittest.TestCase):
                     "results": [{"title": "贵州茅台最新公告", "source": "测试源"}],
                 },
             ),
+            patch(
+                "src.services.screening_service.search_dsa_stock_events",
+                return_value={
+                    "success": True,
+                    "provider": "test",
+                    "results": [{"title": "贵州茅台年度报告", "source": "测试源"}],
+                },
+            ),
         ):
             payload = self._screen(
                 config,
@@ -1836,6 +1844,7 @@ class ScreeningOpportunitiesApiTestCase(unittest.TestCase):
         self.assertEqual(candidate["price"], 1688.0)
         self.assertTrue(candidate["dsa_context"]["enriched"])
         self.assertEqual(candidate["dsa_news"][0]["title"], "贵州茅台最新公告")
+        self.assertEqual(candidate["dsa_events"][0]["title"], "贵州茅台年度报告")
         self.assertIn("DSA行情", candidate["dsa_analysis_summary"])
         self.assertEqual(payload["dsa_enrichment"]["enriched_count"], 1)
 
@@ -1867,6 +1876,7 @@ class ScreeningOpportunitiesApiTestCase(unittest.TestCase):
             patch("src.services.screening_service.get_dsa_realtime_quote") as quote_mock,
             patch("src.services.screening_service.get_dsa_fundamental_context") as fundamentals_mock,
             patch("src.services.screening_service.search_dsa_stock_news") as news_mock,
+            patch("src.services.screening_service.search_dsa_stock_events") as events_mock,
         ):
             payload = self._screen(
                 config,
@@ -1885,6 +1895,7 @@ class ScreeningOpportunitiesApiTestCase(unittest.TestCase):
         quote_mock.assert_not_called()
         fundamentals_mock.assert_not_called()
         news_mock.assert_not_called()
+        events_mock.assert_not_called()
 
     def test_screen_reuses_context_news_results_without_refetch(self) -> None:
         config = self._config(enabled=True)
@@ -1918,6 +1929,7 @@ class ScreeningOpportunitiesApiTestCase(unittest.TestCase):
             patch("src.services.screening_service.get_dsa_realtime_quote") as quote_mock,
             patch("src.services.screening_service.get_dsa_fundamental_context") as fundamentals_mock,
             patch("src.services.screening_service.search_dsa_stock_news") as news_mock,
+            patch("src.services.screening_service.search_dsa_stock_events") as events_mock,
         ):
             payload = self._screen(
                 config,
@@ -1935,6 +1947,7 @@ class ScreeningOpportunitiesApiTestCase(unittest.TestCase):
         quote_mock.assert_not_called()
         fundamentals_mock.assert_not_called()
         news_mock.assert_not_called()
+        events_mock.assert_not_called()
 
     def test_screen_completes_light_screening_context_with_news_only(self) -> None:
         config = self._config(enabled=True)
@@ -1981,6 +1994,10 @@ class ScreeningOpportunitiesApiTestCase(unittest.TestCase):
                     "results": [{"title": "贵州茅台最新公告", "source": "测试源"}],
                 },
             ) as news_mock,
+            patch(
+                "src.services.screening_service.search_dsa_stock_events",
+                return_value={"success": False, "results": []},
+            ),
         ):
             payload = self._screen(
                 config,

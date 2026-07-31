@@ -9,12 +9,13 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
-from api.deps import get_config_dep
+from api.deps import get_config_dep, get_database_manager
 from api.v1.errors import api_error
 from src.config import Config
 from src.services.screening_service import ScreeningService
 from src.services.task_queue import TaskStatus as QueueTaskStatus
 from src.services.task_queue import get_task_queue
+from src.storage import DatabaseManager
 
 router = APIRouter()
 
@@ -35,6 +36,7 @@ class ScreeningStrategyResponse(BaseModel):
     tags: List[str] = Field(default_factory=list)
     market_scope: List[str] = Field(default_factory=list)
     market: str = ""
+    analysis_skills: List[str] = Field(default_factory=list)
 
 
 class ScreeningScreenAccepted(BaseModel):
@@ -57,8 +59,9 @@ class ScreeningScreenTaskStatus(BaseModel):
     result: Optional[Dict[str, Any]] = None
 
 
-def _service(config: Config) -> ScreeningService:
-    return ScreeningService(config=config)
+def _service(config: Config, db_manager: Any = None) -> ScreeningService:
+    usable_db = db_manager if callable(getattr(db_manager, "save_screening_run", None)) else None
+    return ScreeningService(config=config, db_manager=usable_db)
 
 
 def _screening_task_not_found(task_id: str) -> HTTPException:
@@ -120,6 +123,7 @@ def screening_start_screen_task(
     request: ScreeningScreenRequest,
     http_request: Request,
     config: Config = Depends(get_config_dep),
+    db_manager: DatabaseManager = Depends(get_database_manager),
 ) -> ScreeningScreenAccepted:
     task_id = uuid.uuid4().hex
     task_queue = get_task_queue()
@@ -130,7 +134,7 @@ def screening_start_screen_task(
             20,
             "正在执行内建选股，外部数据源较慢时会持续后台运行",
         )
-        result = _service(config).screen(
+        result = _service(config, db_manager).screen(
             strategy=request.strategy,
             market=request.market,
             max_results=request.max_results,
@@ -185,9 +189,43 @@ def screening_screen(
     request: ScreeningScreenRequest,
     http_request: Request,
     config: Config = Depends(get_config_dep),
+    db_manager: DatabaseManager = Depends(get_database_manager),
 ) -> Dict[str, Any]:
-    return _service(config).screen(
+    return _service(config, db_manager).screen(
         strategy=request.strategy,
         market=request.market,
         max_results=request.max_results,
     )
+
+
+@router.get("/history")
+def screening_history(
+    limit: int = Query(20, ge=1, le=100),
+    strategy: str = Query("", max_length=64),
+    market: str = Query("", max_length=16),
+    config: Config = Depends(get_config_dep),
+    db_manager: DatabaseManager = Depends(get_database_manager),
+) -> Dict[str, Any]:
+    return _service(config, db_manager).history(
+        limit=limit,
+        strategy=strategy,
+        market=market,
+    )
+
+
+@router.get("/history/{run_id}")
+def screening_history_detail(
+    run_id: str,
+    config: Config = Depends(get_config_dep),
+    db_manager: DatabaseManager = Depends(get_database_manager),
+) -> Dict[str, Any]:
+    return _service(config, db_manager).history_detail(run_id)
+
+
+@router.get("/source-history")
+def screening_source_history(
+    limit: int = Query(100, ge=1, le=100),
+    config: Config = Depends(get_config_dep),
+    db_manager: DatabaseManager = Depends(get_database_manager),
+) -> Dict[str, Any]:
+    return _service(config, db_manager).source_history(limit=limit)
