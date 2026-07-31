@@ -264,11 +264,17 @@ class ScreeningOpportunitiesApiTestCase(unittest.TestCase):
         ])
         discover = MagicMock(return_value=rows)
 
+        class FakeProvider(screening_service.DsaEastMoneyHotspotProvider):
+            def hotspot_rows(self, *, top: int = 12) -> List[Dict[str, Any]]:
+                return list(rows)[:top]
+
         with tempfile.TemporaryDirectory() as tmpdir:
             cache_path = Path(tmpdir) / "hotspots.json"
+            provider = FakeProvider()
             with (
                 patch("src.services.screening_service.DSA_SCREENING_HOTSPOT_CACHE_PATH", cache_path),
                 patch("src.services.screening_service._get_screening_status_snapshot", return_value=({}, True, {})),
+                patch("src.services.screening_service._resolve_hotspot_provider", return_value=("akshare", provider)),
                 patch("src.services.screening_service.screening_hotspot", new=SimpleNamespace(discover_hotspots=discover)),
             ):
                 payload = self._hotspots(config=config, provider="akshare", top=1, refresh=True)
@@ -283,7 +289,7 @@ class ScreeningOpportunitiesApiTestCase(unittest.TestCase):
         provider = discover.call_args.kwargs["provider"]
         self.assertTrue(hasattr(provider, "stock_board_concept_name_em"))
         self.assertTrue(hasattr(provider, "stock_board_industry_name_em"))
-        self.assertEqual(discover.call_args.kwargs["top"], 1)
+        self.assertEqual(discover.call_args.kwargs["top"], 3)
 
     def test_hotspots_default_provider_uses_dsa_eastmoney_provider(self) -> None:
         provider_name, provider = screening_service._resolve_hotspot_provider("")
@@ -788,6 +794,7 @@ class ScreeningOpportunitiesApiTestCase(unittest.TestCase):
             with (
                 patch.dict(os.environ, {"SCREENING_DATA_DIR": str(data_dir)}, clear=False),
                 patch("src.services.screening_service._get_screening_status_snapshot", return_value=({}, True, {})),
+                patch("src.services.screening_service._resolve_hotspot_provider", return_value=("akshare", "akshare")),
                 patch(
                     "src.services.screening_service.screening_hotspot",
                     new=SimpleNamespace(discover_hotspots=MagicMock(return_value=rows)),
@@ -802,6 +809,95 @@ class ScreeningOpportunitiesApiTestCase(unittest.TestCase):
         self.assertEqual(payload["details"]["Moly"]["route"][0]["title"], "Moly event")
         self.assertEqual(cache_payload["payload"]["details"]["Copper"]["summary"], "Copper summary")
         self.assertEqual(detail_mock.call_count, 2)
+
+    def test_hotspots_refresh_does_not_replace_richer_cache_with_narrower_request(self) -> None:
+        config = self._config(enabled=True)
+
+        class HotspotRows(list):
+            provider_used = "akshare"
+            fallback_used = False
+            source_errors = []
+            stale = False
+            stale_age_hours = None
+
+        rows = HotspotRows([
+            {"topic": "Battery", "heat_score": 98.0, "change_pct": 8.0},
+        ])
+        discover_hotspots = MagicMock(return_value=rows)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            data_dir = Path(tmpdir) / "screening"
+            data_dir.mkdir(parents=True, exist_ok=True)
+            cache_path = data_dir / "hotspots.json"
+            cache_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 2,
+                        "generated_at": "2026-06-13T02:55:00Z",
+                        "cached_at": "2026-06-13T02:55:00Z",
+                        "metadata": {
+                            "schema_version": 2,
+                            "asset_type": "hotspot_cache",
+                            "provider": "akshare",
+                            "provider_used": "akshare",
+                            "row_count": 4,
+                            "source_errors": [],
+                        },
+                        "hotspots": [
+                            {"topic": "AI"},
+                            {"topic": "Robotics"},
+                            {"topic": "Copper"},
+                            {"topic": "Chip"},
+                        ],
+                        "payload": {
+                            "enabled": True,
+                            "provider": "akshare",
+                            "provider_used": "akshare",
+                            "fallback_used": False,
+                            "cache_used": False,
+                            "cached_at": "2026-06-13T02:55:00Z",
+                            "schema_version": 2,
+                            "source_errors": [],
+                            "stale": False,
+                            "stale_age_hours": None,
+                            "hotspots": [
+                                {"topic": "AI"},
+                                {"topic": "Robotics"},
+                                {"topic": "Copper"},
+                                {"topic": "Chip"},
+                            ],
+                            "hotspot_count": 4,
+                        },
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            with (
+                patch.dict(os.environ, {"SCREENING_DATA_DIR": str(data_dir)}, clear=False),
+                patch("src.services.screening_service._get_screening_status_snapshot", return_value=({}, True, {})),
+                patch("src.services.screening_service._resolve_hotspot_provider", return_value=("akshare", "akshare")),
+                patch(
+                    "src.services.screening_service.screening_hotspot",
+                    new=SimpleNamespace(discover_hotspots=discover_hotspots),
+                ),
+            ):
+                payload = self._hotspots(config=config, provider="akshare", top=1, refresh=True)
+
+            cache_payload = json.loads(cache_path.read_text(encoding="utf-8"))
+
+        discover_hotspots.assert_called_once_with(
+            provider="akshare",
+            top=3,
+            history_path=Path(data_dir) / "hotspot.history.jsonl",
+            fallback_cache_path=cache_path,
+        )
+        self.assertEqual(payload["hotspot_count"], 1)
+        self.assertEqual(payload["hotspots"][0]["topic"], "Battery")
+        self.assertEqual(len(cache_payload["payload"]["hotspots"]), 4)
+        self.assertEqual(cache_payload["payload"]["hotspots"][0]["topic"], "Battery")
+        self.assertIn("Battery", [item["topic"] for item in cache_payload["payload"]["hotspots"]])
+        self.assertIn("Copper", [item["topic"] for item in cache_payload["payload"]["hotspots"]])
 
     def test_hotspot_news_local_summary_extracts_event_instead_of_truncating(self) -> None:
         text = (

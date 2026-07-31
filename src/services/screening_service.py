@@ -658,6 +658,28 @@ def _write_screening_hotspot_cache(payload: Dict[str, Any]) -> None:
         cache_payload = dict(payload)
         cache_payload["cache_used"] = False
         cache_payload["cached_at"] = cached_at
+        current_hotspots = cache_payload.get("hotspots")
+        if not isinstance(current_hotspots, list):
+            current_hotspots = []
+            cache_payload["hotspots"] = current_hotspots
+        existing_payload = _load_screening_hotspot_cache_payload_for_write(cache_path)
+        if isinstance(existing_payload, dict):
+            existing_provider = _env_text(existing_payload.get("provider"))
+            current_provider = _env_text(cache_payload.get("provider"))
+            existing_hotspots = existing_payload.get("hotspots")
+            if (
+                isinstance(existing_hotspots, list)
+                and existing_hotspots
+                and (not current_provider or not existing_provider or existing_provider == current_provider)
+            ):
+                merged_hotspots = _merge_screening_hotspot_cache_rows(current_hotspots, existing_hotspots)
+                if len(merged_hotspots) > len(current_hotspots):
+                    cache_payload["hotspots"] = merged_hotspots
+                    cache_payload["hotspot_count"] = len(merged_hotspots)
+                    cache_payload["details"] = _merge_screening_hotspot_cache_details(
+                        cache_payload.get("details"),
+                        existing_payload.get("details"),
+                    )
         cache_path.write_text(
             json.dumps(
                 {
@@ -682,6 +704,50 @@ def _write_screening_hotspot_cache(payload: Dict[str, Any]) -> None:
         )
     except Exception as exc:
         logger.warning("Failed to write Screening hotspot cache to %s: %s", cache_path, exc)
+
+
+def _merge_screening_hotspot_cache_rows(current_rows: List[Any], existing_rows: List[Any]) -> List[Any]:
+    merged: List[Any] = []
+    seen_topics: set[str] = set()
+    target_count = max(len(current_rows), len(existing_rows))
+
+    def append_rows(rows: List[Any]) -> None:
+        for row in rows:
+            if isinstance(row, dict):
+                topic = _hotspot_topic_from_row(row)
+                if topic:
+                    if topic in seen_topics:
+                        continue
+                    seen_topics.add(topic)
+                merged.append(dict(row))
+                continue
+            if row in merged:
+                continue
+            merged.append(row)
+
+    append_rows(current_rows)
+    append_rows(existing_rows)
+    return merged[:target_count]
+
+
+def _merge_screening_hotspot_cache_details(current_details: Any, existing_details: Any) -> Dict[str, Any]:
+    merged: Dict[str, Any] = {}
+    if isinstance(existing_details, dict):
+        merged.update(existing_details)
+    if isinstance(current_details, dict):
+        merged.update(current_details)
+    return merged
+
+
+def _load_screening_hotspot_cache_payload_for_write(cache_path: Path) -> Optional[Dict[str, Any]]:
+    try:
+        raw = json.loads(cache_path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None
+    except Exception as exc:
+        logger.warning("Failed to read existing Screening hotspot cache from %s: %s", cache_path, exc)
+        return None
+    return _normalize_screening_hotspot_cache_payload(raw)
 
 
 def _hotspot_topic_from_row(row: Any) -> str:
@@ -921,6 +987,7 @@ class ScreeningService:
         _ensure_screening_available_for_use()
         provider_name, provider_arg = _resolve_hotspot_provider(provider)
         top_count = max(1, min(int(top or 12), 50))
+        cache_top_count = max(top_count, DSA_SCREENING_MIN_HOTSPOT_CACHE_COUNT)
         if not refresh:
             cached = _load_screening_hotspot_cache(provider=provider_name, top=top_count)
             if cached is not None:
@@ -934,7 +1001,7 @@ class ScreeningService:
             with _screening_runtime_env(self.config):
                 raw = screening_hotspot.discover_hotspots(
                     provider=provider_arg,
-                    top=top_count,
+                    top=cache_top_count,
                     history_path=_screening_hotspot_history_path(),
                     fallback_cache_path=_screening_hotspot_cache_path(),
                 )
@@ -970,22 +1037,23 @@ class ScreeningService:
         items = _remove_non_finite_json_values(_to_plain(raw))
         if not isinstance(items, list):
             items = []
-        selected = items[:top_count]
+        cache_rows = items[:cache_top_count]
         source_errors = _list_text_values(getattr(raw, "source_errors", []))
         direct_hotspot_fallback_used = False
-        if isinstance(provider_arg, DsaEastMoneyHotspotProvider) and _hotspot_rows_are_thin(selected, top=top_count):
+        if isinstance(provider_arg, DsaEastMoneyHotspotProvider) and _hotspot_rows_are_thin(cache_rows, top=cache_top_count):
             try:
-                direct_hotspots = provider_arg.hotspot_rows(top=top_count)
+                direct_hotspots = provider_arg.hotspot_rows(top=cache_top_count)
             except Exception as exc:
                 logger.warning("Screening DSA direct hotspot fallback failed: %s", exc)
                 direct_hotspots = []
                 source_errors.append(f"dsa_direct_hotspots_failed: {exc}")
-            if len(direct_hotspots) > len(selected):
-                selected = direct_hotspots
+            if len(direct_hotspots) > len(cache_rows):
+                cache_rows = direct_hotspots
                 direct_hotspot_fallback_used = True
                 source_errors.append("Screening hotspot rows were thin; used DSA EastMoney board-change rows.")
-        if isinstance(provider_arg, DsaEastMoneyHotspotProvider) and selected:
-            selected = _enrich_hotspot_rows_from_provider(selected, provider_arg, top=top_count)
+        if isinstance(provider_arg, DsaEastMoneyHotspotProvider) and cache_rows:
+            cache_rows = _enrich_hotspot_rows_from_provider(cache_rows, provider_arg, top=cache_top_count)
+        selected = cache_rows[:top_count]
         if not selected and source_errors:
             cached = _load_screening_hotspot_cache(provider=provider_name, top=top_count)
             if cached is not None:
@@ -1019,7 +1087,10 @@ class ScreeningService:
         if selected and include_details:
             payload = self._prefetch_hotspot_details(payload, provider=provider_name, refresh=False)
         if selected:
-            _write_screening_hotspot_cache(payload)
+            cache_payload = dict(payload)
+            cache_payload["hotspots"] = cache_rows
+            cache_payload["hotspot_count"] = len(cache_rows)
+            _write_screening_hotspot_cache(cache_payload)
         return payload
 
     def _prefetch_hotspot_details(self, payload: Dict[str, Any], *, provider: str, refresh: bool) -> Dict[str, Any]:

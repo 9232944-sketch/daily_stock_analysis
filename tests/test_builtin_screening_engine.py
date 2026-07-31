@@ -13,10 +13,11 @@ from fastapi.testclient import TestClient as FastAPITestClient
 
 from api.v1.router import router
 from src.services.screening import REFERENCE_REVISION
+from src.services.screening.dsa_provider import apply_dsa_provider_context
 from src.services.screening import pipeline as screening_pipeline
 from src.services.screening.filter import apply_hard_filters
 from src.services.screening.config import Config as ScreeningRuntimeConfig
-from src.services.screening.models import HardFilterConfig, ScreeningConfig, Strategy
+from src.services.screening.models import HardFilterConfig, Pick, ScreeningConfig, Strategy
 from src.services.screening.scorer import compute_screen_scores
 from src.services.screening import snapshot as screening_snapshot
 from src.services.screening.strategy import list_strategies, load_all_strategies
@@ -253,6 +254,28 @@ def test_pipeline_uses_ranker_success_flag_instead_of_partial_llm_scores(monkeyp
     assert result.picks[0].llm_score is None
     assert result.picks[0].final_score == result.picks[0].screen_score
     assert "LLM ranking failed: fell back to screen_score" in result.degradation
+
+
+def test_dsa_provider_context_respects_host_max_candidates_setting() -> None:
+    picks = [
+        Pick(rank=index + 1, code=f"00000{index + 1}", name=f"Stock {index + 1}", final_score=90.0, screen_score=90.0)
+        for index in range(5)
+    ]
+    requested_codes: list[str] = []
+
+    def get_candidate_context(code: str, _name: str) -> dict[str, object]:
+        requested_codes.append(code)
+        return {"enriched": True, "quote": {"price": 10.0}}
+
+    notes = apply_dsa_provider_context(
+        picks,
+        {"dsa": {"max_candidates": 3, "get_candidate_context": get_candidate_context}},
+    )
+
+    assert requested_codes == ["000001", "000002", "000003"]
+    assert all(pick.dsa_context.get("enriched") is True for pick in picks[:3])
+    assert all(pick.dsa_context == {} for pick in picks[3:])
+    assert notes == ["DSA provider context applied 3 of 3 candidates"]
 
 
 def test_hard_filter_and_factor_scoring_keep_core_semantics() -> None:

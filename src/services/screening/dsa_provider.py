@@ -24,14 +24,14 @@ def apply_dsa_provider_context(
     picks: list[Pick],
     context: dict[str, Any] | None,
     *,
-    max_candidates: int = DSA_PROVIDER_MAX_CANDIDATES,
+    max_candidates: int | None = None,
 ) -> list[str]:
     """Attach DSA context to top candidates before LLM ranking."""
     provider = _extract_provider_context(context)
     if not picks or not provider:
         return []
 
-    limit = min(len(picks), max(max_candidates, 0))
+    limit = min(len(picks), max(_resolve_max_candidates(provider, max_candidates), 0))
     if limit <= 0:
         return []
 
@@ -65,6 +65,18 @@ def apply_dsa_provider_context(
         suffix = f" | +{len(errors) - 5} more" if len(errors) > 5 else ""
         notes.append(f"DSA provider context row errors: {sample}{suffix}")
     return notes
+
+
+def _resolve_max_candidates(provider: dict[str, Any], max_candidates: int | None) -> int:
+    if max_candidates is not None:
+        return max_candidates
+    configured = provider.get("max_candidates")
+    try:
+        if configured is None or configured == "":
+            raise ValueError
+        return int(configured)
+    except (TypeError, ValueError):
+        return DSA_PROVIDER_MAX_CANDIDATES
 
 
 def _extract_provider_context(context: dict[str, Any] | None) -> dict[str, Any]:
