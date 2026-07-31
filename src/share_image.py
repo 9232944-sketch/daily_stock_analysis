@@ -241,6 +241,55 @@ def _mapped_value(mapping: dict[str, str], *labels: str) -> str:
     return ""
 
 
+def _opposite_color(color: str) -> str:
+    if color == "green":
+        return "red"
+    if color == "red":
+        return "green"
+    return ""
+
+
+def _marker_color(raw_change: str) -> str:
+    if "🟢" in (raw_change or ""):
+        return "green"
+    if "🔴" in (raw_change or ""):
+        return "red"
+    return ""
+
+
+def _positive_color_from_change(raw_change: str, change: str) -> str:
+    marker_color = _marker_color(raw_change)
+    if not marker_color:
+        return ""
+    return _opposite_color(marker_color) if (change or "").strip().startswith("-") else marker_color
+
+
+def _has_meaningful_section(markdown_text: str, *terms: str) -> bool:
+    section = _section(markdown_text, *terms)
+    if not section:
+        return False
+    cleaned = _clean_value(section, limit=400)
+    if not cleaned:
+        return False
+    for boilerplate in (
+        "建议仅供参考，不构成投资建议",
+        "仅供研究交流，不构成投资建议",
+        "does not constitute investment advice",
+    ):
+        cleaned = cleaned.replace(boilerplate, "").strip()
+    return bool(cleaned)
+
+
+def _meaningful_market_subsection_count(markdown_text: str) -> int:
+    count = 0
+    for _title, body, level in _extract_sections(markdown_text):
+        if level != 3:
+            continue
+        if _clean_value(body, limit=400):
+            count += 1
+    return count
+
+
 def _labeled_value(text: str, *labels: str, limit: int = 100) -> str:
     joined = "|".join(re.escape(label) for label in labels)
     match = re.search(
@@ -445,7 +494,9 @@ def _stock_data(markdown_text: str, generated_on: date) -> StockPoster:
                 {_plain(header).lower(): _clean_value(value) for header, value in zip(table.headers, table.rows[0])}
             )
         snapshot_map.update(_table_map(table))
-    current = _mapped_value(snapshot_map, "当前价", "current price", "price", "收盘价", "收盘", "close")
+    current = _mapped_value(snapshot_map, "当前价", "current price", "price") or _mapped_value(
+        snapshot_map, "收盘价", "收盘", "close"
+    )
     change = _mapped_value(snapshot_map, "涨跌幅", "change %", "change pct")
     ratio = _mapped_value(snapshot_map, "量比", "volume ratio")
     turnover = _mapped_value(snapshot_map, "换手率", "turnover rate")
@@ -595,8 +646,12 @@ def _parse_index_bullets(index_section: str) -> list[tuple[str, str, str, str]]:
 
 
 def _market_data(markdown_text: str, generated_on: date) -> MarketPoster:
-    overview = _section(markdown_text, "盘面总览", "market summary", "breadth & liquidity")
-    score_match = re.search(r"(?:盘面信号|市场信号|market signal)\*{0,2}\s*[:：]\s*(\d{1,3})/100(?:\s*[（(]([^，,)]+)[，,]\s*([^）)]+)[）)])?", markdown_text, re.IGNORECASE)
+    overview = _section(markdown_text, "盘面总览", "market summary", "breadth & liquidity", "시장 요약")
+    score_match = re.search(
+        r"(?:盘面信号|市场信号|market signal|시장 신호)\*{0,2}\s*[:：]\s*(\d{1,3})/100(?:\s*[（(]([^，,)]+)[，,]\s*([^）)]+)[）)])?",
+        markdown_text,
+        re.IGNORECASE,
+    )
     quote = _QUOTE_RE.search(markdown_text)
     poster = MarketPoster(
         title=_market_title(markdown_text),
@@ -605,9 +660,9 @@ def _market_data(markdown_text: str, generated_on: date) -> MarketPoster:
         score=score_match.group(1) if score_match else "",
         temperature=_clean_value(score_match.group(2), limit=12) if score_match and score_match.group(2) else "",
         signal=_clean_value(score_match.group(3), limit=12) if score_match and score_match.group(3) else "",
-        guidance=_labeled_value(overview, "操作建议", "Guidance", limit=100),
+        guidance=_labeled_value(overview, "操作建议", "Guidance", "운용 제안", "가이던스", limit=100),
     )
-    reason_text = _labeled_value(overview, "信号依据", "Drivers", limit=220)
+    reason_text = _labeled_value(overview, "信号依据", "Drivers", "신호 근거", "동인", limit=220)
     poster.reasons = [
         _clean_value(item, limit=72)
         for item in re.split(r"[；;]", reason_text)
@@ -616,14 +671,18 @@ def _market_data(markdown_text: str, generated_on: date) -> MarketPoster:
     if not poster.reasons and poster.summary:
         poster.reasons = _sentences(poster.summary, limit=2)
 
-    index_section = _section(markdown_text, "指数结构", "major indices", "index commentary")
-    index_table = _find_table(index_section, "指数", "涨跌幅") or _find_table(index_section, "index", "change")
+    index_section = _section(markdown_text, "指数结构", "major indices", "index commentary", "주요 지수", "지수 구조")
+    index_table = (
+        _find_table(index_section, "指数", "涨跌幅")
+        or _find_table(index_section, "index", "change")
+        or _find_table(index_section, "지수", "등락률")
+    )
     positive_color = "green"
     if index_table:
         headers = [header.lower() for header in index_table.headers]
-        name_i = next((i for i, value in enumerate(headers) if "指数" in value or "index" in value), 0)
-        current_i = next((i for i, value in enumerate(headers) if "最新" in value or "last" in value), 1)
-        change_i = next((i for i, value in enumerate(headers) if "涨跌幅" in value or "change" in value), 2)
+        name_i = next((i for i, value in enumerate(headers) if "指数" in value or "index" in value or "지수" in value), 0)
+        current_i = next((i for i, value in enumerate(headers) if "最新" in value or "last" in value or "최신" in value), 1)
+        change_i = next((i for i, value in enumerate(headers) if "涨跌幅" in value or "change" in value or "등락률" in value), 2)
         for row_index, row in enumerate(index_table.rows[:3]):
             if len(row) > max(name_i, current_i, change_i):
                 raw_change = (
@@ -632,11 +691,10 @@ def _market_data(markdown_text: str, generated_on: date) -> MarketPoster:
                     and len(index_table.raw_rows[row_index]) > change_i
                     else row[change_i]
                 )
-                color = "green" if "🟢" in raw_change else "red" if "🔴" in raw_change else ""
+                color = _marker_color(raw_change)
                 if not color:
                     color = "red" if row[change_i].strip().startswith("-") else "green"
-                if not row[change_i].strip().startswith("-"):
-                    positive_color = color
+                positive_color = _positive_color_from_change(raw_change, row[change_i]) or positive_color
                 poster.indices.append((row[name_i], row[current_i], row[change_i], color))
     if not poster.indices:
         poster.indices = _parse_index_bullets(index_section)
@@ -647,12 +705,16 @@ def _market_data(markdown_text: str, generated_on: date) -> MarketPoster:
             elif any(marker in first_change for marker in ("↓", "-")):
                 positive_color = "red"
 
-    breadth_table = _find_table(overview, "上涨", "成交额") or _find_table(overview, "breadth")
+    breadth_table = (
+        _find_table(overview, "上涨", "成交额")
+        or _find_table(overview, "breadth")
+        or _find_table(overview, "상승", "거래대금")
+    )
     if breadth_table:
         mapping = _table_map(breadth_table)
-        advance = _mapped_value(mapping, "上涨/下跌", "advancers")
-        limits = _mapped_value(mapping, "涨停/跌停", "limit-up")
-        amount = _mapped_value(mapping, "成交额", "turnover")
+        advance = _mapped_value(mapping, "上涨/下跌", "advancers", "상승/하락")
+        limits = _mapped_value(mapping, "涨停/跌停", "limit-up", "상한가/하한가")
+        amount = _mapped_value(mapping, "成交额", "turnover", "거래대금")
         if advance:
             parts = [part.strip() for part in advance.split("/")]
             if parts:
@@ -681,17 +743,21 @@ def _market_data(markdown_text: str, generated_on: date) -> MarketPoster:
                 tone = "primary"
             poster.breadth.append((label, value, tone))
 
-    sector_section = _section(markdown_text, "板块主线", "sector highlights")
-    sector_table = _find_table(sector_section, "板块", "涨跌幅") or _find_table(sector_section, "sector", "change")
+    sector_section = _section(markdown_text, "板块主线", "sector highlights", "섹터 하이라이트", "주도 섹터")
+    sector_table = (
+        _find_table(sector_section, "板块", "涨跌幅")
+        or _find_table(sector_section, "sector", "change")
+        or _find_table(sector_section, "섹터", "등락률")
+    )
     if sector_table:
         for row in sector_table.rows[:3]:
             if len(row) >= 3:
                 poster.sectors.append((_clean_value(row[-2], limit=20), _clean_value(row[-1], limit=12)))
 
-    catalyst_section = _section(markdown_text, "消息催化", "news catalysts")
+    catalyst_section = _section(markdown_text, "消息催化", "news catalysts", "뉴스 촉매")
     poster.catalysts = _section_items(catalyst_section, limit=2) or _sentences(catalyst_section, limit=2)
-    plan_section = _section(markdown_text, "明日交易计划", "strategy plan", "outlook")
-    for label in ("结论", "仓位区间", "关注方向", "回避方向", "触发失效条件"):
+    plan_section = _section(markdown_text, "明日交易计划", "strategy plan", "outlook", "내일 거래 계획", "내일 계획")
+    for label in ("结论", "仓位区间", "关注方向", "回避方向", "触发失效条件", "결론", "비중 구간", "관심 방향", "회피 방향", "무효화 조건"):
         value = _labeled_value(plan_section, label, limit=86)
         if value:
             poster.plan.append(f"{label}：{value}")
@@ -699,8 +765,41 @@ def _market_data(markdown_text: str, generated_on: date) -> MarketPoster:
             break
     if not poster.plan:
         poster.plan = _section_items(plan_section, limit=3) or _sentences(plan_section, limit=3)
-    poster.risks = _section_items(_section(markdown_text, "风险提示", "risk alerts"), limit=3)
+    poster.risks = _section_items(_section(markdown_text, "风险提示", "risk alerts", "리스크 경보", "리스크 경고"), limit=3)
     return poster
+
+
+def _should_keep_market_fallback(markdown_text: str, data: MarketPoster) -> bool:
+    expected_sections = (
+        (
+            _has_meaningful_section(markdown_text, "盘面总览", "market summary", "breadth & liquidity", "시장 요약"),
+            any((data.score, data.guidance, data.reasons, data.summary, data.breadth)),
+        ),
+        (
+            _has_meaningful_section(markdown_text, "指数结构", "major indices", "index commentary", "주요 지수", "지수 구조"),
+            bool(data.indices),
+        ),
+        (
+            _has_meaningful_section(markdown_text, "板块主线", "sector highlights", "섹터 하이라이트", "주도 섹터"),
+            bool(data.sectors),
+        ),
+        (
+            _has_meaningful_section(markdown_text, "消息催化", "news catalysts", "뉴스 촉매"),
+            bool(data.catalysts),
+        ),
+        (
+            _has_meaningful_section(markdown_text, "明日交易计划", "strategy plan", "outlook", "내일 거래 계획", "내일 계획"),
+            bool(data.plan),
+        ),
+        (
+            _has_meaningful_section(markdown_text, "风险提示", "risk alerts", "리스크 경보", "리스크 경고"),
+            bool(data.risks),
+        ),
+    )
+    if any(expected and not populated for expected, populated in expected_sections):
+        return True
+    mapped_subsections = sum(1 for expected, populated in expected_sections if expected and populated)
+    return _meaningful_market_subsection_count(markdown_text) > mapped_subsections
 
 
 def _tone_for_action(action: str) -> str:
@@ -776,7 +875,7 @@ def _stock_body(data: StockPoster, fallback_html: str) -> str:
     return f"{signal_row}{conclusion}{snapshot}{sniper}{technical}{insights}{positions}{fallback}"
 
 
-def _market_body(data: MarketPoster, fallback_html: str) -> str:
+def _market_body(data: MarketPoster, fallback_html: str, markdown_text: str) -> str:
     signal = ""
     if data.score:
         signal = (
@@ -809,7 +908,8 @@ def _market_body(data: MarketPoster, fallback_html: str) -> str:
     )
     risks = _section_html("风险提示", "!", _list_html(data.risks), "risk-strip") if data.risks else ""
     structured = any((signal, indices, breadth, dual, risks))
-    fallback = f'<section class="report-fallback"><article class="report-content">{fallback_html}</article></section>' if not structured else ""
+    keep_fallback = not structured or _should_keep_market_fallback(markdown_text, data)
+    fallback = f'<section class="report-fallback"><article class="report-content">{fallback_html}</article></section>' if keep_fallback else ""
     return f"{signal}{indices}{breadth}{dual}{risks}{fallback}"
 
 
@@ -826,7 +926,7 @@ def _multi_market_body(segments: list[MarketSegment], generated_on: date) -> str
         title = data.title or segment.title
         blocks.append(
             f'<section class="poster-section market-region-title"><h2><b>◎</b>{_escape(title)}</h2></section>'
-            f"{_market_body(data, fallback_html)}"
+            f"{_market_body(data, fallback_html, segment.markdown)}"
         )
     return "".join(blocks)
 
@@ -876,7 +976,7 @@ def build_share_image_html(markdown_text: str, *, generated_on: Optional[date] =
             data = _market_data(markdown_text, generated)
             title = data.title
             subtitle = data.summary or "指数、宽度、主线与风险的收盘复盘"
-            content = _market_body(data, fallback_html)
+            content = _market_body(data, fallback_html, markdown_text)
     elif report_kind == "stock":
         data = _stock_data(markdown_text, generated)
         title = data.title

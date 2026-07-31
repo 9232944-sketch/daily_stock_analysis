@@ -215,6 +215,28 @@ def test_stock_share_image_reads_close_only_market_snapshot_column():
     assert "0.76%" in html
 
 
+def test_stock_share_image_prefers_realtime_price_over_close_in_combined_snapshot():
+    html = build_share_image_html(
+        """# 贵州茅台 600519 分析报告
+
+## 核心结论
+
+**买入**：回调到支撑区可分批关注。
+
+### 当日行情
+
+| 收盘 | 当前价 | 涨跌幅 | 量比 | 换手率 |
+| --- | --- | --- | --- | --- |
+| 1420.00 | 1425.00 | +1.20% | 1.35 | 0.82% |
+""",
+        generated_on=date(2026, 7, 31),
+    )
+
+    assert "市场快照" in html
+    assert "1425.00" in html
+    assert "1420.00" not in html
+
+
 def test_share_image_escapes_title_but_keeps_markdown_body_markup():
     html = build_share_image_html(
         "# AAPL <script>alert(1)</script>\n\n**结论**：关注。",
@@ -662,6 +684,104 @@ def test_market_share_image_keeps_signal_card_without_breadth_for_hk_review():
     assert "市场宽度" not in html
 
 
+def test_korean_market_review_preserves_localized_sections_with_english_sector_fallback():
+    html = build_share_image_html(
+        """# 중국 A주 시황 리뷰
+
+## 2026-07-31 중국 A주 시황 리뷰
+
+> 거래대금은 회복됐지만 추격 매수는 아직 신중해야 합니다.
+
+### 1. 시장 요약
+
+- **시장 신호**: 66/100 (건설적, 위험 선호)
+- **운용 제안**: 주도 섹터 눌림목만 선별한다.
+- **신호 근거**: 거래대금 회복; 상승 종목 확산
+
+| 지표 | 수치 |
+| --- | --- |
+| 상승/하락 | 3200 / 1500 |
+| 상한가/하한가 | 80 / 5 |
+| 거래대금 | 1.1조 위안 |
+
+### 2. 주요 지수
+
+| 지수 | 최신 | 등락률 |
+| --- | --- | --- |
+| 상하이종합 | 3200 | +0.80% |
+
+### 3. 내일 거래 계획
+
+- 눌림목 확인 후 분할 대응.
+
+### 4. 리스크 경보
+
+- 추격 매수 과열 가능성.
+
+### 5. Sector Highlights
+
+| Rank | Sector | Change % |
+| --- | --- | --- |
+| 1 | 반도체 | +3.2% |
+""",
+        generated_on=date(2026, 7, 31),
+    )
+
+    assert 'class="poster market"' in html
+    assert '<section class="market-signal">' in html
+    assert "A股市场复盘" in html
+    assert "주도 섹터 눌림목만 선별한다" in html
+    assert "상하이종합" in html
+    assert "3200" in html
+    assert "눌림목 확인 후 분할 대응." in html
+    assert "추격 매수 과열 가능성." in html
+    assert "반도체" in html
+
+
+def test_korean_market_review_keeps_fallback_body_when_only_sector_fallback_is_structured():
+    html = build_share_image_html(
+        """# 중국 A주 시황 리뷰
+
+## 2026-07-31 중국 A주 시황 리뷰
+
+> 거래대금은 회복됐지만 추격 매수는 아직 신중해야 합니다.
+
+### 1. 시장 개요
+
+- **시장 체력**: 회복 구간이지만 추세 확인이 더 필요합니다.
+- **운용 포인트**: 눌림목만 선별 대응합니다.
+
+### 2. 주요 지표
+
+| 지수 | 최신 | 변동률 |
+| --- | --- | --- |
+| 상하이종합 | 3200 | +0.80% |
+
+### 3. 내일 전략
+
+- 눌림목 확인 후 분할 대응.
+
+### 4. 위험 요인
+
+- 추격 매수 과열 가능성.
+
+### 5. Sector Highlights
+
+| Rank | Sector | Change % |
+| --- | --- | --- |
+| 1 | 반도체 | +3.2% |
+""",
+        generated_on=date(2026, 7, 31),
+    )
+
+    assert 'class="poster market"' in html
+    assert '<section class="report-fallback">' in html
+    assert "시장 체력" in html
+    assert "내일 전략" in html
+    assert "위험 요인" in html
+    assert "반도체" in html
+
+
 def test_market_share_image_parses_fallback_major_indices_bullets():
     html = build_share_image_html(
         """# US Market Recap
@@ -689,6 +809,35 @@ def test_market_share_image_parses_fallback_major_indices_bullets():
     assert "↑0.50%" in html
     assert "Nasdaq" in html
     assert "↓0.20%" in html
+
+
+def test_market_share_image_uses_red_up_gain_color_for_breadth_when_all_indices_decline():
+    html = build_share_image_html(
+        """# 大盘复盘
+
+### 一、盘面总览
+
+- **盘面信号**：60/100（偏弱，防守）
+
+| 指标 | 数值 |
+| --- | --- |
+| 上涨/下跌 | 1200 / 3800 |
+| 涨停/跌停 | 18 / 42 |
+| 两市成交额 | 9200 亿 |
+
+### 二、指数结构
+
+| 指数 | 最新 | 涨跌幅 |
+| --- | --- | --- |
+| 上证指数 | 3200 | 🟢 -0.80% |
+| 深证成指 | 9800 | 🟢 -1.20% |
+""",
+        generated_on=date(2026, 7, 31),
+    )
+
+    assert '<strong class="green">-0.80%</strong>' in html
+    assert 'class="metric  red"><span>上涨</span>' in html
+    assert 'class="metric  green"><span>下跌</span>' in html
 
 
 def test_single_stock_dashboard_title_routes_to_stock_poster():
