@@ -504,6 +504,39 @@ def test_english_breadth_line_populates_structured_market_breadth_cards():
     assert "14567 (CNY 100m)" in html
 
 
+def test_market_share_image_keeps_signal_card_without_breadth_for_hk_review():
+    html = build_share_image_html(
+        """# HK Market Recap
+
+## 2026-07-31 HK Market Recap
+
+> Hong Kong tech outperformed into the close.
+
+### 1. Market Summary
+
+- **Market Signal**: 58/100 (neutral, selective)
+- **Drivers**: Hang Seng held above prior support; average major-index change +0.42%
+- **Guidance**: Signals are mixed; keep position sizing moderate and wait for confirmation.
+
+### 2. Major Indices
+
+| Index | Last | Change % |
+| --- | --- | --- |
+| Hang Seng Index | 18200 | +1.20% |
+| Hang Seng Tech | 3900 | +1.85% |
+""",
+        generated_on=date(2026, 7, 31),
+    )
+
+    assert 'class="poster market"' in html
+    assert '<section class="market-signal">' in html
+    assert '<strong>58</strong><small>/100</small>' in html
+    assert "selective" in html
+    assert "Hang Seng held above prior support" in html
+    assert "Signals are mixed; keep position sizing moderate" in html
+    assert "市场宽度" not in html
+
+
 def test_single_stock_dashboard_title_routes_to_stock_poster():
     html = build_share_image_html(
         """# 2026-07-31 Decision Dashboard
