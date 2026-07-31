@@ -156,6 +156,13 @@ def _get_market_review_market_heading(language: Any, market: str) -> str:
     return str(review_text.get(title_key) or market.upper()).lstrip("#").strip()
 
 
+def _market_review_region_metadata(region: Any) -> str:
+    normalized = str(region or "").strip().lower()
+    if normalized in {market for market, _, _ in _MARKET_REVIEW_MARKETS}:
+        return f"[dsa-market-region]: # ({normalized})\n\n"
+    return ""
+
+
 def _resolve_market_review_regions(raw_region: Optional[str]) -> list[str]:
     """Normalize MARKET_REVIEW_REGION into an ordered, non-empty region list."""
 
@@ -497,10 +504,11 @@ def _render_market_review_payload_markdown(
     wrapper_title: Optional[str] = None,
 ) -> str:
     """Render Markdown from the structured market-review payload for file/push compatibility."""
+    metadata = _market_review_region_metadata(payload.get("region"))
     body = _render_market_review_payload_body(payload)
     if wrapper_title:
-        return f"{wrapper_title}\n\n{body}".strip()
-    return body.strip()
+        return f"{metadata}{wrapper_title}\n\n{body}".strip()
+    return f"{metadata}{body}".strip()
 
 
 def _render_market_review_merge_markdown(

@@ -164,6 +164,31 @@ def test_real_single_stock_shape_uses_h2_title_score_and_sniper_contract():
     assert 'class="metric sniper target"' in html
 
 
+def test_stock_share_image_reads_notification_service_chinese_market_snapshot_heading():
+    html = build_share_image_html(
+        """# 贵州茅台 600519 分析报告
+
+## 核心结论
+
+**买入**：回调到支撑区可分批关注。
+
+### 当日行情
+
+| 当前价 | 涨跌幅 | 量比 | 换手率 | 行情来源 |
+| --- | --- | --- | --- | --- |
+| 1425.00 | +1.20% | 1.35 | 0.82% | 腾讯财经 |
+""",
+        generated_on=date(2026, 7, 31),
+    )
+
+    assert "市场快照" in html
+    assert "1425.00" in html
+    assert "+1.20%" in html
+    assert "1.35" in html
+    assert "0.82%" in html
+    assert "数据源：腾讯财经" in html
+
+
 def test_share_image_escapes_title_but_keeps_markdown_body_markup():
     html = build_share_image_html(
         "# AAPL <script>alert(1)</script>\n\n**结论**：关注。",
@@ -471,6 +496,62 @@ def test_generic_market_review_does_not_treat_english_pronoun_us_as_us_market():
     assert 'class="poster market"' in html
     assert "大盘复盘" in html
     assert "美股市场复盘" not in html
+
+
+def test_hidden_market_region_metadata_preserves_single_region_chinese_market_title():
+    html = build_share_image_html(
+        """[dsa-market-region]: # (us)
+
+# 🎯 大盘复盘
+
+## 2026-07-31 大盘复盘
+
+> 今晚先看科技股财报与指数承接。
+
+### 一、盘面总览
+
+- **盘面信号**：63/100（偏暖，可进攻）
+
+### 二、指数结构
+
+| 指数 | 最新 | 涨跌幅 |
+| --- | --- | --- |
+| 纳斯达克 | 19000 | +0.95% |
+""",
+        generated_on=date(2026, 7, 31),
+    )
+
+    assert 'class="poster market"' in html
+    assert "美股市场复盘" in html
+    assert "A股市场复盘" not in html
+
+
+def test_hidden_market_region_metadata_overrides_body_scope_mentions():
+    html = build_share_image_html(
+        """[dsa-market-region]: # (us)
+
+# 🎯 大盘复盘
+
+## 2026-07-31 大盘复盘
+
+> 今晚主要看美股科技股财报，同时留意其与A股风险偏好的联动。
+
+### 一、盘面总览
+
+- **盘面信号**：63/100（偏暖，可进攻）
+
+### 二、指数结构
+
+| 指数 | 最新 | 涨跌幅 |
+| --- | --- | --- |
+| 纳斯达克 | 19000 | +0.95% |
+""",
+        generated_on=date(2026, 7, 31),
+    )
+
+    assert 'class="poster market"' in html
+    assert "美股市场复盘" in html
+    assert "A股市场复盘" not in html
 
 
 def test_english_breadth_line_populates_structured_market_breadth_cards():

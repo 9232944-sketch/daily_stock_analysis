@@ -35,6 +35,10 @@ _DASHBOARD_RE = re.compile(r"(?:决策仪表盘|decision\s+dashboard)", re.IGNOR
 _HEADING_RE = re.compile(r"^(#{1,4})\s+(.+?)\s*$", re.MULTILINE)
 _QUOTE_RE = re.compile(r"^\s*>\s+(.+?)\s*$", re.MULTILINE)
 _DATE_RE = re.compile(r"\b(20\d{2}-\d{2}-\d{2})(?:[ T]\d{2}:\d{2}(?::\d{2})?)?\b")
+_MARKET_REGION_REF_RE = re.compile(
+    r"^\[dsa-market-region\]:\s+#\s+\(\s*([a-z,]+)\s*\)\s*$",
+    re.IGNORECASE | re.MULTILINE,
+)
 _CODE_RE = re.compile(
     r"(?:\(|（)?((?:(?i:sh|sz|bj|hk))?\d{5,6}(?:\.[A-Z]{2})?|(?<![A-Za-z])[A-Z]{1,5}(?:\.[A-Z])?(?![A-Za-z]))(?:\)|）)?",
 )
@@ -295,6 +299,21 @@ def _market_label(text: str) -> str:
     return ""
 
 
+def _market_region_hint(markdown_text: str) -> str:
+    match = _MARKET_REGION_REF_RE.search(markdown_text or "")
+    return match.group(1).strip().lower() if match else ""
+
+
+def _market_label_for_region(region: str) -> str:
+    return {
+        "cn": "A股",
+        "hk": "港股",
+        "us": "美股",
+        "jp": "日股",
+        "kr": "韩股",
+    }.get((region or "").strip().lower(), "")
+
+
 def _stock_heading_entry(raw_title: str) -> Optional[tuple[str, str]]:
     def _heading_name(fragment: str) -> str:
         name = _plain(fragment).strip(" -—()（）")
@@ -413,7 +432,7 @@ def _stock_data(markdown_text: str, generated_on: date) -> StockPoster:
         conclusion=conclusion,
     )
 
-    snapshot_section = _section(markdown_text, "市场快照", "market snapshot")
+    snapshot_section = _section(markdown_text, "市场快照", "当日行情", "market snapshot", "시세 스냅샷")
     snapshot_map: dict[str, str] = {}
     for table in _parse_tables(snapshot_section):
         if len(table.rows) == 1:
@@ -433,7 +452,7 @@ def _stock_data(markdown_text: str, generated_on: date) -> StockPoster:
     ):
         if value:
             poster.snapshot.append((label, value, tone))
-    poster.data_source = _mapped_value(snapshot_map, "数据源", "source")
+    poster.data_source = _mapped_value(snapshot_map, "数据源", "行情来源", "source")
 
     data_section = _section(markdown_text, "数据透视", "data view", "技术面", "technicals")
     data_map: dict[str, str] = {}
@@ -497,10 +516,15 @@ def _stock_data(markdown_text: str, generated_on: date) -> StockPoster:
 
 def _market_title(markdown_text: str) -> str:
     first_title = next((title for title, _body, _level in _extract_sections(markdown_text)), "")
-    for candidate in (first_title, markdown_text[:600]):
-        market = _market_label(candidate)
-        if market:
-            return f"{market}市场复盘"
+    market = _market_label(first_title)
+    if market:
+        return f"{market}市场复盘"
+    hinted_market = _market_label_for_region(_market_region_hint(markdown_text))
+    if hinted_market:
+        return f"{hinted_market}市场复盘"
+    market = _market_label(markdown_text[:600])
+    if market:
+        return f"{market}市场复盘"
     if _is_market_review_title(first_title):
         return first_title
     return "A股市场复盘"
