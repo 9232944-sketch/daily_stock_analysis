@@ -1678,8 +1678,8 @@ Output the report content directly, no extra commentary.
         # 指数行情（简洁格式）
         indices_text = ""
         for idx in overview.indices[:4]:
-            direction = "↑" if idx.change_pct > 0 else "↓" if idx.change_pct < 0 else "-"
-            indices_text += f"- **{idx.name}**: {idx.current:.2f} ({direction}{abs(idx.change_pct):.2f}%)\n"
+            marker = self._get_index_change_arrow(idx.change_pct)
+            indices_text += f"- **{idx.name}**: {idx.current:.2f} ({marker} {idx.change_pct:+.2f}%)\n"
         
         # 板块信息
         separator = ", " if template_language == "en" else "、"

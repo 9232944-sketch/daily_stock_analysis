@@ -3169,6 +3169,26 @@ Index text.
         assert f"- **操作建议**：{snapshot['guidance']}" in result
         assert "| 上涨/下跌/平盘 |" not in result
 
+    def test_generate_template_review_uses_configured_red_up_markers_in_english_fallback(self):
+        from src.market_analyzer import MarketIndex, MarketOverview
+
+        ma = self._make_market_analyzer_with_mock_generate_text(return_value="review")
+        ma.region = "us"
+        ma.config.report_language = "en"
+        ma.config.market_review_color_scheme = "red_up"
+        overview = MarketOverview(
+            date="2026-07-31",
+            indices=[
+                MarketIndex(code="SPX", name="S&P 500", current=5000.0, change_pct=0.8),
+                MarketIndex(code="IXIC", name="Nasdaq", current=18000.0, change_pct=-0.2),
+            ],
+        )
+
+        result = ma._generate_template_review(overview, [])
+
+        assert "- **S&P 500**: 5000.00 (🔴 +0.80%)" in result
+        assert "- **Nasdaq**: 18000.00 (🟢 -0.20%)" in result
+
     def test_market_review_payload_sections_skip_top_report_title(self):
         from src.market_analyzer import MarketAnalyzer
 

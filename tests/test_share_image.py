@@ -840,6 +840,33 @@ def test_market_share_image_uses_red_up_gain_color_for_breadth_when_all_indices_
     assert 'class="metric  green"><span>下跌</span>' in html
 
 
+def test_market_share_image_preserves_red_up_colors_for_english_fallback_index_bullets():
+    html = build_share_image_html(
+        """# US Market Recap
+
+## 2026-07-31 US Market Recap
+
+> Breadth improved while leadership stayed concentrated.
+
+### 1. Market Summary
+
+- **Market Signal**: 66/100 (constructive, risk-on)
+- **Breadth**: Advancers 3200 / Decliners 1800; Limit-up 88 / Limit-down 5
+
+### 2. Major Indices
+
+- **S&P 500**: 5000.00 (🔴 +0.80%)
+- **Nasdaq**: 18000.00 (🟢 -0.20%)
+""",
+        generated_on=date(2026, 7, 31),
+    )
+
+    assert '<strong class="red">🔴 +0.80%</strong>' in html
+    assert '<strong class="green">🟢 -0.20%</strong>' in html
+    assert 'class="metric  red"><span>上涨</span>' in html
+    assert 'class="metric  green"><span>下跌</span>' in html
+
+
 def test_single_stock_dashboard_title_routes_to_stock_poster():
     html = build_share_image_html(
         """# 2026-07-31 Decision Dashboard

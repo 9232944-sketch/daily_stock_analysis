@@ -261,7 +261,8 @@ def _positive_color_from_change(raw_change: str, change: str) -> str:
     marker_color = _marker_color(raw_change)
     if not marker_color:
         return ""
-    return _opposite_color(marker_color) if (change or "").strip().startswith("-") else marker_color
+    normalized_change = re.sub(r"[🟢🔴⚪\s]", "", change or "")
+    return _opposite_color(marker_color) if normalized_change.startswith("-") else marker_color
 
 
 def _has_meaningful_section(markdown_text: str, *terms: str) -> bool:
@@ -638,7 +639,9 @@ def _parse_index_bullets(index_section: str) -> list[tuple[str, str, str, str]]:
         change = re.sub(r"\s+", " ", match.group("change")).strip()
         if not (name and current and change):
             continue
-        color = "green" if any(marker in change for marker in ("↑", "+")) else "red" if any(marker in change for marker in ("↓", "-")) else ""
+        color = _marker_color(change)
+        if not color:
+            color = "green" if any(marker in change for marker in ("↑", "+")) else "red" if any(marker in change for marker in ("↓", "-")) else ""
         indices.append((name, current, change, color))
         if len(indices) >= 3:
             break
@@ -700,7 +703,10 @@ def _market_data(markdown_text: str, generated_on: date) -> MarketPoster:
         poster.indices = _parse_index_bullets(index_section)
         if poster.indices:
             first_change = poster.indices[0][2]
-            if any(marker in first_change for marker in ("↑", "+")):
+            inferred_positive_color = _positive_color_from_change(first_change, first_change)
+            if inferred_positive_color:
+                positive_color = inferred_positive_color
+            elif any(marker in first_change for marker in ("↑", "+")):
                 positive_color = "green"
             elif any(marker in first_change for marker in ("↓", "-")):
                 positive_color = "red"
