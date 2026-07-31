@@ -159,7 +159,8 @@ def test_real_single_stock_shape_uses_h2_title_score_and_sniper_contract():
     assert '<strong>72</strong><small>/100</small>' in html
     assert "回调到支撑区可分批关注" in html
     assert "综合评分" not in html
-    assert "多空趋势" not in html
+    assert 'class="signal-trend"' in html
+    assert ">看多<" in html
     assert "sniper-table" in html
     assert 'class="metric sniper buy"' in html
     assert 'class="metric sniper stop"' in html
@@ -235,6 +236,31 @@ def test_stock_share_image_prefers_realtime_price_over_close_in_combined_snapsho
     assert "市场快照" in html
     assert "1425.00" in html
     assert "1420.00" not in html
+
+
+def test_stock_share_image_reads_chinese_volume_label_from_data_view():
+    html = build_share_image_html(
+        """## 🟢 贵州茅台 (600519)
+
+> 2026-07-31 15:30 | 评分: **72** | 看多
+
+### 📌 核心结论
+
+**买入**: 回调到支撑区可分批关注。
+
+### 📊 数据透视
+
+**均线排列**: 多头排列
+
+**成交量**: 量比 1.35 (放量) | 换手率 0.82%
+""",
+        generated_on=date(2026, 7, 31),
+    )
+
+    assert "技术参考" in html
+    assert ">量能<" in html
+    assert "1.35" in html
+    assert "0.82%" in html
 
 
 def test_share_image_escapes_title_but_keeps_markdown_body_markup():

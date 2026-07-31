@@ -301,6 +301,16 @@ def _labeled_value(text: str, *labels: str, limit: int = 100) -> str:
     return _clean_value(match.group(1), limit=limit) if match else ""
 
 
+def _labeled_line(text: str, *labels: str, limit: int = 100) -> str:
+    joined = "|".join(re.escape(label) for label in labels)
+    match = re.search(
+        rf"(?:\*{{0,2}}(?:{joined})\*{{0,2}})\s*[:：]\s*(.+?)(?=\n|$)",
+        text or "",
+        flags=re.IGNORECASE,
+    )
+    return _clean_value(match.group(1), limit=limit) if match else ""
+
+
 def _list_after_label(text: str, *labels: str, limit: int = 3) -> list[str]:
     joined = "|".join(re.escape(label) for label in labels)
     match = re.search(
@@ -471,6 +481,11 @@ def _stock_data(markdown_text: str, generated_on: date) -> StockPoster:
         core or markdown_text,
         re.IGNORECASE,
     )
+    quote_trend_match = re.search(
+        r"^\s*>\s+.*?(?:评分|score)\s*[:：]?\s*\*{0,2}\d{1,3}\*{0,2}\s*\|\s*([^\n|]+)",
+        markdown_text,
+        re.IGNORECASE | re.MULTILINE,
+    )
     trend_match = re.search(r"\*\*[^\n]+?\*\*\s*\|\s*([^\n]+)", core)
     conclusion = _labeled_value(core, "一句话决策", "One-line Decision", limit=110)
     if not conclusion:
@@ -483,7 +498,11 @@ def _stock_data(markdown_text: str, generated_on: date) -> StockPoster:
         report_date=_extract_date(markdown_text, generated_on),
         action=_clean_value(action_match.group(1), limit=12) if action_match else "",
         score=score_match.group(1) if score_match else "",
-        trend=_clean_value(trend_match.group(1), limit=16) if trend_match else "",
+        trend=(
+            _clean_value(quote_trend_match.group(1), limit=16)
+            if quote_trend_match
+            else _clean_value(trend_match.group(1), limit=16) if trend_match else ""
+        ),
         conclusion=conclusion,
     )
 
@@ -516,7 +535,7 @@ def _stock_data(markdown_text: str, generated_on: date) -> StockPoster:
     for table in _parse_tables(data_section):
         data_map.update(_table_map(table))
     ma = _labeled_value(data_section, "均线排列", "MA Alignment", limit=42)
-    volume_ratio = _labeled_value(data_section, "量能", "Volume", limit=42)
+    volume_ratio = _labeled_line(data_section, "量能", "成交量", "Volume", limit=64)
     support = _mapped_value(data_map, "支撑位", "support")
     resistance = _mapped_value(data_map, "压力位", "resistance")
     for label, value, tone in (
