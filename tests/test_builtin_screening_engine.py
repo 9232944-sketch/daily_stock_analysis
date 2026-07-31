@@ -4,6 +4,8 @@
 from pathlib import Path
 
 import pandas as pd
+from fastapi import FastAPI
+from fastapi.testclient import TestClient as FastAPITestClient
 
 from api.v1.router import router
 from src.services.screening import REFERENCE_REVISION
@@ -28,12 +30,18 @@ def test_external_alphasift_package_is_not_a_runtime_dependency() -> None:
 
 
 def test_screening_routes_have_a_primary_prefix_and_no_install_endpoint() -> None:
-    routes = {route.path: route for route in router.routes}
+    app = FastAPI()
+    app.include_router(router, prefix="/api/v1")
 
-    assert routes["/screening/status"].include_in_schema is True
-    assert routes["/alphasift/status"].include_in_schema is False
-    assert "/screening/install" not in routes
-    assert "/alphasift/install" not in routes
+    schema_paths = app.openapi()["paths"]
+    assert "/api/v1/screening/status" in schema_paths
+    assert "/api/v1/alphasift/status" not in schema_paths
+
+    client = FastAPITestClient(app)
+    assert client.request("OPTIONS", "/api/v1/screening/status").status_code != 404
+    assert client.request("OPTIONS", "/api/v1/alphasift/status").status_code != 404
+    assert client.request("POST", "/api/v1/screening/install").status_code == 404
+    assert client.request("POST", "/api/v1/alphasift/install").status_code == 404
 
 
 def test_bundled_engine_keeps_source_and_license_notices() -> None:
