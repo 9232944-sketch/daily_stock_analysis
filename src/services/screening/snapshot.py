@@ -86,9 +86,9 @@ def fetch_snapshot_with_fallback(
             if not df.empty:
                 missing = _missing_required_columns(df, required)
                 if missing:
-                    errors.append(
-                        f"{source}: missing required columns {','.join(missing)}"
-                    )
+                    error = f"missing required columns {','.join(missing)}"
+                    errors.append(f"{source}: {error}")
+                    _record_source_failure(source, error)
                     continue
                 df.attrs.setdefault("snapshot_source", source)
                 df.attrs["source_errors"] = list(errors)

@@ -12,6 +12,7 @@ from src.services.screening import REFERENCE_REVISION
 from src.services.screening.filter import apply_hard_filters
 from src.services.screening.models import HardFilterConfig, ScreeningConfig
 from src.services.screening.scorer import compute_screen_scores
+from src.services.screening import snapshot as screening_snapshot
 from src.services.screening.strategy import load_all_strategies
 
 
@@ -112,3 +113,46 @@ def test_hard_filter_and_factor_scoring_keep_core_semantics() -> None:
         ScreeningConfig(factor_weights={"value": 1.0}),
     ).set_index("code")
     assert scored.loc["low_value", "screen_score"] > scored.loc["high_value", "screen_score"]
+
+
+def test_snapshot_schema_mismatch_counts_toward_source_circuit_breaker(
+    monkeypatch,
+) -> None:
+    bad_snapshot = pd.DataFrame([{"code": "000001", "name": "Ping An", "price": 10.0}])
+    good_snapshot = pd.DataFrame(
+        [{"code": "000001", "name": "Ping An", "price": 10.0, "volume_ratio": 1.5}]
+    )
+    source_health: dict[str, dict[str, object]] = {}
+    calls: list[str] = []
+
+    def fake_fetch(source: str) -> pd.DataFrame:
+        calls.append(source)
+        if source == "sina":
+            return bad_snapshot
+        if source == "efinance":
+            return good_snapshot.copy()
+        raise AssertionError(f"unexpected source {source}")
+
+    monkeypatch.setattr(screening_snapshot, "_SOURCE_HEALTH", source_health)
+    monkeypatch.setattr(screening_snapshot, "fetch_cn_snapshot", fake_fetch)
+
+    for _ in range(3):
+        result = screening_snapshot.fetch_snapshot_with_fallback(
+            ["sina", "efinance"],
+            required_columns=["volume_ratio"],
+        )
+        assert result.attrs["snapshot_source"] == "efinance"
+
+    health = screening_snapshot.snapshot_source_health_snapshot(["sina"])
+    assert health["sina"]["failures"] == 3
+    assert health["sina"]["disabled"] is True
+
+    calls.clear()
+    result = screening_snapshot.fetch_snapshot_with_fallback(
+        ["sina", "efinance"],
+        required_columns=["volume_ratio"],
+    )
+
+    assert calls == ["efinance"]
+    assert result.attrs["snapshot_source"] == "efinance"
+    assert "temporarily disabled" in result.attrs["source_errors"][0]
