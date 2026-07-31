@@ -115,6 +115,17 @@ Discord 长报告发送复用现有分片链路：单条 `content` 运行时不�
 
 默认 workflow 仍不映射 `MARKDOWN_TO_IMAGE_CHANNELS` 与 `MERGE_EMAIL_NOTIFICATION`。它们是发送形态或聚合行为开关，不是渠道凭证；在 Actions 中自动开始读取同名 Secret/Variable 会引入额外行为变化。
 
+## 图片报告分享模板
+
+配置 `MARKDOWN_TO_IMAGE_CHANNELS` 后，个股分析、聚合报告与大盘复盘会沿用现有通知路由，在转图阶段套用 1080px 宽的品牌分享模板。单只个股按“结论—点位—技术—风险—持仓”生成决策卡，大盘按“信号—指数—宽度—板块—计划—风险”生成复盘卡；多股报告保留聚合布局。底部固定展示项目主页和小红书两个二维码，以及“仅供研究交流，不构成投资建议”的风险提示。
+
+- 两个二维码随应用以静态资源提供，转图时嵌入 HTML，不依赖外部图片服务或运行时网络。
+- 模板只展示报告已有的 0–100 评分、八态动作和 `battle_plan.sniper_points` 点位；理想/次优买入点、止损位和目标位会使用专门的高对比交易卡片，不生成额外评分或多空占比。
+- 结构化字段、缺失值行为、个股/大盘映射和本地预览示例见 [分享图片模板与数据填充](share-images.md)。
+- `wkhtmltoimage` 与 `markdown-to-file` 使用同一份海报 HTML；现有 `MD2IMG_ENGINE`、`MARKDOWN_TO_IMAGE_MAX_CHARS` 和转换失败后回退文本的行为不变。
+- 模板按正文长度生成长图，不会为适配固定画幅而截断报告。内容超过 `MARKDOWN_TO_IMAGE_MAX_CHARS` 时仍跳过转图。
+- GitHub Actions 默认仍不映射 `MARKDOWN_TO_IMAGE_CHANNELS`；如需在 fork 的工作流中启用，应显式补充环境变量映射并安装所选转图工具。
+
 ## CLI 诊断
 
 ```bash

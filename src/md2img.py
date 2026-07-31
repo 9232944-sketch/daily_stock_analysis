@@ -20,7 +20,7 @@ import subprocess
 import tempfile
 from typing import Optional
 
-from src.formatters import markdown_to_html_document
+from src.share_image import build_share_image_html
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +39,9 @@ def _markdown_to_image_m2f(markdown_text: str) -> Optional[bytes]:
         temp_dir = tempfile.mkdtemp()
         md_path = os.path.join(temp_dir, "report.md")
         with open(md_path, "w", encoding="utf-8") as f:
-            f.write(markdown_text)
+            # m2f keeps raw HTML in Markdown input, allowing both engines to
+            # share the same deterministic poster layout and embedded QR codes.
+            f.write(build_share_image_html(markdown_text))
 
         result = subprocess.run(
             ["m2f", md_path, "png", f"outputDirectory={temp_dir}"],
@@ -80,11 +82,14 @@ def _markdown_to_image_wkhtml(markdown_text: str) -> Optional[bytes]:
         logger.debug("imgkit not installed, markdown_to_image unavailable")
         return None
 
-    html = markdown_to_html_document(markdown_text)
+    html = build_share_image_html(markdown_text)
     try:
         options = {
             "format": "png",
             "encoding": "UTF-8",
+            "width": 1080,
+            "disable-smart-width": "",
+            "quality": 95,
             "quiet": "",
         }
         out = imgkit.from_string(html, False, options=options)
