@@ -44,6 +44,8 @@ SCREENING_MANAGED_LITELLM_PROVIDERS = frozenset({"gemini", "vertex_ai", "anthrop
 SCREENING_CONTRACT_VERSION = "1"
 _SCREENING_RUNTIME_ENV_LOCK = threading.RLock()
 _SCREENING_DAILY_PROVIDER_LOCK = threading.RLock()
+_SCREENING_DAILY_PROVIDER_DEPTH = 0
+_SCREENING_DAILY_PROVIDER_ORIGINAL_FETCH: Callable[..., Any] | None = None
 DSA_ENRICHMENT_MAX_CANDIDATES = 3
 DSA_PRE_RANK_CONTEXT_MAX_CANDIDATES = 3
 DSA_SCREENING_LLM_CANDIDATE_MULTIPLIER = 2
@@ -1750,82 +1752,100 @@ def _screening_runtime_env(config: Config, *, max_results: Optional[int] = None)
 
 @contextmanager
 def _screening_dsa_daily_history_provider() -> Iterator[None]:
+    global _SCREENING_DAILY_PROVIDER_DEPTH
+    global _SCREENING_DAILY_PROVIDER_ORIGINAL_FETCH
+
     try:
         daily_module = importlib.import_module("src.services.screening.daily")
     except Exception:
         yield
         return
 
-    original_fetch = getattr(daily_module, "fetch_daily_history", None)
-    if not callable(original_fetch):
-        yield
-        return
-
-    def fetch_daily_history_with_dsa(
-        code: str,
-        *,
-        lookback_days: int = 120,
-        source: str = "akshare",
-        retries: int = 2,
-        cache_dir: str | Path | None = None,
-        cache_ttl_seconds: float | None = None,
-    ) -> Any:
-        try:
-            dsa_df, dsa_source = get_dsa_daily_history(code, lookback_days=lookback_days)
-            normalized = _normalize_dsa_daily_history(dsa_df)
-            if normalized is not None and not normalized.empty:
-                resolved_source = f"dsa:{dsa_source}"
-                normalized_code = code
-                normalize_code = getattr(daily_module, "_normalize_daily_code", None)
-                if callable(normalize_code):
-                    normalized_code = normalize_code(code)
-                normalized.attrs["source"] = resolved_source
-                normalized.attrs["daily_source"] = resolved_source
-                normalized.attrs["daily_requested_source"] = source
-                normalized.attrs["daily_source_order"] = [resolved_source]
-                normalized.attrs["daily_source_order_notes"] = []
-                normalized.attrs["source_errors"] = []
-                normalized.attrs["daily_source_health"] = {}
-                if cache_dir is not None:
-                    cache_path_builder = getattr(daily_module, "_daily_history_cache_path", None)
-                    cache_writer = getattr(daily_module, "_write_daily_history_cache", None)
-                    if callable(cache_path_builder) and callable(cache_writer):
-                        cache_path = cache_path_builder(
-                            cache_dir,
-                            code=normalized_code,
-                            source=source,
-                            lookback_days=int(lookback_days),
-                        )
-                        cache_writer(
-                            cache_path,
-                            normalized,
-                            code=normalized_code,
-                            source=source,
-                            lookback_days=int(lookback_days),
-                        )
-                return normalized
-        except Exception as exc:
-            logger.warning(
-                "Screening DSA daily history fetch failed for %s; falling back to Screening source %s: %s",
-                code,
-                source,
-                exc,
-            )
-        return original_fetch(
-            code,
-            lookback_days=lookback_days,
-            source=source,
-            retries=retries,
-            cache_dir=cache_dir,
-            cache_ttl_seconds=cache_ttl_seconds,
-        )
-
     with _SCREENING_DAILY_PROVIDER_LOCK:
-        setattr(daily_module, "fetch_daily_history", fetch_daily_history_with_dsa)
-        try:
+        current_fetch = getattr(daily_module, "fetch_daily_history", None)
+        if not callable(current_fetch):
             yield
-        finally:
-            setattr(daily_module, "fetch_daily_history", original_fetch)
+            return
+
+        if _SCREENING_DAILY_PROVIDER_DEPTH == 0:
+            original_fetch = current_fetch
+            _SCREENING_DAILY_PROVIDER_ORIGINAL_FETCH = original_fetch
+
+            def fetch_daily_history_with_dsa(
+                code: str,
+                *,
+                lookback_days: int = 120,
+                source: str = "akshare",
+                retries: int = 2,
+                cache_dir: str | Path | None = None,
+                cache_ttl_seconds: float | None = None,
+            ) -> Any:
+                try:
+                    dsa_df, dsa_source = get_dsa_daily_history(code, lookback_days=lookback_days)
+                    normalized = _normalize_dsa_daily_history(dsa_df)
+                    if normalized is not None and not normalized.empty:
+                        resolved_source = f"dsa:{dsa_source}"
+                        normalized_code = code
+                        normalize_code = getattr(daily_module, "_normalize_daily_code", None)
+                        if callable(normalize_code):
+                            normalized_code = normalize_code(code)
+                        normalized.attrs["source"] = resolved_source
+                        normalized.attrs["daily_source"] = resolved_source
+                        normalized.attrs["daily_requested_source"] = source
+                        normalized.attrs["daily_source_order"] = [resolved_source]
+                        normalized.attrs["daily_source_order_notes"] = []
+                        normalized.attrs["source_errors"] = []
+                        normalized.attrs["daily_source_health"] = {}
+                        if cache_dir is not None:
+                            cache_path_builder = getattr(daily_module, "_daily_history_cache_path", None)
+                            cache_writer = getattr(daily_module, "_write_daily_history_cache", None)
+                            if callable(cache_path_builder) and callable(cache_writer):
+                                cache_path = cache_path_builder(
+                                    cache_dir,
+                                    code=normalized_code,
+                                    source=source,
+                                    lookback_days=int(lookback_days),
+                                )
+                                cache_writer(
+                                    cache_path,
+                                    normalized,
+                                    code=normalized_code,
+                                    source=source,
+                                    lookback_days=int(lookback_days),
+                                )
+                        return normalized
+                except Exception as exc:
+                    logger.warning(
+                        "Screening DSA daily history fetch failed for %s; falling back to Screening source %s: %s",
+                        code,
+                        source,
+                        exc,
+                    )
+                return original_fetch(
+                    code,
+                    lookback_days=lookback_days,
+                    source=source,
+                    retries=retries,
+                    cache_dir=cache_dir,
+                    cache_ttl_seconds=cache_ttl_seconds,
+                )
+
+            setattr(daily_module, "fetch_daily_history", fetch_daily_history_with_dsa)
+
+        _SCREENING_DAILY_PROVIDER_DEPTH += 1
+
+    try:
+        yield
+    finally:
+        with _SCREENING_DAILY_PROVIDER_LOCK:
+            if _SCREENING_DAILY_PROVIDER_DEPTH <= 0:
+                return
+            _SCREENING_DAILY_PROVIDER_DEPTH -= 1
+            if _SCREENING_DAILY_PROVIDER_DEPTH == 0:
+                original_fetch = _SCREENING_DAILY_PROVIDER_ORIGINAL_FETCH
+                if callable(original_fetch):
+                    setattr(daily_module, "fetch_daily_history", original_fetch)
+                _SCREENING_DAILY_PROVIDER_ORIGINAL_FETCH = None
 
 
 def _resolve_screening_snapshot_source_priority(config: Config) -> str:
