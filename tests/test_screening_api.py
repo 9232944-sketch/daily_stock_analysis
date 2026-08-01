@@ -9,6 +9,7 @@ import sys
 import tempfile
 import time
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -2181,6 +2182,7 @@ class ScreeningOpportunitiesApiTestCase(unittest.TestCase):
             selection_seed="browser-a",
             config=ANY,
             progress_callback=None,
+            daily_history_fetcher=ANY,
         )
         self.assertEqual(fake_module.screen.call_args.kwargs["context"]["llm"]["model"], "")
         self.assertEqual(payload["run_id"], "run123")
@@ -2229,7 +2231,8 @@ class ScreeningOpportunitiesApiTestCase(unittest.TestCase):
         captured: Dict[str, Any] = {}
 
         def screen_with_daily_fetch(strategy: str, **kwargs: Any) -> Dict[str, Any]:
-            daily_df = daily_module.fetch_daily_history(
+            daily_fetcher = kwargs["daily_history_fetcher"]
+            daily_df = daily_fetcher(
                 "600519",
                 lookback_days=20,
                 source="akshare",
@@ -3067,9 +3070,10 @@ class ScreeningOpportunitiesApiTestCase(unittest.TestCase):
         with (
             patch.object(daily_module, "fetch_daily_history", new=fallback_fetch),
             patch("src.services.screening_service.get_dsa_daily_history", side_effect=RuntimeError("dsa unavailable")),
-            screening_service._screening_dsa_daily_history_provider(),
         ):
-            result = daily_module.fetch_daily_history(
+            daily_fetcher = screening_service._build_screening_dsa_daily_history_fetcher()
+            self.assertIsNotNone(daily_fetcher)
+            result = daily_fetcher(
                 "000001",
                 lookback_days=90,
                 source="auto",
@@ -3086,60 +3090,37 @@ class ScreeningOpportunitiesApiTestCase(unittest.TestCase):
         self.assertEqual(captured["cache_dir"], Path("data/screening/daily_history"))
         self.assertEqual(captured["cache_ttl_seconds"], 321.0)
 
-    def test_dsa_daily_history_bridge_restores_builtin_fetch_after_overlapping_contexts(self) -> None:
+    def test_dsa_daily_history_fetchers_are_request_local_when_calls_overlap(self) -> None:
         import src.services.screening.daily as daily_module
 
-        expected = object()
-        worker_result: dict[str, object] = {}
-        worker_error: list[BaseException] = []
-        worker_entered = threading.Event()
-        worker_fetched = threading.Event()
-        allow_worker_exit = threading.Event()
+        builtin_fetch = daily_module.fetch_daily_history
+        barrier = threading.Barrier(2)
+        fallback_fetch = MagicMock(side_effect=lambda code, **_kwargs: f"fallback:{code}")
 
-        def builtin_fetch(code: str, **kwargs: Any):
-            worker_result["fallback_code"] = code
-            worker_result["fallback_kwargs"] = kwargs
-            return expected
-
-        def run_overlapping_request() -> None:
-            try:
-                with screening_service._screening_dsa_daily_history_provider():
-                    worker_entered.set()
-                    worker_result["value"] = daily_module.fetch_daily_history(
-                        "000001",
-                        lookback_days=60,
-                        source="auto",
-                        retries=2,
-                    )
-                    worker_fetched.set()
-                    allow_worker_exit.wait(timeout=1.0)
-            except BaseException as exc:  # pragma: no cover - assertion path
-                worker_error.append(exc)
+        def unavailable_dsa(code: str, *, lookback_days: int = 120):
+            barrier.wait(timeout=5)
+            raise RuntimeError(f"dsa unavailable for {code}:{lookback_days}")
 
         with (
-            patch.object(daily_module, "fetch_daily_history", new=builtin_fetch),
-            patch("src.services.screening_service.get_dsa_daily_history", side_effect=RuntimeError("dsa unavailable")) as dsa_mock,
+            patch.object(daily_module, "fetch_daily_history", new=fallback_fetch),
+            patch("src.services.screening_service.get_dsa_daily_history", side_effect=unavailable_dsa) as dsa_mock,
         ):
-            with screening_service._screening_dsa_daily_history_provider():
-                active_wrapper = daily_module.fetch_daily_history
-                self.assertIsNot(active_wrapper, builtin_fetch)
-                worker = threading.Thread(target=run_overlapping_request)
-                worker.start()
-                self.assertTrue(worker_entered.wait(timeout=1.0))
-                self.assertTrue(worker_fetched.wait(timeout=1.0))
-                self.assertIs(daily_module.fetch_daily_history, active_wrapper)
-                self.assertEqual(dsa_mock.call_count, 1)
-            self.assertIs(daily_module.fetch_daily_history, active_wrapper)
-            allow_worker_exit.set()
-            worker.join(timeout=1.0)
+            first_fetcher = screening_service._build_screening_dsa_daily_history_fetcher()
+            second_fetcher = screening_service._build_screening_dsa_daily_history_fetcher()
+            self.assertIsNotNone(first_fetcher)
+            self.assertIsNotNone(second_fetcher)
 
-            self.assertFalse(worker.is_alive())
-            self.assertEqual(worker_error, [])
-            self.assertIs(worker_result["value"], expected)
-            self.assertEqual(worker_result["fallback_code"], "000001")
-            self.assertEqual(worker_result["fallback_kwargs"]["lookback_days"], 60)
-            self.assertEqual(dsa_mock.call_count, 1)
-            self.assertIs(daily_module.fetch_daily_history, builtin_fetch)
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                first_future = executor.submit(first_fetcher, "000001", lookback_days=30)
+                second_future = executor.submit(second_fetcher, "000002", lookback_days=30)
+
+            self.assertEqual(first_future.result(), "fallback:000001")
+            self.assertEqual(second_future.result(), "fallback:000002")
+            self.assertIs(daily_module.fetch_daily_history, fallback_fetch)
+            self.assertEqual(dsa_mock.call_count, 2)
+            self.assertEqual(fallback_fetch.call_count, 2)
+
+        self.assertIs(daily_module.fetch_daily_history, builtin_fetch)
 
     def test_fetch_daily_history_wraps_tencent_and_sina_with_daily_timeout(self) -> None:
         import src.services.screening.daily as daily_module
@@ -3229,9 +3210,10 @@ class ScreeningOpportunitiesApiTestCase(unittest.TestCase):
             ),
             patch.object(daily_module, "_daily_history_cache_path", return_value=cache_path) as cache_path_mock,
             patch.object(daily_module, "_write_daily_history_cache") as cache_write_mock,
-            screening_service._screening_dsa_daily_history_provider(),
         ):
-            result = daily_module.fetch_daily_history(
+            daily_fetcher = screening_service._build_screening_dsa_daily_history_fetcher()
+            self.assertIsNotNone(daily_fetcher)
+            result = daily_fetcher(
                 "000001",
                 lookback_days=90,
                 source="auto",
@@ -3457,6 +3439,7 @@ class ScreeningOpportunitiesApiTestCase(unittest.TestCase):
             selection_seed="",
             config=ANY,
             progress_callback=None,
+            daily_history_fetcher=ANY,
         )
         self.assertEqual(payload["candidates"], [])
         self.assertEqual(payload["candidate_count"], 0)

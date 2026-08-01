@@ -69,6 +69,7 @@ def screen(
     context: dict[str, object] | None = None,
     config: Config | None = None,
     progress_callback: Callable[[int, str], None] | None = None,
+    daily_history_fetcher: Callable[..., pd.DataFrame] | None = None,
 ) -> ScreenResult:
     """Execute stock screening with the given strategy.
 
@@ -98,6 +99,8 @@ def screen(
         context: Optional host runtime context. DSA may provide LLM settings and
             callable data providers under context["dsa"].
         config: Runtime config. Defaults to Config.from_env().
+        daily_history_fetcher: Optional request-scoped daily-history provider.
+            It is tried in place of the bundled fetcher without global patching.
 
     Returns:
         ScreenResult with ranked picks.
@@ -234,6 +237,7 @@ def screen(
                 cache_dir=config.daily_history_cache_dir,
                 cache_ttl_seconds=config.daily_history_cache_ttl_hours * 3600,
                 max_workers=config.daily_fetch_max_workers,
+                history_fetcher=daily_history_fetcher,
             )
             daily_enriched = True
             daily_errors = [str(item) for item in enriched.attrs.get("daily_errors", [])]

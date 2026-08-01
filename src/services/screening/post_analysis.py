@@ -138,6 +138,8 @@ def _run_dsa_analyzer(
     if not config.dsa_api_url:
         raise ValueError("post analyzer 'dsa' requested but DSA_API_URL is not configured")
 
+    attempted_count = min(max(int(max_picks), 0), len(picks))
+    attempted_pick_ids = {id(pick) for pick in picks[:attempted_count]}
     before_scores = {pick.code: float(pick.final_score) for pick in picks}
     analyzed, degradation = analyze_picks_with_dsa(
         picks,
@@ -151,6 +153,12 @@ def _run_dsa_analyzer(
     )
     analyzed = apply_dsa_overlay(analyzed)
     for pick in analyzed:
+        if id(pick) not in attempted_pick_ids:
+            # The overlay can re-rank candidates, so the post-overlay list
+            # position cannot identify which candidates crossed the remote cap.
+            _record_post_result(pick, "dsa", status="skipped", summary="", score_delta=0.0)
+            continue
+
         status = pick.deep_analysis_status
         summary = pick.deep_analysis_summary
         delta = round(float(pick.final_score) - before_scores.get(pick.code, float(pick.final_score)), 4)
@@ -164,16 +172,6 @@ def _run_dsa_analyzer(
             risk_flags=pick.deep_analysis_risk_flags,
             tags=["dsa"] if status == "completed" else [],
         )
-
-    # Mark candidates beyond the analyzer cap as explicitly skipped so selection
-    # variant logic can reliably exclude unanalyzed picks from near-cutoff
-    # rotation. Use the original picks ordering to identify which were not
-    # attempted.
-    for pick in picks[max_picks:]:
-        # If a pick already has a dsa entry (e.g., analyzed or failed), leave it.
-        if pick.post_analysis_status.get("dsa"):
-            continue
-        _record_post_result(pick, "dsa", status="skipped", summary="", score_delta=0.0)
 
     return analyzed, degradation
 
@@ -216,7 +214,9 @@ def _run_external_http_analyzer(
     if not config.post_analyzer_url:
         raise ValueError("post analyzer 'external_http' requested but POST_ANALYZER_URL is not configured")
 
-    candidates = [asdict(pick) for pick in picks[:max_picks]]
+    attempted_count = min(max(int(max_picks), 0), len(picks))
+    attempted_picks = picks[:attempted_count]
+    candidates = [asdict(pick) for pick in attempted_picks]
     response = requests.post(
         config.post_analyzer_url,
         json={"run_id": run_id, "candidates": candidates},
@@ -233,7 +233,10 @@ def _run_external_http_analyzer(
     if not isinstance(items, list):
         raise ValueError("external_http analyzer response must be a list or contain ranked=list")
 
-    by_code = {_normalize_code(pick.code): pick for pick in picks}
+    # Only accept results for candidates sent in this request. A remote service
+    # must not be able to mutate scores or risk flags for candidates beyond the
+    # configured operational cap by returning an extra or stale code.
+    by_code = {_normalize_code(pick.code): pick for pick in attempted_picks}
     for item in items:
         if not isinstance(item, dict):
             continue
@@ -258,7 +261,7 @@ def _run_external_http_analyzer(
             tags=tags,
         )
 
-    for pick in picks[max_picks:]:
+    for pick in picks[attempted_count:]:
         _record_post_result(pick, "external_http", status="skipped", summary="", score_delta=0.0)
     return picks, []
 

@@ -15,6 +15,7 @@ from api.v1.router import router
 from src.services.screening import REFERENCE_REVISION
 from src.services.screening.dsa_provider import apply_dsa_provider_context
 from src.services.screening import pipeline as screening_pipeline
+from src.services.screening import post_analysis as screening_post_analysis
 from src.services.screening.filter import apply_hard_filters
 from src.services.screening.config import Config as ScreeningRuntimeConfig
 from src.services.screening.models import HardFilterConfig, Pick, ScreeningConfig, Strategy
@@ -187,11 +188,120 @@ def test_pipeline_passes_daily_history_cache_settings_to_enrichment(monkeypatch)
     monkeypatch.setattr(screening_pipeline, "apply_portfolio_overlay", lambda picks, **kwargs: (picks, []))
     monkeypatch.setattr(screening_pipeline, "run_post_analyzers", lambda picks, **kwargs: (picks, []))
 
-    result = screening_pipeline.screen("demo", use_llm=False, config=config)
+    history_fetcher = lambda *_args, **_kwargs: pd.DataFrame()
+    result = screening_pipeline.screen(
+        "demo",
+        use_llm=False,
+        config=config,
+        daily_history_fetcher=history_fetcher,
+    )
 
     assert captured["cache_dir"] == Path("/tmp/daily-history-cache")
     assert captured["cache_ttl_seconds"] == 6 * 60 * 60
+    assert captured["history_fetcher"] is history_fetcher
     assert result.daily_enriched is True
+
+
+def test_dsa_post_analyzer_records_attempted_and_capped_statuses(monkeypatch) -> None:
+    picks = [
+        Pick(
+            rank=index,
+            code=f"00000{index}",
+            name=f"Stock {index}",
+            final_score=90.0 - index,
+            screen_score=90.0 - index,
+        )
+        for index in range(1, 5)
+    ]
+    config = ScreeningRuntimeConfig(
+        strategies_dir=SCREENING_ROOT / "strategies",
+        dsa_api_url="https://dsa.example",
+    )
+
+    def fake_analyze(candidates, **_kwargs):
+        candidates[0].deep_analysis_status = "completed"
+        candidates[0].deep_analysis_summary = "completed"
+        candidates[1].deep_analysis_status = "failed"
+        candidates[1].deep_analysis_summary = "failed"
+        return candidates, ["one failure"]
+
+    monkeypatch.setattr(screening_post_analysis, "analyze_picks_with_dsa", fake_analyze)
+    # A completed remote overlay can move an attempted pick below an
+    # unattempted one. Status ownership must follow the original attempted
+    # objects, not the post-overlay list positions.
+    monkeypatch.setattr(
+        screening_post_analysis,
+        "apply_dsa_overlay",
+        lambda candidates: [candidates[2], candidates[0], candidates[3], candidates[1]],
+    )
+
+    analyzed, degradation = screening_post_analysis.run_post_analyzers(
+        picks,
+        analyzer_names=["dsa"],
+        run_id="run-1",
+        config=config,
+        max_picks=2,
+    )
+
+    status_by_code = {
+        pick.code: pick.post_analysis_status.get("dsa")
+        for pick in analyzed
+    }
+    assert status_by_code == {
+        "000001": "completed",
+        "000002": "failed",
+        "000003": "skipped",
+        "000004": "skipped",
+    }
+    assert degradation == ["one failure"]
+
+
+def test_external_post_analyzer_rejects_results_beyond_remote_cap(monkeypatch) -> None:
+    picks = [
+        Pick(
+            rank=index,
+            code=f"00000{index}",
+            name=f"Stock {index}",
+            final_score=90.0 - index,
+            screen_score=90.0 - index,
+        )
+        for index in range(1, 4)
+    ]
+    config = ScreeningRuntimeConfig(
+        strategies_dir=SCREENING_ROOT / "strategies",
+        post_analyzer_url="https://analyzer.example/rank",
+    )
+    captured = {}
+
+    def fake_post(_url, *, json, timeout):
+        captured["payload"] = json
+        captured["timeout"] = timeout
+        return SimpleNamespace(
+            raise_for_status=lambda: None,
+            json=lambda: [
+                {"code": "000001", "score_delta": 1.0, "risk_flags": ["submitted"]},
+                {"code": "000003", "score_delta": 50.0, "risk_flags": ["not-submitted"]},
+            ],
+        )
+
+    monkeypatch.setattr(screening_post_analysis.requests, "post", fake_post)
+
+    analyzed, degradation = screening_post_analysis.run_post_analyzers(
+        picks,
+        analyzer_names=["external_http"],
+        run_id="run-1",
+        config=config,
+        max_picks=2,
+    )
+
+    by_code = {pick.code: pick for pick in analyzed}
+    assert [item["code"] for item in captured["payload"]["candidates"]] == ["000001", "000002"]
+    assert by_code["000001"].final_score == 90.0
+    assert by_code["000001"].post_analysis_status["external_http"] == "completed"
+    assert by_code["000003"].final_score == 87.0
+    assert by_code["000003"].risk_flags == []
+    assert by_code["000003"].post_analysis_status["external_http"] == "skipped"
+    assert degradation == []
 
 
 def test_pipeline_uses_ranker_success_flag_instead_of_partial_llm_scores(monkeypatch) -> None:
