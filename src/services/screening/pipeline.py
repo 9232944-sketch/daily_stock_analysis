@@ -454,18 +454,8 @@ def screen(
             profile=screening.portfolio_profile,
         )
 
-    # 10. Keep the leading candidates stable and rotate only near-cutoff tail
-    # slots for clients that provide an opaque variant seed.
-    selection_variant = apply_seeded_selection_variant(
-        picks,
-        max_output=output_count,
-        seed=selection_seed,
-        period=(
-            f"{datetime.now(timezone.utc).date().isoformat()}"
-            f":{market}:{strategy}"
-        ),
-    )
-    picks = selection_variant.picks
+    # 10. Selection variant application moved below so rotation occurs after
+    # final post-analysis scoring. See PR feedback: preserve final-ranking invariants.
 
     # 11. Optional L3 post-analysis, DSA is only one possible analyzer.
     if analyzer_names:
@@ -478,6 +468,19 @@ def screen(
             scorecard_profile=screening.scorecard_profile,
         )
         degradation.extend(post_degradation)
+
+    # Apply selection variant after post-analyzers to ensure rotation respects
+    # final_score adjustments made by L3 analyzers (e.g. scorecard/dsa).
+    selection_variant = apply_seeded_selection_variant(
+        picks,
+        max_output=output_count,
+        seed=selection_seed,
+        period=(
+            f"{datetime.now(timezone.utc).date().isoformat()}"
+            f":{market}:{strategy}"
+        ),
+    )
+    picks = selection_variant.picks
 
     return ScreenResult(
         strategy=strategy,
