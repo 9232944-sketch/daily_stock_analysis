@@ -468,11 +468,18 @@ def screen(
             if analyzer_max_picks is not None
             else config.post_analysis_max_picks
         )
-        # Always analyze at least as many picks as the page will return.
+        # Preserve the configured operational cap for post-analysis. Do not
+        # silently raise it to output_count; if the cap is lower than the
+        # requested page size, rotation eligibility will be constrained to the
+        # analyzed subset and an explanatory degradation note is recorded.
         try:
-            post_max_picks = max(int(post_max_picks), int(output_count))
+            post_max_picks = int(post_max_picks)
         except Exception:
-            post_max_picks = int(output_count)
+            post_max_picks = int(config.post_analysis_max_picks or 3)
+        if int(post_max_picks) < int(output_count):
+            degradation.append(
+                f"Post-analysis cap {post_max_picks} < requested output {output_count}; rotation eligibility constrained to analyzed picks"
+            )
 
         picks, post_degradation = run_post_analyzers(
             picks,

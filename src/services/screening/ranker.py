@@ -627,7 +627,10 @@ def _extract_completion_text(response: object) -> str:
         if content.strip():
             return content
 
-    return _coerce_completion_content(field("reasoning_content"))
+    # Do NOT fall back to internal 'reasoning_content' (chain-of-thought) as the
+    # model's final output. Treat absence of final content as empty to allow
+    # higher-level fallback logic (try next model or use factor ranking).
+    return ""
 
 
 def _coerce_completion_content(value: object) -> str:

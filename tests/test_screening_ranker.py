@@ -111,7 +111,9 @@ def test_screening_ranker_reads_reasoning_content_when_content_is_empty() -> Non
             json_mode=True,
         )
 
-    assert result == '{"ranked": []}'
+    # Do not treat internal reasoning_content as final model output; allow higher
+    # level fallback logic to handle it instead.
+    assert result == ''
     assert len(completion_calls) == 1
 
 
