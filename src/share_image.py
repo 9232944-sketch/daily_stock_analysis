@@ -1673,6 +1673,18 @@ def _market_body(data: MarketPoster, fallback_html: str, markdown_text: str) -> 
             f'<div class="signal-guidance"><span>{_escape(_poster_text(language, "today_conclusion"))}</span><p>{_escape(data.guidance or data.summary)}</p></div>'
             '</section>'
         )
+    elif any((data.guidance, data.summary, data.reasons)):
+        overview_parts: list[str] = []
+        conclusion = data.guidance or data.summary
+        if conclusion:
+            overview_parts.append(f'<div class="conclusion">{_escape(conclusion)}</div>')
+        if data.reasons:
+            overview_parts.append(_list_html(data.reasons))
+        signal = _section_html(
+            _poster_text(language, "today_conclusion"),
+            "◎",
+            "".join(overview_parts),
+        )
     indices = ""
     if data.indices:
         cards = []

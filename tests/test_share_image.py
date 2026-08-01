@@ -377,6 +377,53 @@ def test_market_share_image_does_not_duplicate_full_report_for_extra_detail_sect
     assert '<section class="report-fallback">' not in html
 
 
+def test_market_share_image_preserves_scoreless_overview_guidance_without_fallback():
+    html = build_share_image_html(
+        """# A股市场复盘
+
+> 量能尚未完全回到进攻区间。
+
+## 盘面总览
+
+**操作建议：** 等待放量确认后再提升仓位，避免尾盘追涨。
+**信号依据：** 成交额仍低于强趋势阈值；权重护盘但题材扩散一般。
+
+| 指标 | 数值 |
+| --- | --- |
+| 上涨/下跌 | 3012 / 1988 |
+| 涨停/跌停 | 58 / 9 |
+| 成交额 | 8921 亿 |
+
+## 指数结构
+
+| 指数 | 最新 | 涨跌幅 |
+| --- | --- | --- |
+| 上证指数 | 3210.11 | +0.34% |
+
+## 板块主线
+
+| 排名 | 板块 | 涨跌幅 |
+| --- | --- | --- |
+| 1 | 银行 | +1.20% |
+
+## 明日交易计划
+
+- 结论：先观察量能能否继续修复。
+
+## 风险提示
+
+- 缩量反弹后冲高回落。
+""",
+        generated_on=date(2026, 8, 1),
+    )
+
+    assert '<section class="market-signal">' not in html
+    assert "等待放量确认后再提升仓位" in html
+    assert "成交额仍低于强趋势阈值" in html
+    assert "权重护盘但题材扩散一般" in html
+    assert '<section class="report-fallback">' not in html
+
+
 def test_market_share_image_preserves_report_color_scheme_from_index_markers():
     html = build_share_image_html(
         """# 大盘复盘
