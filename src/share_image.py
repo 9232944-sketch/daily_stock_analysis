@@ -1718,12 +1718,17 @@ def _market_body(data: MarketPoster, fallback_html: str, markdown_text: str) -> 
         f'<div class="market-right">{funds}</div></div>'
         if focus or funds else ""
     )
+    catalysts = _section_html(
+        _poster_text(language, "positive_catalysts"),
+        "✦",
+        _list_html(data.catalysts),
+    ) if data.catalysts else ""
     plan = _section_html(_poster_text(language, "strategy"), "✓", _list_html(data.plan), "strategy-strip") if data.plan else ""
     risks = _section_html(_poster_text(language, "risks"), "!", _list_html(data.risks), "risk-strip") if data.risks else ""
-    structured = any((signal, indices, breadth, dimensions, sector_dual, detail_dual, plan, risks))
+    structured = any((signal, indices, breadth, dimensions, sector_dual, detail_dual, catalysts, plan, risks))
     keep_fallback = not structured or _should_keep_market_fallback(markdown_text, data)
     fallback = f'<section class="report-fallback"><article class="report-content">{fallback_html}</article></section>' if keep_fallback else ""
-    return f"{signal}{indices}{breadth}{dimensions}{sector_dual}{detail_dual}{plan}{risks}{fallback}"
+    return f"{signal}{indices}{breadth}{dimensions}{sector_dual}{detail_dual}{catalysts}{plan}{risks}{fallback}"
 
 
 def _generic_body(report_html: str) -> str:

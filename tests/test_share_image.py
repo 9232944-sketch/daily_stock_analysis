@@ -373,6 +373,7 @@ def test_market_share_image_does_not_duplicate_full_report_for_extra_detail_sect
 
     assert '<section class="market-signal">' in html
     assert "软件和信息技术服务业" in html
+    assert "稳增长政策预期升温" in html
     assert '<section class="report-fallback">' not in html
 
 
