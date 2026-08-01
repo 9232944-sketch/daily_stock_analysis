@@ -34,7 +34,7 @@ from src.services.screening import REFERENCE_PROJECT, REFERENCE_REVISION, __vers
 from src.services.screening import hotspot as screening_hotspot
 from src.services.screening.config import Config as ScreeningPipelineConfig
 from src.services.screening.pipeline import screen as run_screening_pipeline
-from src.services.screening.source_guard import call_with_timeout, parse_source_timeout_seconds
+from src.services.screening.source_guard import parse_source_timeout_seconds
 from src.services.screening.strategy import list_strategies as load_screening_strategies
 from src.storage import DatabaseManager
 
@@ -338,16 +338,14 @@ def _build_hotspot_event_routes_from_search(topic: str) -> List[Dict[str, Any]]:
         service = _get_dsa_search_service()
         if not getattr(service, "is_available", False):
             return []
-        response = call_with_timeout(
-            service.search_topic_news,
+        response = service.search_topic_news_bounded(
             topic_text,
             max_results=3,
             focus_keywords=[f'"{topic_text}"', "A股", "最新消息", "催化"],
-            timeout_sec=parse_source_timeout_seconds(
+            timeout_seconds=parse_source_timeout_seconds(
                 "SCREENING_HOTSPOT_SEARCH_TIMEOUT_SEC",
                 default=DSA_SCREENING_HOTSPOT_SEARCH_TIMEOUT_SECONDS,
             ),
-            label=f"hotspot news search {topic_text}",
         )
     except Exception as exc:
         logger.info("Screening hotspot event search skipped for %s: %s", topic_text, exc)

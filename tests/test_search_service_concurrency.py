@@ -2,6 +2,7 @@
 """Concurrency regression tests for search service shared state."""
 
 import sys
+import multiprocessing
 import threading
 import time
 import unittest
@@ -21,9 +22,14 @@ from src.search_service import (
     SearchResponse,
     SearchResult,
     SearchService,
+    _call_topic_news_in_subprocess,
     get_search_service,
     reset_search_service,
 )
+
+
+def _hang_topic_news_process_worker(*_args):
+    time.sleep(10)
 
 
 class _ThreadUnsafeCycle:
@@ -228,6 +234,94 @@ class SearchServiceConcurrencyTestCase(unittest.TestCase):
 
         self.assertIs(response, cached_response)
         provider.search.assert_not_called()
+
+    def test_bounded_topic_search_caches_in_parent_before_starting_another_process(self):
+        service = SearchService(
+            bocha_keys=["dummy_key"],
+            searxng_public_instances_enabled=False,
+            news_max_age_days=3,
+            news_strategy_profile="short",
+        )
+        response = SearchResponse(
+            query='"影视传媒" A股 最新消息 催化',
+            results=[
+                SearchResult(
+                    title="影视传媒订单",
+                    snippet="板块近期出现新订单。",
+                    url="https://example.com/topic-news",
+                    source="example.com",
+                    published_date=datetime.now().date().isoformat(),
+                )
+            ],
+            provider="MockProvider",
+            success=True,
+        )
+
+        with patch("src.search_service._call_topic_news_in_subprocess", return_value=response) as subprocess_call:
+            first = service.search_topic_news_bounded("影视传媒", max_results=2, timeout_seconds=0.5)
+            second = service.search_topic_news_bounded("影视传媒", max_results=2, timeout_seconds=0.5)
+
+        self.assertIs(first, response)
+        self.assertIs(second, response)
+        subprocess_call.assert_called_once()
+        self.assertEqual(service._cache_inflight, {})
+
+    def test_bounded_topic_search_timeout_terminates_and_reaps_process(self):
+        with patch("src.search_service._search_topic_news_process_worker", _hang_topic_news_process_worker):
+            with self.assertRaisesRegex(TimeoutError, "已终止请求进程"):
+                _call_topic_news_in_subprocess(
+                    constructor_kwargs={
+                        "searxng_public_instances_enabled": False,
+                        "news_max_age_days": 3,
+                        "news_strategy_profile": "short",
+                    },
+                    topic="影视传媒",
+                    max_results=2,
+                    focus_keywords=None,
+                    timeout_seconds=0.05,
+                )
+
+        active_search_children = [
+            process
+            for process in multiprocessing.active_children()
+            if process.name == "search-topic-news"
+        ]
+        self.assertEqual(active_search_children, [])
+
+    def test_bounded_topic_search_process_returns_serialized_dsa_response(self):
+        response = _call_topic_news_in_subprocess(
+            constructor_kwargs={
+                "searxng_public_instances_enabled": False,
+                "news_max_age_days": 3,
+                "news_strategy_profile": "short",
+            },
+            topic="影视传媒",
+            max_results=2,
+            focus_keywords=None,
+            timeout_seconds=5.0,
+        )
+
+        self.assertFalse(response.success)
+        self.assertEqual(response.provider, "None")
+        self.assertEqual(response.results, [])
+        self.assertFalse(any(process.name == "search-topic-news" for process in multiprocessing.active_children()))
+
+    def test_bounded_topic_search_rejects_work_when_process_capacity_is_full(self):
+        slots = MagicMock()
+        slots.acquire.return_value = False
+
+        with patch("src.search_service._SEARCH_TIMEOUT_WORKER_SLOTS", slots):
+            with self.assertRaisesRegex(RuntimeError, "并发已满"):
+                _call_topic_news_in_subprocess(
+                    constructor_kwargs={},
+                    topic="影视传媒",
+                    max_results=2,
+                    focus_keywords=None,
+                    timeout_seconds=0.5,
+                )
+
+        slots.acquire.assert_called_once_with(blocking=False)
+        slots.release.assert_not_called()
 
     def test_get_search_service_initializes_singleton_once(self):
         reset_search_service()

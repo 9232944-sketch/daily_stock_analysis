@@ -1310,7 +1310,7 @@ class ScreeningOpportunitiesApiTestCase(unittest.TestCase):
             "source_errors": [],
         })
         search_service = MagicMock()
-        search_service.search_topic_news.return_value = SimpleNamespace(
+        search_service.search_topic_news_bounded.return_value = SimpleNamespace(
             success=True,
             provider="Bocha",
             results=[
@@ -1350,7 +1350,12 @@ class ScreeningOpportunitiesApiTestCase(unittest.TestCase):
         self.assertEqual(payload["news_search_status"], "available")
         self.assertLessEqual(len(payload["route"][0]["description"]), 93)
         self.assertNotIn("完整产业链背景", payload["route"][0]["description"])
-        search_service.search_topic_news.assert_called_once()
+        search_service.search_topic_news_bounded.assert_called_once_with(
+            "钼",
+            max_results=3,
+            focus_keywords=['"钼"', "A股", "最新消息", "催化"],
+            timeout_seconds=12.0,
+        )
 
     def test_hotspot_search_excludes_missing_and_unsafe_links(self) -> None:
         config = Config(screening_enabled=True, bocha_api_keys=["test-key"])
@@ -1364,7 +1369,7 @@ class ScreeningOpportunitiesApiTestCase(unittest.TestCase):
             "source_errors": [],
         })
         search_service = MagicMock()
-        search_service.search_topic_news.return_value = SimpleNamespace(
+        search_service.search_topic_news_bounded.return_value = SimpleNamespace(
             success=True,
             provider="Bocha",
             results=[
@@ -1406,7 +1411,7 @@ class ScreeningOpportunitiesApiTestCase(unittest.TestCase):
 
     def test_hotspot_search_skips_invalid_links_before_valid_result(self) -> None:
         search_service = MagicMock(is_available=True)
-        search_service.search_topic_news.return_value = SimpleNamespace(
+        search_service.search_topic_news_bounded.return_value = SimpleNamespace(
             success=True,
             provider="Bocha",
             results=[
@@ -1441,7 +1446,7 @@ class ScreeningOpportunitiesApiTestCase(unittest.TestCase):
             "source_errors": [],
         })
         search_service = MagicMock()
-        search_service.search_topic_news.return_value = SimpleNamespace(
+        search_service.search_topic_news_bounded.return_value = SimpleNamespace(
             success=True,
             provider="Bocha",
             results=[
@@ -1490,7 +1495,7 @@ class ScreeningOpportunitiesApiTestCase(unittest.TestCase):
         self.assertTrue(plain["cache_used"])
         self.assertEqual(cache_write.call_count, 1)
         provider.hotspot_detail.assert_called_once_with("钼")
-        self.assertEqual(search_service.search_topic_news.call_count, 2)
+        self.assertEqual(search_service.search_topic_news_bounded.call_count, 2)
 
     def test_hotspot_search_summary_does_not_call_llm(self) -> None:
         config = Config(screening_enabled=True, litellm_model="openai/gpt-5-mini")
@@ -1504,7 +1509,7 @@ class ScreeningOpportunitiesApiTestCase(unittest.TestCase):
             "source_errors": [],
         })
         search_service = MagicMock()
-        search_service.search_topic_news.return_value = SimpleNamespace(
+        search_service.search_topic_news_bounded.return_value = SimpleNamespace(
             success=True,
             provider="Bocha",
             results=[
