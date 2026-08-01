@@ -258,6 +258,70 @@ def test_market_share_image_hides_unavailable_dimensions_and_uses_payload_color_
     assert '<strong class="red">+0.80%</strong>' in html
 
 
+def test_market_share_image_skips_unavailable_market_light_overlay():
+    payload = {
+        "kind": "market_review",
+        "region": "cn",
+        "market_light": {
+            "score": 50,
+            "temperature_label": "震荡",
+            "label": "需观察",
+            "data_quality": "unavailable",
+            "dimensions": {
+                "breadth": {"score": 50, "available": False},
+                "index": {"score": 50, "available": False},
+                "limit": {"score": 50, "available": False},
+            },
+        },
+    }
+
+    html = build_share_image_html(
+        """# A股大盘复盘
+
+> 指数数据暂缺，等待补齐后再看盘面。
+""",
+        generated_on=date(2026, 8, 1),
+        structured_payload=payload,
+    )
+
+    assert 'class="market-signal"' not in html
+    assert '<div class="market-label">需观察</div>' not in html
+    assert "<small>/100</small>" not in html
+
+
+def test_market_share_image_merges_partial_structured_indices_with_markdown_fallback():
+    payload = {
+        "kind": "market_review",
+        "region": "cn",
+        "indices": [
+            {"name": "上证指数", "change_pct": 0.72},
+            {"name": "创业板指", "current": 2328.31, "change_pct": 3.06},
+        ],
+    }
+
+    html = build_share_image_html(
+        """# A股大盘复盘
+
+## 指数结构
+
+| 指数 | 最新 | 涨跌幅 |
+| --- | --- | --- |
+| 上证指数 | 3559.95 | +0.80% |
+| 深证成指 | 11206.12 | +2.21% |
+| 创业板指 | 2200.00 | +2.50% |
+""",
+        generated_on=date(2026, 8, 1),
+        structured_payload=payload,
+    )
+
+    assert "3559.95" in html
+    assert "+0.72%" in html
+    assert "11206.12" in html
+    assert "+2.21%" in html
+    assert "2328.31" in html
+    assert "+3.06%" in html
+
+
 def test_market_share_image_uses_payload_color_scheme_for_sector_rankings():
     payload = {
         "kind": "market_review",

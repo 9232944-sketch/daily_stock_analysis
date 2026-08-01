@@ -383,6 +383,71 @@ def _merge_metrics(
     return merged
 
 
+def _market_light_overlay_allowed(payload: Mapping[str, Any]) -> bool:
+    """Skip fabricated market-light snapshots that were persisted as unavailable."""
+
+    return str(payload.get("data_quality") or "").strip().lower() != "unavailable"
+
+
+def _normalize_index_name(value: object) -> str:
+    return _plain(_clean_value(value, limit=28)).strip().lower()
+
+
+def _merge_index_cards(
+    existing: Iterable[tuple[str, str, str, str]],
+    overlay: Iterable[Mapping[str, Any]],
+    *,
+    positive_tone: str,
+    negative_tone: str,
+) -> list[tuple[str, str, str, str]]:
+    """Merge structured index fields into Markdown-parsed cards without dropping fallbacks."""
+
+    merged = list(existing)
+    positions = {
+        key: index
+        for index, (name, _current, _change, _color) in enumerate(merged)
+        if (key := _normalize_index_name(name))
+    }
+    for item in overlay:
+        name = _clean_value(item.get("name"), limit=18)
+        if not name:
+            continue
+        current = _number_text(item.get("current"))
+        change = _signed_percent(item.get("change_pct"))
+        key = _normalize_index_name(name)
+        if not key:
+            continue
+        if key in positions:
+            index = positions[key]
+            current_name, current_value, current_change, current_color = merged[index]
+            merged_change = change or current_change
+            if merged_change.startswith("+"):
+                color = positive_tone
+            elif merged_change.startswith("-"):
+                color = negative_tone
+            else:
+                color = current_color
+            merged[index] = (
+                name or current_name,
+                current or current_value,
+                merged_change,
+                color,
+            )
+            continue
+        if not (current and change) or len(merged) >= 4:
+            continue
+        merged.append(
+            (
+                name,
+                current,
+                change,
+                positive_tone if change.startswith("+") else negative_tone if change.startswith("-") else "",
+            )
+        )
+        positions[key] = len(merged) - 1
+    return merged[:4]
+
+
 def _number_text(value: object, *, suffix: str = "") -> str:
     if value is None or isinstance(value, bool):
         return ""
@@ -1426,56 +1491,47 @@ def _market_data_from_payload(
 
     light = payload.get("market_light")
     if isinstance(light, Mapping):
-        if light.get("score") is not None:
+        if _market_light_overlay_allowed(light) and light.get("score") is not None:
             poster.score = _number_text(light.get("score"))
-        poster.temperature = _clean_value(light.get("temperature_label"), limit=12) or poster.temperature
-        poster.signal = (
-            _clean_value(light.get("label"), limit=12)
-            or poster.signal
-            or poster.temperature
-        )
-        dimensions = light.get("dimensions")
-        if isinstance(dimensions, Mapping):
-            for key, label in (
-                ("breadth", "赚钱效应"),
-                ("index", "指数强度"),
-                ("limit", "涨停结构"),
-            ):
-                dimension = dimensions.get(key)
-                if (
-                    not isinstance(dimension, Mapping)
-                    or dimension.get("score") is None
-                    or dimension.get("available") is False
+        if _market_light_overlay_allowed(light):
+            poster.temperature = _clean_value(light.get("temperature_label"), limit=12) or poster.temperature
+            poster.signal = (
+                _clean_value(light.get("label"), limit=12)
+                or poster.signal
+                or poster.temperature
+            )
+            dimensions = light.get("dimensions")
+            if isinstance(dimensions, Mapping):
+                for key, label in (
+                    ("breadth", "赚钱效应"),
+                    ("index", "指数强度"),
+                    ("limit", "涨停结构"),
                 ):
-                    continue
-                score = _number_text(dimension.get("score"))
-                try:
-                    numeric_score = float(dimension.get("score"))
-                except (TypeError, ValueError):
-                    numeric_score = 0
-                tone = "positive" if numeric_score >= 70 else "warning" if numeric_score >= 50 else "negative"
-                poster.dimensions.append((label, f"{score}/100", tone))
+                    dimension = dimensions.get(key)
+                    if (
+                        not isinstance(dimension, Mapping)
+                        or dimension.get("score") is None
+                        or dimension.get("available") is False
+                    ):
+                        continue
+                    score = _number_text(dimension.get("score"))
+                    try:
+                        numeric_score = float(dimension.get("score"))
+                    except (TypeError, ValueError):
+                        numeric_score = 0
+                    tone = "positive" if numeric_score >= 70 else "warning" if numeric_score >= 50 else "negative"
+                    poster.dimensions.append((label, f"{score}/100", tone))
 
     indices = payload.get("indices")
     if isinstance(indices, list):
-        exact_indices: list[tuple[str, str, str, str]] = []
-        for item in indices[:4]:
-            if not isinstance(item, Mapping):
-                continue
-            name = _clean_value(item.get("name"), limit=18)
-            current = _number_text(item.get("current"))
-            change = _signed_percent(item.get("change_pct"))
-            if name and change:
-                exact_indices.append(
-                    (
-                        name,
-                        current,
-                        change,
-                        positive_tone if change.startswith("+") else negative_tone if change.startswith("-") else "",
-                    )
-                )
-        if exact_indices:
-            poster.indices = exact_indices
+        structured_indices = [item for item in indices[:4] if isinstance(item, Mapping)]
+        if structured_indices:
+            poster.indices = _merge_index_cards(
+                poster.indices,
+                structured_indices,
+                positive_tone=positive_tone,
+                negative_tone=negative_tone,
+            )
 
     breadth = payload.get("breadth")
     if isinstance(breadth, Mapping):
