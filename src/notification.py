@@ -62,6 +62,7 @@ from src.schemas.decision_action import (
 )
 from bot.models import BotMessage
 from src.utils.sanitize import sanitize_diagnostic_text
+from src.formatters import strip_hidden_markdown_metadata
 from src.utils.data_processing import (
     signal_attribution_has_content,
     signal_attribution_weight_items,
@@ -2548,7 +2549,10 @@ class NotificationService(
                 receivers = self.get_receivers_for_stocks(email_stock_codes)
             if use_image:
                 return self._send_email_with_inline_image(image_bytes, receivers=receivers)
-            return self.send_to_email(content, receivers=receivers)
+            return self.send_to_email(
+                strip_hidden_markdown_metadata(content).strip(),
+                receivers=receivers,
+            )
         if channel == NotificationChannel.PUSHOVER:
             return self.send_to_pushover(content)
         if channel == NotificationChannel.NTFY:

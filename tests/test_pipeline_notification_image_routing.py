@@ -96,6 +96,21 @@ class TestPipelineEmailGroupImageRouting(unittest.TestCase):
         self.assertIn(None, called_receivers)
 
     @patch("src.md2img.markdown_to_image", return_value=None)
+    def test_send_notifications_email_text_fallback_strips_hidden_market_metadata(self, _mock_md2img):
+        pipeline = self._build_pipeline()
+        pipeline.notifier.generate_dashboard_report = MagicMock(
+            return_value="[dsa-market-region]: # (cn)\n\n# 🎯 Market Review\n\nBody"
+        )
+        results = [SimpleNamespace(code="000001")]
+
+        pipeline._send_notifications(results, ReportType.SIMPLE)
+
+        pipeline.notifier.send_to_email.assert_called_once_with(
+            "# 🎯 Market Review\n\nBody",
+            receivers=["group@example.com"],
+        )
+
+    @patch("src.md2img.markdown_to_image", return_value=None)
     def test_send_notifications_email_group_failure_does_not_skip_later_group(self, _mock_md2img):
         pipeline = self._build_pipeline()
         pipeline.notifier.send_to_email.side_effect = [RuntimeError("group failed"), True]

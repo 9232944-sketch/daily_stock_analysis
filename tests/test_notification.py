@@ -1967,6 +1967,57 @@ class TestNotificationServiceReportGeneration(unittest.TestCase):
 
     @mock.patch("src.notification.get_config")
     @mock.patch("smtplib.SMTP_SSL")
+    def test_send_to_email_via_notification_service_strips_hidden_market_metadata(
+        self, mock_smtp_ssl: mock.MagicMock, mock_get_config: mock.MagicMock
+    ):
+        cfg = _make_config(
+            email_sender="user@qq.com",
+            email_password="PASS",
+            email_receivers=["default@example.com"],
+        )
+        mock_get_config.return_value = cfg
+
+        service = NotificationService()
+
+        ok = service.send("[dsa-market-region]: # (cn)\n\n# 🎯 Market Review\n\nBody")
+
+        self.assertTrue(ok)
+        msg = mock_smtp_ssl.return_value.send_message.call_args[0][0]
+        payloads = msg.get_payload()
+        self.assertNotIn("[dsa-market-region]", payloads[0].get_payload(decode=True).decode("utf-8"))
+        self.assertNotIn("[dsa-market-region]", payloads[1].get_payload(decode=True).decode("utf-8"))
+
+    @mock.patch("src.notification.get_config")
+    def test_email_text_fallback_strips_hidden_market_metadata_before_sender(
+        self, mock_get_config: mock.MagicMock
+    ):
+        cfg = _make_config(
+            email_sender="user@qq.com",
+            email_password="PASS",
+            email_receivers=["default@example.com"],
+        )
+        mock_get_config.return_value = cfg
+
+        service = NotificationService()
+        service.send_to_email = mock.MagicMock(return_value=True)
+
+        ok = service._send_to_static_channel(
+            NotificationChannel.EMAIL,
+            "[dsa-market-region]: # (cn)\n\n# 🎯 Market Review\n\nBody",
+            image_bytes=None,
+            email_stock_codes=None,
+            email_send_to_all=False,
+            route_type="report",
+        )
+
+        self.assertTrue(ok)
+        service.send_to_email.assert_called_once_with(
+            "# 🎯 Market Review\n\nBody",
+            receivers=None,
+        )
+
+    @mock.patch("src.notification.get_config")
+    @mock.patch("smtplib.SMTP_SSL")
     def test_send_to_email_with_stock_group_routing(
         self, mock_smtp_ssl: mock.MagicMock, mock_get_config: mock.MagicMock
     ):

@@ -50,20 +50,29 @@ export const ShareImageButton: React.FC<ShareImageButtonProps> = ({
   const setState = useCallback((nextState: ShareState) => {
     setStateSnapshot({ recordId, state: nextState });
   }, [recordId]);
-
-  useEffect(() => () => {
-    loadTokenRef.current += 1;
+  const clearResetTimer = useCallback(() => {
     if (resetTimerRef.current !== null) {
       window.clearTimeout(resetTimerRef.current);
+      resetTimerRef.current = null;
     }
   }, []);
 
+  useEffect(() => () => {
+    loadTokenRef.current += 1;
+    clearResetTimer();
+  }, [clearResetTimer]);
+
   const scheduleReset = useCallback(() => {
-    if (resetTimerRef.current !== null) {
-      window.clearTimeout(resetTimerRef.current);
-    }
-    resetTimerRef.current = window.setTimeout(() => setState('idle'), 2200);
-  }, [setState]);
+    clearResetTimer();
+    const scheduledRecordId = recordId;
+    resetTimerRef.current = window.setTimeout(() => {
+      setStateSnapshot((current) => (
+        current.recordId === scheduledRecordId
+          ? { recordId: scheduledRecordId, state: 'idle' }
+          : current
+      ));
+    }, 2200);
+  }, [clearResetTimer, recordId]);
 
   const prepareShareImage = useCallback(() => {
     if (recordId === undefined) return;
@@ -85,6 +94,7 @@ export const ShareImageButton: React.FC<ShareImageButtonProps> = ({
   }, [recordId, setState]);
 
   useEffect(() => {
+    clearResetTimer();
     if (recordId === undefined) return undefined;
 
     const loadToken = loadTokenRef.current + 1;
@@ -101,9 +111,10 @@ export const ShareImageButton: React.FC<ShareImageButtonProps> = ({
     });
 
     return () => {
+      clearResetTimer();
       loadTokenRef.current += 1;
     };
-  }, [recordId, setState]);
+  }, [clearResetTimer, recordId, setState]);
 
   const handleShare = useCallback(async () => {
     if (recordId === undefined || state === 'loading') return;

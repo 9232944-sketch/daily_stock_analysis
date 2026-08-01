@@ -58,6 +58,7 @@ from src.agent.final_explanation import (
     build_pipeline_final_explanation,
     capture_pipeline_action_adjustment,
 )
+from src.formatters import strip_hidden_markdown_metadata
 from src.phase_decision_guardrail import apply_phase_decision_guardrails
 from src.services.daily_market_context import (
     DailyMarketContext,
@@ -3717,7 +3718,8 @@ class StockAnalysisPipeline:
                                             grp_image_bytes, receivers=receivers
                                         )
                                     return self.notifier.send_to_email(
-                                        grp_report, receivers=receivers
+                                        strip_hidden_markdown_metadata(grp_report).strip(),
+                                        receivers=receivers,
                                     )
 
                                 email_label = (
@@ -3742,7 +3744,9 @@ class StockAnalysisPipeline:
                                 )
                                 if use_image:
                                     return self.notifier._send_email_with_inline_image(image_bytes)
-                                return self.notifier.send_to_email(report)
+                                return self.notifier.send_to_email(
+                                    strip_hidden_markdown_metadata(report).strip()
+                                )
 
                             channel_success, channel_error = _send_channel_safely(
                                 channel.value,

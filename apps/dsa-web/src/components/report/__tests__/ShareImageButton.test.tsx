@@ -13,6 +13,7 @@ const mockedGetShareImage = vi.mocked(historyApi.getShareImage);
 
 describe('ShareImageButton', () => {
   beforeEach(() => {
+    vi.useRealTimers();
     mockedGetShareImage.mockReset();
     vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:share-image');
     vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
@@ -106,5 +107,66 @@ describe('ShareImageButton', () => {
     );
 
     expect(await screen.findByRole('button', { name: '重试' })).toBeInTheDocument();
+  });
+
+  it('clears the previous success reset timer when switching to another record', async () => {
+    vi.useFakeTimers();
+    const nativeShare = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'share', { configurable: true, value: nativeShare });
+    Object.defineProperty(navigator, 'canShare', { configurable: true, value: () => true });
+    const clearTimeoutSpy = vi.spyOn(window, 'clearTimeout');
+    let resolveSecondImage: ((blob: Blob) => void) | undefined;
+    mockedGetShareImage
+      .mockResolvedValueOnce(new Blob(['a'], { type: 'image/png' }))
+      .mockReturnValueOnce(new Promise((resolve) => {
+        resolveSecondImage = resolve;
+      }));
+
+    const { rerender } = render(
+      <ShareImageButton
+        recordId={21}
+        reportTitle="报告A"
+        reportLanguage="zh"
+      />,
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(mockedGetShareImage).toHaveBeenCalledWith(21);
+    expect(screen.getByRole('button', { name: '分享' })).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '分享' }));
+      await Promise.resolve();
+    });
+
+    expect(nativeShare).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('button', { name: '已生成' })).toBeInTheDocument();
+
+    rerender(
+      <ShareImageButton
+        recordId={22}
+        reportTitle="报告B"
+        reportLanguage="zh"
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: '生成中...' })).toBeDisabled();
+    await act(async () => {
+      resolveSecondImage?.(new Blob(['b'], { type: 'image/png' }));
+      await Promise.resolve();
+    });
+
+    expect(mockedGetShareImage).toHaveBeenCalledWith(22);
+    expect(screen.getByRole('button', { name: '分享' })).toBeInTheDocument();
+    expect(clearTimeoutSpy).toHaveBeenCalled();
+
+    await act(async () => {
+      vi.advanceTimersByTime(2300);
+    });
+
+    expect(screen.getByRole('button', { name: '分享' })).toBeInTheDocument();
   });
 });
