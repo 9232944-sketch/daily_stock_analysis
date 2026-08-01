@@ -1324,7 +1324,7 @@ class TestNotificationServiceReportGeneration(unittest.TestCase):
         markdown = service.generate_single_stock_report(result)
         html = build_share_image_html(markdown, generated_on=date(2026, 7, 31))
 
-        self.assertIn('class="signal-trend"', html)
+        self.assertIn('class="signal-trend positive"', html)
         self.assertIn(">看多<", html)
         self.assertIn("个股决策卡", html)
 

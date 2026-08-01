@@ -1,6 +1,6 @@
 # 分享图片模板与数据填充
 
-分享图片用于把个股分析和市场复盘转换为适合社交平台传播的 1080px 长图。个股和大盘使用两套独立的信息结构，但共用 DSA 品牌、项目二维码、小红书二维码和风险声明。
+分享图片用于把个股分析和市场复盘转换为适合社交平台传播的 1080px 长图。个股和大盘使用两套独立的信息结构，但共用 DSA 品牌、真实仓库标识 `ZhuLinsen/daily_stock_analysis`、真实小红书二维码和风险声明。GitHub 区不放二维码；小红书区展示仓库内的真实账号二维码与 `@霸天土小豆`。
 
 ## 运行时如何填充
 
@@ -8,34 +8,47 @@
 
 ```text
 个股 AnalysisResult
-  -> NotificationService 生成稳定 Markdown
-  -> share_image 提取决策字段
+  -> AnalysisResult.to_dict() 结构化 JSON + 稳定 Markdown
+  -> share_image 优先读取 JSON，Markdown 兼容回退
   -> 个股决策卡 HTML
   -> wkhtmltoimage / markdown-to-file 输出 PNG
 
 大盘 MarketOverview + market_light + LLM 复盘
-  -> MarketAnalyzer 生成稳定 Markdown
-  -> share_image 提取市场字段
+  -> MarketAnalyzer 生成 market_review_payload + 稳定 Markdown
+  -> share_image 优先读取 payload，Markdown 兼容回退
   -> 市场复盘卡 HTML
   -> wkhtmltoimage / markdown-to-file 输出 PNG
 ```
 
 `MARKDOWN_TO_IMAGE_CHANNELS`、`MD2IMG_ENGINE`、`MARKDOWN_TO_IMAGE_MAX_CHARS` 继续控制哪些通知渠道转图、使用哪个引擎以及最大输入长度。转换失败时仍回退为文本通知。
 
-模板只读取报告中已经存在的数据，不根据分数自行推导操作、不补造价格或指标。字段为 `N/A`、`-`、空值或没有对应模块时，相关卡片自动隐藏。
+## Web 一键分享
+
+历史个股报告、市场复盘和完整报告抽屉右上角都会显示“分享”按钮。点击后，Web 调用 `GET /api/v1/history/{record_id}/share-image`，使用该条历史记录的 Markdown 与结构化 JSON 生成同一套固定模板。支持文件分享的浏览器会打开系统分享面板；其他浏览器会直接下载 PNG。
+
+Web 手工生成不受 `MARKDOWN_TO_IMAGE_CHANNELS` 限制，但服务端仍需配置可用的 `MD2IMG_ENGINE`。使用 Playwright 时先执行：
+
+```bash
+cd apps/dsa-web
+npm ci
+npx playwright install chromium
+```
+
+结构化数据用于精确填充名称、动作、评分、价格、宽度和板块等字段；Markdown 仍负责兼容旧调用以及计划、风险等文本章节。模板不根据分数自行推导操作，也不补造价格或指标。字段为 `N/A`、`-`、空值或没有对应模块时，相关卡片自动隐藏。
 
 ## 个股卡字段映射
 
 | 图片区域 | 项目字段 / 生成来源 | 填充规则 |
 | --- | --- | --- |
-| 股票名称、代码 | `AnalysisResult.name`、`AnalysisResult.code` | 从个股标题提取 |
-| 操作、评分、趋势 | 最终展示动作、`sentiment_score`、`trend_prediction` | 使用通知报告已经校准后的展示结果，评分范围 0–100 |
+| 股票名称、代码 | `AnalysisResult.name`、`AnalysisResult.code` | 直接读取结构化字段，Markdown 标题仅作回退 |
+| 操作、评分、趋势 | `action_label` / `operation_advice`、`sentiment_score`、`trend_prediction`、`confidence_level` | 使用最终校准结果，评分范围 0–100，并标明结论置信度 |
 | 核心结论 | `dashboard.core_conclusion.one_sentence` | 没有时隐藏 |
 | 市场快照 | `market_snapshot` | 当前/收盘价、涨跌幅、量比、换手率按可用字段展示；数据源进入底部声明 |
-| 执行计划 | `dashboard.battle_plan.sniper_points` | `ideal_buy`、`secondary_buy`、`stop_loss`、`take_profit`；支持数值、区间和带条件的文本 |
-| 技术参考 | `dashboard.data_perspective` | 展示均线、量能、支撑和压力；项目没有稳定 RSI 字段，因此不会为了版面补造 RSI |
-| 催化与风险 | `dashboard.intelligence` | `positive_catalysts` 与 `risk_alerts` 最多各展示 3 条 |
-| 持仓建议 | `core_conclusion.position_advice`、`battle_plan.position_strategy` | 区分未持仓、已持仓、仓位、建仓和风控 |
+| 执行计划 | `dashboard.battle_plan.sniper_points` | 只展示理想/确认买入、止损和首个目标价格；复杂触发条件保留在完整报告 |
+| 技术参考 | `dashboard.data_perspective` | 展示均线状态、趋势分、MA5 乖离、支撑和压力，不重复快照里的量比 |
+| 下一步观察 | `dashboard.phase_decision` | 展示行动窗口、下次检查时间和最多两条观察条件 |
+| 催化与风险 | `dashboard.intelligence` | `positive_catalysts` 与 `risk_alerts` 最多各展示 2 条短摘要 |
+| 持仓建议 | `core_conclusion.position_advice` | 只区分未持仓和已持仓，仓位、建仓、风控长文保留在完整报告 |
 
 模板支持项目当前的中英文报告标签。一个“决策仪表盘”只有一只股票时会自动使用个股卡；包含多只股票时保留多股报告布局，避免错误地把第一只股票当成整份报告。
 
@@ -47,14 +60,16 @@
 | 市场信号 | `market_light.score`、`temperature_label`、`label`、`guidance` | 使用确定性市场灯号结果，不由模板二次评分 |
 | 指数表现 | `MarketOverview.indices` | 最多展示 3 个主要指数的最新值和涨跌幅 |
 | 市场宽度 | `up_count`、`down_count`、`limit_up_count`、`limit_down_count`、`total_amount` | 仅在数据源支持且报告包含结构化数据时展示 |
-| 强势板块 | `top_sectors` | 展示领涨 Top 3；没有板块榜的市场自动隐藏 |
-| 消息催化 | 复盘“消息催化”章节 | 最多提炼 2 条已有内容，不新增事实 |
-| 明日计划 | 复盘“明日交易计划”章节 | 优先展示结论、仓位区间、关注方向 |
-| 风险提示 | 复盘“风险提示”章节 | 最多展示 3 条，过滤重复免责声明 |
+| 信号拆解 | `market_light.dimensions` | 展示赚钱效应、指数强度和涨停结构三个确定性评分 |
+| 强弱板块 | `sectors.top`、`sectors.bottom` | 领涨、领跌各展示 Top 3；没有板块榜的市场自动隐藏 |
+| 资金观察 | 复盘“资金与情绪”章节 | 提炼涨跌比、增量成交和资金风格，不把成交额或新闻推断伪装成净流入 |
+| 重点跟踪 | 复盘“明日交易计划”的关注/回避方向 | 最多各展示 2 个板块或主题；当前 payload 没有 `leader_stocks`，因此不编造重点个股 |
+| 明日策略 | 复盘“明日交易计划”章节 | 展示结论、仓位区间和失效条件，不与重点跟踪重复 |
+| 风险提示 | 复盘“风险提示”章节 | 最多展示 2 条，过滤重复免责声明 |
 
 ## 手工填充或本地预览
 
-模板输入仍然是项目生成的 Markdown。调试时可以准备一份最小个股报告：
+模板仍接受项目生成的 Markdown；新链路会额外传入 `AnalysisResult.to_dict()` 或 `market_review_payload`。仅调试兼容回退时，可以准备一份最小个股报告：
 
 ```markdown
 ## 🟢 贵州茅台 (600519)
@@ -91,12 +106,24 @@ html = build_share_image_html(markdown_text)
 Path("share-preview.html").write_text(html, encoding="utf-8")
 ```
 
+按真实运行数据预览时传入结构化结果：
+
+```python
+html = build_share_image_html(
+    markdown_text,
+    structured_payload=analysis_result.to_dict(),
+)
+```
+
 实际通知转 PNG 仍调用：
 
 ```python
 from src.md2img import markdown_to_image
 
-png_bytes = markdown_to_image(markdown_text)
+png_bytes = markdown_to_image(
+    markdown_text,
+    structured_payload=analysis_result.to_dict(),
+)
 ```
 
 大盘报告应沿用 `MarketAnalyzer` 生成的“盘面信号、指数结构、板块主线、消息催化、明日交易计划、风险提示”章节；不建议在外部另造一套字段名称，否则模板会按缺失字段处理。
@@ -104,7 +131,8 @@ png_bytes = markdown_to_image(markdown_text)
 ## 视觉与内容边界
 
 - 涨跌颜色以最终报告内容为准；模板不改变项目现有市场颜色配置和业务判断。
-- 买入点允许是价格区间或“价格 + 触发条件”，不会强制截成一个可能误导的数字。
+- 分享图中的买入、止损和目标只保留可扫描的价格或“等待企稳”；完整条件始终保留在原报告中。
 - 没有真实价格序列时不绘制伪 K 线；顶部仅保留非数据化的品牌光晕。
-- 二维码使用仓库随包资源并以内嵌 Data URI 渲染，不依赖运行时网络。
+- 小红书二维码使用 `docs/assets/xiaohongshu_tick.jpg` 对应的随包资源并以内嵌 Data URI 渲染，不依赖运行时网络；GitHub 直接展示仓库标识 `ZhuLinsen/daily_stock_analysis`，不生成二维码。
+- 大盘报告在核心模块已成功提取时不重复附加完整 Markdown；额外的详情章节保留在原报告中，分享图只呈现结构化摘要。
 - 图片底部固定说明“AI 生成，仅供研究交流，不构成投资建议”。

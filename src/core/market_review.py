@@ -11,6 +11,7 @@
 """
 
 import logging
+import inspect
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -364,7 +365,19 @@ def run_market_review(
                     wrapper_title=review_text["push_title"],
                 )
 
-                success = notifier.send(report_content, email_send_to_all=True, route_type="report")
+                send_kwargs: Dict[str, Any] = {
+                    "email_send_to_all": True,
+                    "route_type": "report",
+                }
+                try:
+                    supports_payload = (
+                        "structured_payload" in inspect.signature(notifier.send).parameters
+                    )
+                except (TypeError, ValueError):
+                    supports_payload = False
+                if supports_payload:
+                    send_kwargs["structured_payload"] = market_review_payload
+                success = notifier.send(report_content, **send_kwargs)
                 _record_market_review_notification_run(
                     query_id=history_query_id,
                     channel="report",

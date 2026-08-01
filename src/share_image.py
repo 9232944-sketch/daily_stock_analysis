@@ -16,13 +16,17 @@ import re
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Any, Iterable, Mapping, Optional
 
 import markdown2
 
 
 PROJECT_URL = "https://github.com/ZhuLinsen/daily_stock_analysis"
+PROJECT_REPOSITORY = "ZhuLinsen/daily_stock_analysis"
+PROJECT_DISPLAY_NAME = "股票智能分析系统"
 XIAOHONGSHU_URL = "http://xhslink.com/m/tU520DWCKT"
+XIAOHONGSHU_HANDLE = "@霸天土小豆"
+XIAOHONGSHU_ID = "9544718011"
 _ASSET_DIR = Path(__file__).resolve().parent / "assets" / "share_image"
 _MARKET_RE = re.compile(
     r"(?:大盘复盘|市场复盘|market\s+(?:review|recap)|시황\s*리뷰)", re.IGNORECASE
@@ -91,12 +95,14 @@ class StockPoster:
     action: str = ""
     score: str = ""
     trend: str = ""
+    confidence: str = ""
     conclusion: str = ""
     snapshot: list[tuple[str, str, str]] = field(default_factory=list)
     sniper: list[tuple[str, str, str]] = field(default_factory=list)
     technical: list[tuple[str, str, str]] = field(default_factory=list)
     catalysts: list[str] = field(default_factory=list)
     risks: list[str] = field(default_factory=list)
+    watch_items: list[tuple[str, str, str]] = field(default_factory=list)
     no_position: str = ""
     has_position: str = ""
     position_size: str = ""
@@ -117,7 +123,12 @@ class MarketPoster:
     reasons: list[str] = field(default_factory=list)
     indices: list[tuple[str, str, str, str]] = field(default_factory=list)
     breadth: list[tuple[str, str, str]] = field(default_factory=list)
+    dimensions: list[tuple[str, str, str]] = field(default_factory=list)
     sectors: list[tuple[str, str]] = field(default_factory=list)
+    laggards: list[tuple[str, str]] = field(default_factory=list)
+    funds: list[tuple[str, str, str]] = field(default_factory=list)
+    focus: list[str] = field(default_factory=list)
+    avoid: list[str] = field(default_factory=list)
     catalysts: list[str] = field(default_factory=list)
     plan: list[str] = field(default_factory=list)
     risks: list[str] = field(default_factory=list)
@@ -158,6 +169,110 @@ def _clean_value(value: object, *, limit: int = 90) -> str:
     if len(text) > limit:
         return text[: limit - 1].rstrip("，,；;。.") + "…"
     return text
+
+
+def _compact_text(value: object, *, limit: int = 46) -> str:
+    """Keep poster copy scannable without changing the underlying report."""
+
+    text = _clean_value(value, limit=max(limit * 2, 90))
+    text = re.sub(r"^[✅⚠️❌🔴🟢🟡]+\s*", "", text)
+    text = re.sub(r"\s+", " ", text).strip(" ，,；;。")
+    if len(text) <= limit:
+        return text
+    first_clause = re.split(r"[；;。]", text, maxsplit=1)[0].strip()
+    if first_clause and len(first_clause) <= limit:
+        return first_clause
+    return text[: limit - 1].rstrip("，,；;。 ") + "…"
+
+
+def _nested_mapping(value: object, *keys: str) -> Mapping[str, Any]:
+    current: object = value
+    for key in keys:
+        if not isinstance(current, Mapping):
+            return {}
+        current = current.get(key)
+    return current if isinstance(current, Mapping) else {}
+
+
+def _number_text(value: object, *, suffix: str = "") -> str:
+    if value is None or isinstance(value, bool):
+        return ""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return _clean_value(value, limit=18)
+    rendered = f"{number:.2f}".rstrip("0").rstrip(".")
+    return f"{rendered}{suffix}"
+
+
+def _compact_turnover(value: object, unit: object) -> str:
+    """Render large CNY turnover figures without forcing narrow cards to wrap."""
+
+    unit_text = _clean_value(unit, limit=8)
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        amount = _number_text(value)
+        return f"{amount}{unit_text}" if amount else ""
+    if unit_text in {"亿", "亿元"} and abs(number) >= 10000:
+        return f"{number / 10000:.2f}".rstrip("0").rstrip(".") + "万亿"
+    return f"{_number_text(number)}{unit_text}"
+
+
+def _signed_percent(value: object) -> str:
+    if value is None or isinstance(value, bool):
+        return ""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        text = _clean_value(value, limit=18)
+        return text if "%" in text else f"{text}%" if text else ""
+    return f"{number:+.2f}%"
+
+
+def _price_tokens(value: object) -> list[str]:
+    text = _plain(value)
+    # Indicator labels such as MA5/MA10 are not prices; nearby parenthesized
+    # values (for example ``MA10（55.13）``) remain eligible.
+    return re.findall(r"(?<![A-Za-z\d])(\d+(?:\.\d+)?)(?!\d|%)", text)
+
+
+def _compact_sniper_value(key: str, value: object) -> str:
+    text = _clean_value(value, limit=120)
+    if not text:
+        return ""
+    if key == "ideal_buy" and any(token in text for token in ("暂无", "暂不", "不满足")):
+        return "等待企稳"
+    prices = _price_tokens(text)
+    if not prices:
+        return _compact_text(text, limit=18)
+    if key == "take_profit" and len(prices) >= 2:
+        return f"{prices[0]}–{prices[1]}"
+    return prices[0]
+
+
+def _compact_position(value: object, *, holding: bool) -> str:
+    text = _clean_value(value, limit=150)
+    if not text:
+        return ""
+    prices = _price_tokens(text)
+    if holding and prices:
+        stop_match = re.search(r"跌破\s*(\d+(?:\.\d+)?)", text)
+        reduce_at = next((price for price in prices if price != (stop_match.group(1) if stop_match else "")), "")
+        parts = []
+        if "减仓" in text:
+            parts.append(f"反弹至 {reduce_at} 附近减仓" if reduce_at else "反弹减仓")
+        if stop_match:
+            parts.append(f"跌破 {stop_match.group(1)} 止损")
+        if parts:
+            return "；".join(parts)
+    if not holding:
+        if "等待" in text or "企稳" in text:
+            levels = " / ".join(prices[:2])
+            return f"等待 {levels} 附近企稳" if levels else "等待右侧企稳信号"
+        if "不" in text and any(term in text for term in ("建仓", "接", "买入")):
+            return "暂不建仓"
+    return _compact_text(text, limit=40)
 
 
 def _escape(value: object) -> str:
@@ -284,9 +399,7 @@ def _has_meaningful_section(markdown_text: str, *terms: str) -> bool:
 def _meaningful_market_subsection_count(markdown_text: str) -> int:
     count = 0
     for _title, body, level in _extract_sections(markdown_text):
-        if level != 3:
-            continue
-        if _clean_value(body, limit=400):
+        if level == 3 and _clean_value(body, limit=400):
             count += 1
     return count
 
@@ -535,6 +648,7 @@ def _stock_data(markdown_text: str, generated_on: date) -> StockPoster:
     for table in _parse_tables(data_section):
         data_map.update(_table_map(table))
     ma = _labeled_value(data_section, "均线排列", "MA Alignment", limit=42)
+    ma = next((label for label in ("多头排列", "空头排列") if label in ma), _compact_text(ma, limit=16))
     volume_ratio = _labeled_line(data_section, "量能", "成交量", "Volume", limit=64)
     support = _mapped_value(data_map, "支撑位", "support")
     resistance = _mapped_value(data_map, "压力位", "resistance")
@@ -564,15 +678,33 @@ def _stock_data(markdown_text: str, generated_on: date) -> StockPoster:
         (("止损位", "stop loss"), "止损", "stop"),
         (("目标位", "target"), "目标", "target"),
     ):
-        value = _mapped_value(sniper_values, *labels)
+        raw_value = _mapped_value(sniper_values, *labels)
+        key = {
+            "理想买入": "ideal_buy",
+            "次优买入": "secondary_buy",
+            "止损": "stop_loss",
+            "目标": "take_profit",
+        }[display]
+        value = _compact_sniper_value(key, raw_value)
         if value:
-            poster.sniper.append((display, value, tone))
+            poster.sniper.append(("确认买入" if display == "次优买入" else display, value, tone))
 
     info = _section(markdown_text, "重要信息", "key updates", "消息面", "news flow")
-    poster.catalysts = _list_after_label(info, "利好催化", "positive catalysts")
-    poster.risks = _list_after_label(info, "风险警报", "risk alerts")
+    poster.catalysts = [
+        _compact_text(item, limit=36)
+        for item in _list_after_label(info, "利好催化", "positive catalysts")[:2]
+    ]
+    poster.risks = [
+        _compact_text(item, limit=36)
+        for item in _list_after_label(info, "风险警报", "risk alerts")[:2]
+    ]
     if not poster.risks:
-        poster.risks = _section_items(_section(markdown_text, "风险提示", "risk warning", "risk alerts"), limit=2)
+        poster.risks = [
+            _compact_text(item, limit=36)
+            for item in _section_items(
+                _section(markdown_text, "风险提示", "risk warning", "risk alerts"), limit=2
+            )
+        ]
 
     position_table = _find_table(core, "持仓") or _find_table(core, "position")
     if position_table:
@@ -584,9 +716,122 @@ def _stock_data(markdown_text: str, generated_on: date) -> StockPoster:
         poster.no_position = _labeled_value(position_section, "空仓者", "no position", limit=90)
     if not poster.has_position:
         poster.has_position = _labeled_value(position_section, "持仓者", "holding", limit=90)
-    poster.position_size = _labeled_value(battle, "仓位建议", "position size", limit=68)
-    poster.entry_plan = _labeled_value(battle, "建仓策略", "entry plan", limit=86)
-    poster.risk_control = _labeled_value(battle, "风控策略", "risk control", limit=86)
+    poster.no_position = _compact_position(poster.no_position, holding=False)
+    poster.has_position = _compact_position(poster.has_position, holding=True)
+    return poster
+
+
+def _stock_data_from_payload(
+    payload: Mapping[str, Any],
+    markdown_text: str,
+    generated_on: date,
+) -> StockPoster:
+    """Prefer the analysis JSON contract and retain Markdown as a field fallback."""
+
+    poster = _stock_data(markdown_text, generated_on)
+    dashboard = payload.get("dashboard")
+    if not isinstance(dashboard, Mapping):
+        return poster
+
+    core = _nested_mapping(dashboard, "core_conclusion")
+    data_view = _nested_mapping(dashboard, "data_perspective")
+    price = _nested_mapping(data_view, "price_position")
+    volume = _nested_mapping(data_view, "volume_analysis")
+    trend = _nested_mapping(data_view, "trend_status")
+    intelligence = _nested_mapping(dashboard, "intelligence")
+    battle = _nested_mapping(dashboard, "battle_plan")
+    sniper = _nested_mapping(battle, "sniper_points")
+    position_advice = _nested_mapping(core, "position_advice")
+    phase = _nested_mapping(dashboard, "phase_decision")
+
+    poster.title = _clean_value(payload.get("name"), limit=30) or poster.title
+    poster.code = _clean_value(payload.get("code"), limit=16) or poster.code
+    poster.action = _clean_value(
+        payload.get("action_label") or payload.get("operation_advice"), limit=12
+    ) or poster.action
+    score = payload.get("sentiment_score")
+    if score is not None:
+        poster.score = _number_text(score)
+    poster.trend = _clean_value(payload.get("trend_prediction"), limit=16) or poster.trend
+    poster.confidence = _clean_value(
+        payload.get("confidence_level") or dashboard.get("confidence_level"),
+        limit=10,
+    )
+    poster.conclusion = _compact_text(core.get("one_sentence"), limit=54) or poster.conclusion
+
+    current = _number_text(payload.get("current_price") or price.get("current_price"))
+    change = _signed_percent(payload.get("change_pct"))
+    ratio = _number_text(volume.get("volume_ratio"))
+    turnover = _number_text(volume.get("turnover_rate"), suffix="%")
+    positive_tone = _stock_positive_tone(poster.code)
+    negative_tone = _opposite_color(positive_tone)
+    poster.snapshot = [
+        item for item in (
+            ("现价", current, "primary"),
+            ("涨跌", change, positive_tone if not change.startswith("-") else negative_tone),
+            ("量比", ratio, "neutral"),
+            ("换手", turnover, "neutral"),
+        ) if item[1]
+    ]
+
+    ma_alignment = _clean_value(trend.get("ma_alignment"), limit=60)
+    ma_summary = next(
+        (label for label in ("多头排列", "空头排列") if label in ma_alignment),
+        _compact_text(ma_alignment, limit=16),
+    )
+    support = _number_text(price.get("support_level"))
+    resistance = _number_text(price.get("resistance_level"))
+    trend_score = _number_text(trend.get("trend_score"), suffix="/100")
+    bias_ma5 = _signed_percent(price.get("bias_ma5"))
+    poster.technical = [
+        item for item in (
+            ("均线", ma_summary, "positive" if "多头" in ma_summary else "negative" if "空头" in ma_summary else "neutral"),
+            ("趋势分", trend_score, _tone_for_score(_number_text(trend.get("trend_score")))),
+            ("MA5乖离", bias_ma5, "positive" if not bias_ma5.startswith("-") else "negative"),
+            ("支撑", support, "positive"),
+            ("压力", resistance, "negative"),
+        ) if item[1]
+    ]
+
+    poster.sniper = []
+    for key, label, tone in (
+        ("ideal_buy", "理想买入", "buy"),
+        ("secondary_buy", "确认买入", "secondary"),
+        ("stop_loss", "止损", "stop"),
+        ("take_profit", "目标", "target"),
+    ):
+        value = _compact_sniper_value(key, sniper.get(key))
+        if value:
+            poster.sniper.append((label, value, tone))
+
+    catalysts = intelligence.get("positive_catalysts")
+    risks = intelligence.get("risk_alerts")
+    if isinstance(catalysts, list):
+        poster.catalysts = [_compact_text(item, limit=36) for item in catalysts[:2] if _clean_value(item)]
+    if isinstance(risks, list):
+        poster.risks = [_compact_text(item, limit=36) for item in risks[:2] if _clean_value(item)]
+
+    watch_conditions = phase.get("watch_conditions")
+    poster.watch_items = [
+        item for item in (
+            ("行动窗口", _compact_text(phase.get("action_window"), limit=24), "primary"),
+            ("下次检查", _compact_text(phase.get("next_check_time"), limit=28), "secondary"),
+        ) if item[1]
+    ]
+    if isinstance(watch_conditions, list):
+        poster.watch_items.extend(
+            (f"观察 {index}", _compact_text(value, limit=31), "warning")
+            for index, value in enumerate(watch_conditions[:2], 1)
+            if _clean_value(value)
+        )
+
+    poster.no_position = _compact_position(position_advice.get("no_position"), holding=False)
+    poster.has_position = _compact_position(position_advice.get("has_position"), holding=True)
+    # The full report keeps sizing, entry and risk-control prose.  The share
+    # poster intentionally shows only the two user states above.
+    poster.position_size = ""
+    poster.entry_plan = ""
+    poster.risk_control = ""
     return poster
 
 
@@ -662,9 +907,60 @@ def _parse_index_bullets(index_section: str) -> list[tuple[str, str, str, str]]:
         if not color:
             color = "green" if any(marker in change for marker in ("↑", "+")) else "red" if any(marker in change for marker in ("↓", "-")) else ""
         indices.append((name, current, change, color))
-        if len(indices) >= 3:
+        if len(indices) >= 4:
             break
     return indices
+
+
+def _direction_items(value: object, *, limit: int = 2) -> list[str]:
+    """Extract short sector/theme labels from a verbose plan sentence."""
+
+    text = _clean_value(value, limit=220)
+    if not text:
+        return []
+    text = re.sub(r"其[一二三四][、，,:：]?", "", text)
+    clauses = [part.strip(" ，,；;") for part in re.split(r"[；;]", text) if part.strip()]
+    items: list[str] = []
+    for clause in clauses:
+        qualified = re.findall(r"的([^，,；;等]{2,20})等", clause)
+        candidates = re.findall(
+            r"(?:^|[，,])([A-Za-z0-9一-鿿]+(?:、[A-Za-z0-9一-鿿]+)*)等",
+            clause,
+        )
+        if qualified:
+            label = qualified[-1]
+        elif candidates:
+            label = candidates[-1]
+        else:
+            label = re.split(r"[，,。]", clause, maxsplit=1)[0]
+        label = re.sub(r"^(?:关注方向|回避方向)[:：]?", "", label).strip()
+        label = _compact_text(label, limit=24)
+        if label and label not in items:
+            items.append(label)
+        if len(items) >= limit:
+            break
+    return items
+
+
+def _market_fund_metrics(markdown_text: str) -> list[tuple[str, str, str]]:
+    section = _section(markdown_text, "资金与情绪", "fund flows", "liquidity & sentiment")
+    if not section:
+        return []
+    metrics: list[tuple[str, str, str]] = []
+    ratio = re.search(r"涨跌比(?:接近|约为|约)?\s*([\d.]+\s*:\s*[\d.]+)", section)
+    if ratio:
+        metrics.append(("涨跌比", ratio.group(1).replace(" ", ""), "positive"))
+    increment = re.search(
+        r"较前(?:一交易日|日).*?放量(?:超|逾)?\s*([\d.]+)\s*亿元",
+        section,
+    )
+    if increment:
+        metrics.append(("增量成交", f"+{increment.group(1)}亿", "primary"))
+    if any(term in section for term in ("科技", "科创", "半导体")) and any(
+        term in section for term in ("分歧", "冲高回落", "兑现")
+    ):
+        metrics.append(("资金风格", "科技主导·高位分歧", "warning"))
+    return metrics[:3]
 
 
 def _market_data(markdown_text: str, generated_on: date) -> MarketPoster:
@@ -678,15 +974,18 @@ def _market_data(markdown_text: str, generated_on: date) -> MarketPoster:
     poster = MarketPoster(
         title=_market_title(markdown_text),
         report_date=_extract_date(markdown_text, generated_on),
-        summary=_clean_value(quote.group(1), limit=100) if quote else "",
+        summary=_compact_text(quote.group(1), limit=58) if quote else "",
         score=score_match.group(1) if score_match else "",
         temperature=_clean_value(score_match.group(2), limit=12) if score_match and score_match.group(2) else "",
         signal=_clean_value(score_match.group(3), limit=12) if score_match and score_match.group(3) else "",
-        guidance=_labeled_value(overview, "操作建议", "Guidance", "운용 제안", "가이던스", limit=100),
+        guidance=_compact_text(
+            _labeled_value(overview, "操作建议", "Guidance", "운용 제안", "가이던스", limit=100),
+            limit=52,
+        ),
     )
     reason_text = _labeled_value(overview, "信号依据", "Drivers", "신호 근거", "동인", limit=220)
     poster.reasons = [
-        _clean_value(item, limit=72)
+        _compact_text(item, limit=34)
         for item in re.split(r"[；;]", reason_text)
         if _clean_value(item, limit=72)
     ][:3]
@@ -705,7 +1004,7 @@ def _market_data(markdown_text: str, generated_on: date) -> MarketPoster:
         name_i = next((i for i, value in enumerate(headers) if "指数" in value or "index" in value or "지수" in value), 0)
         current_i = next((i for i, value in enumerate(headers) if "最新" in value or "last" in value or "최신" in value), 1)
         change_i = next((i for i, value in enumerate(headers) if "涨跌幅" in value or "change" in value or "등락률" in value), 2)
-        for row_index, row in enumerate(index_table.rows[:3]):
+        for row_index, row in enumerate(index_table.rows[:4]):
             if len(row) > max(name_i, current_i, change_i):
                 raw_change = (
                     index_table.raw_rows[row_index][change_i]
@@ -778,19 +1077,158 @@ def _market_data(markdown_text: str, generated_on: date) -> MarketPoster:
         for row in sector_table.rows[:3]:
             if len(row) >= 3:
                 poster.sectors.append((_clean_value(row[-2], limit=20), _clean_value(row[-1], limit=12)))
+    sector_tables = [
+        table
+        for table in _parse_tables(sector_section)
+        if any(term in " ".join(table.headers).lower() for term in ("板块", "sector", "섹터"))
+    ]
+    if len(sector_tables) > 1:
+        for row in sector_tables[1].rows[:3]:
+            if len(row) >= 3:
+                poster.laggards.append(
+                    (_clean_value(row[-2], limit=20), _clean_value(row[-1], limit=12))
+                )
 
     catalyst_section = _section(markdown_text, "消息催化", "news catalysts", "뉴스 촉매")
-    poster.catalysts = _section_items(catalyst_section, limit=2) or _sentences(catalyst_section, limit=2)
+    poster.catalysts = [
+        _compact_text(item, limit=34)
+        for item in (_section_items(catalyst_section, limit=2) or _sentences(catalyst_section, limit=2))
+    ]
     plan_section = _section(markdown_text, "明日交易计划", "strategy plan", "outlook", "내일 거래 계획", "내일 계획")
-    for label in ("结论", "仓位区间", "关注方向", "回避方向", "触发失效条件", "결론", "비중 구간", "관심 방향", "회피 방향", "무효화 조건"):
+    poster.focus = _direction_items(
+        _labeled_value(plan_section, "关注方向", "focus", "관심 방향", limit=220)
+    )
+    poster.avoid = _direction_items(
+        _labeled_value(plan_section, "回避方向", "avoid", "회피 방향", limit=220)
+    )
+    poster.funds = _market_fund_metrics(markdown_text)
+    for label in ("结论", "仓位区间", "触发失效条件", "결론", "비중 구간", "무효화 조건"):
         value = _labeled_value(plan_section, label, limit=86)
         if value:
-            poster.plan.append(f"{label}：{value}")
+            poster.plan.append(_compact_text(f"{label}：{value}", limit=32))
         if len(poster.plan) >= 3:
             break
     if not poster.plan:
-        poster.plan = _section_items(plan_section, limit=3) or _sentences(plan_section, limit=3)
-    poster.risks = _section_items(_section(markdown_text, "风险提示", "risk alerts", "리스크 경보", "리스크 경고"), limit=3)
+        poster.plan = [
+            _compact_text(item, limit=32)
+            for item in (_section_items(plan_section, limit=3) or _sentences(plan_section, limit=3))
+        ]
+    poster.risks = [
+        _compact_text(item, limit=34)
+        for item in _section_items(
+            _section(markdown_text, "风险提示", "risk alerts", "리스크 경보", "리스크 경고"),
+            limit=2,
+        )
+    ]
+    return poster
+
+
+def _market_data_from_payload(
+    payload: Mapping[str, Any],
+    markdown_text: str,
+    generated_on: date,
+) -> MarketPoster:
+    """Overlay exact market metrics from the persisted market-review payload."""
+
+    poster = _market_data(markdown_text, generated_on)
+    payload_title = _clean_value(payload.get("title"), limit=36)
+    if payload_title and not _DATE_RE.match(payload_title):
+        poster.title = payload_title
+    poster.report_date = _clean_value(payload.get("date"), limit=18) or poster.report_date
+    positive_tone = (
+        "red"
+        if str(payload.get("region") or "").lower() in {"cn", "hk", "jp", "kr"}
+        else "green"
+    )
+    negative_tone = _opposite_color(positive_tone)
+
+    light = payload.get("market_light")
+    if isinstance(light, Mapping):
+        if light.get("score") is not None:
+            poster.score = _number_text(light.get("score"))
+        poster.temperature = _clean_value(light.get("temperature_label"), limit=12) or poster.temperature
+        if poster.temperature:
+            poster.signal = poster.temperature
+        dimensions = light.get("dimensions")
+        if isinstance(dimensions, Mapping):
+            for key, label in (
+                ("breadth", "赚钱效应"),
+                ("index", "指数强度"),
+                ("limit", "涨停结构"),
+            ):
+                dimension = dimensions.get(key)
+                if not isinstance(dimension, Mapping) or dimension.get("score") is None:
+                    continue
+                score = _number_text(dimension.get("score"))
+                try:
+                    numeric_score = float(dimension.get("score"))
+                except (TypeError, ValueError):
+                    numeric_score = 0
+                tone = "positive" if numeric_score >= 70 else "warning" if numeric_score >= 50 else "negative"
+                poster.dimensions.append((label, f"{score}/100", tone))
+
+    indices = payload.get("indices")
+    if isinstance(indices, list):
+        exact_indices: list[tuple[str, str, str, str]] = []
+        for item in indices[:4]:
+            if not isinstance(item, Mapping):
+                continue
+            name = _clean_value(item.get("name"), limit=18)
+            current = _number_text(item.get("current"))
+            change = _signed_percent(item.get("change_pct"))
+            if name and change:
+                exact_indices.append(
+                    (
+                        name,
+                        current,
+                        change,
+                        positive_tone if change.startswith("+") else negative_tone if change.startswith("-") else "",
+                    )
+                )
+        if exact_indices:
+            poster.indices = exact_indices
+
+    breadth = payload.get("breadth")
+    if isinstance(breadth, Mapping):
+        amount = _compact_turnover(
+            breadth.get("total_amount"),
+            breadth.get("turnover_unit"),
+        )
+        poster.breadth = [
+            item for item in (
+                ("上涨", _number_text(breadth.get("up_count")), positive_tone),
+                ("下跌", _number_text(breadth.get("down_count")), negative_tone),
+                ("涨停", _number_text(breadth.get("limit_up_count")), "hot"),
+                ("跌停", _number_text(breadth.get("limit_down_count")), negative_tone),
+                ("成交额", amount, "primary"),
+            ) if item[1]
+        ]
+
+    sectors = payload.get("sectors")
+    top_sectors = sectors.get("top") if isinstance(sectors, Mapping) else None
+    if isinstance(top_sectors, list):
+        exact_sectors: list[tuple[str, str]] = []
+        for item in top_sectors[:3]:
+            if not isinstance(item, Mapping):
+                continue
+            name = _clean_value(item.get("name"), limit=18)
+            change = _signed_percent(item.get("change_pct"))
+            if name:
+                exact_sectors.append((name, change))
+        if exact_sectors:
+            poster.sectors = exact_sectors
+    bottom_sectors = sectors.get("bottom") if isinstance(sectors, Mapping) else None
+    if isinstance(bottom_sectors, list):
+        exact_laggards: list[tuple[str, str]] = []
+        for item in bottom_sectors[:3]:
+            if not isinstance(item, Mapping):
+                continue
+            name = _clean_value(item.get("name"), limit=18)
+            change = _signed_percent(item.get("change_pct"))
+            if name:
+                exact_laggards.append((name, change))
+        if exact_laggards:
+            poster.laggards = exact_laggards
     return poster
 
 
@@ -824,7 +1262,14 @@ def _should_keep_market_fallback(markdown_text: str, data: MarketPoster) -> bool
     if any(expected and not populated for expected, populated in expected_sections):
         return True
     mapped_subsections = sum(1 for expected, populated in expected_sections if expected and populated)
-    return _meaningful_market_subsection_count(markdown_text) > mapped_subsections
+    unmapped_subsections = max(
+        0, _meaningful_market_subsection_count(markdown_text) - mapped_subsections
+    )
+    # A normal report may contain one explanatory detail section such as
+    # “资金与情绪”.  That should not duplicate the entire report in a share
+    # poster.  Keep the full fallback only when most localized sections remain
+    # outside the structured contract.
+    return unmapped_subsections > max(1, mapped_subsections)
 
 
 def _tone_for_action(action: str) -> str:
@@ -836,11 +1281,43 @@ def _tone_for_action(action: str) -> str:
     return "primary"
 
 
+def _tone_for_score(score: str) -> str:
+    try:
+        value = float(score)
+    except (TypeError, ValueError):
+        return "primary"
+    if value > 60:
+        return "positive"
+    if value < 40:
+        return "negative"
+    return "warning"
+
+
+def _tone_for_trend(trend: str) -> str:
+    normalized = (trend or "").lower()
+    if any(term in normalized for term in ("看多", "bull", "uptrend")):
+        return "positive"
+    if any(term in normalized for term in ("看空", "bear", "downtrend")):
+        return "negative"
+    return "primary"
+
+
+def _stock_positive_tone(code: str) -> str:
+    normalized = (code or "").strip().upper()
+    red_up_market = bool(
+        re.fullmatch(r"\d{6}", normalized)
+        or re.match(r"^(?:SH|SZ|BJ|HK)\d+", normalized)
+        or re.search(r"\.(?:SH|SS|SZ|BJ|HK|T|TW|TWO|KS|KQ)$", normalized)
+    )
+    return "red" if red_up_market else "green"
+
+
 def _metric_cards(items: Iterable[tuple[str, str, str]], class_name: str = "") -> str:
     cards = []
     for label, value, tone in items:
+        classes = " ".join(part for part in ("metric", class_name, tone) if part)
         cards.append(
-            f'<div class="metric {class_name} {_escape(tone)}"><span>{_escape(label)}</span><strong>{_escape(value)}</strong></div>'
+            f'<div class="{_escape(classes)}"><span>{_escape(label)}</span><strong>{_escape(value)}</strong></div>'
         )
     return "".join(cards)
 
@@ -868,14 +1345,25 @@ def _render_markdown_fragment(markdown_text: str) -> str:
 
 def _stock_body(data: StockPoster, fallback_html: str) -> str:
     tone = _tone_for_action(data.action)
-    score = f'<div class="signal-score"><span>评分</span><strong>{_escape(data.score)}</strong><small>/100</small></div>' if data.score else ""
-    trend = f'<div class="signal-trend"><span>趋势</span><strong>{_escape(data.trend)}</strong></div>' if data.trend else ""
+    score_tone = _tone_for_score(data.score)
+    trend_tone = _tone_for_trend(data.trend)
+    score = f'<div class="signal-score {score_tone}"><span>评分</span><strong>{_escape(data.score)}</strong><small>/100</small></div>' if data.score else ""
+    confidence = f'<small>置信度 {_escape(data.confidence)}</small>' if data.confidence else ""
+    trend = f'<div class="signal-trend {trend_tone}"><span>趋势</span><strong>{_escape(data.trend)}</strong>{confidence}</div>' if data.trend else ""
     action = f'<div class="action-chip {tone}">{_escape(data.action)}</div>' if data.action else ""
     signal_row = f'<div class="signal-row">{action}{score}{trend}</div>' if action or score or trend else ""
     conclusion = _section_html("核心结论", "◎", f'<div class="conclusion">{_escape(data.conclusion)}</div>') if data.conclusion else ""
     snapshot = _section_html("市场快照", "▥", f'<div class="metric-grid snapshot-grid">{_metric_cards(data.snapshot)}</div>') if data.snapshot else ""
     sniper = _section_html("执行计划", "◎", f'<div class="metric-grid sniper-grid sniper-table">{_metric_cards(data.sniper, "sniper")}</div>') if data.sniper else ""
     technical = _section_html("技术参考", "⌁", f'<div class="metric-grid technical-grid">{_metric_cards(data.technical)}</div>') if data.technical else ""
+    watch = _section_html(
+        "下一步观察",
+        "✓",
+        '<div class="watch-grid">' + "".join(
+            f'<div class="watch-card {tone_name}"><span>{_escape(label)}</span><p>{_escape(value)}</p></div>'
+            for label, value, tone_name in data.watch_items
+        ) + "</div>",
+    ) if data.watch_items else ""
     insight_cards = ""
     if data.catalysts:
         insight_cards += f'<div class="insight positive"><h3>利好催化</h3>{_list_html(data.catalysts)}</div>'
@@ -895,9 +1383,9 @@ def _stock_body(data: StockPoster, fallback_html: str) -> str:
     if data.risk_control:
         position_rows += f'<div class="position-row"><span class="pill negative">风控</span><p>{_escape(data.risk_control)}</p></div>'
     positions = _section_html("持仓建议", "▣", f'<div class="position-box">{position_rows}</div>') if position_rows else ""
-    structured = any((signal_row, conclusion, snapshot, sniper, technical, insights, positions))
+    structured = any((signal_row, conclusion, snapshot, sniper, technical, watch, insights, positions))
     fallback = f'<section class="report-fallback"><article class="report-content">{fallback_html}</article></section>' if not structured else ""
-    return f"{signal_row}{conclusion}{snapshot}{sniper}{technical}{insights}{positions}{fallback}"
+    return f"{signal_row}{conclusion}{snapshot}{sniper}{technical}{watch}{insights}{positions}{fallback}"
 
 
 def _market_body(data: MarketPoster, fallback_html: str, markdown_text: str) -> str:
@@ -908,8 +1396,7 @@ def _market_body(data: MarketPoster, fallback_html: str, markdown_text: str) -> 
             '<div class="signal-main"><span>市场信号</span>'
             f'<strong>{_escape(data.score)}</strong><small>/100</small></div>'
             f'<div class="market-label">{_escape(data.signal or data.temperature)}</div>'
-            f'<div class="signal-reasons"><span>信号依据</span>{_list_html(data.reasons)}</div>'
-            f'<p class="signal-guidance">{_escape(data.guidance or data.summary)}</p>'
+            f'<div class="signal-guidance"><span>今日结论</span><p>{_escape(data.guidance or data.summary)}</p></div>'
             '</section>'
         )
     indices = ""
@@ -919,23 +1406,50 @@ def _market_body(data: MarketPoster, fallback_html: str, markdown_text: str) -> 
             cards.append(f'<div class="index-card"><span>{_escape(name)}</span><strong class="{color}">{_escape(change)}</strong><small>{_escape(current)}</small></div>')
         indices = f'<div class="index-grid">{"".join(cards)}</div>'
     breadth = _section_html("市场宽度", "↕", f'<div class="metric-grid breadth-grid">{_metric_cards(data.breadth)}</div>') if data.breadth else ""
+    dimensions = _section_html(
+        "信号拆解",
+        "◫",
+        f'<div class="metric-grid dimension-grid">{_metric_cards(data.dimensions)}</div>',
+    ) if data.dimensions else ""
     sector_rows = "".join(
         f'<div class="ranking-row"><b>{index:02d}</b><span>{_escape(name)}</span><strong>{_escape(change)}</strong></div>'
         for index, (name, change) in enumerate(data.sectors, 1)
     )
-    sectors = _section_html("强势板块", "◆", f'<div class="ranking">{sector_rows}</div>') if sector_rows else ""
-    catalysts = _section_html("消息催化", "▤", _list_html(data.catalysts)) if data.catalysts else ""
-    plan = _section_html("明日计划", "✓", _list_html(data.plan)) if data.plan else ""
-    dual = (
-        f'<div class="market-two-column"><div class="market-left">{sectors}</div>'
-        f'<div class="market-right">{catalysts}{plan}</div></div>'
-        if sectors or catalysts or plan else ""
+    laggard_rows = "".join(
+        f'<div class="ranking-row lagging"><b>{index:02d}</b><span>{_escape(name)}</span><strong>{_escape(change)}</strong></div>'
+        for index, (name, change) in enumerate(data.laggards, 1)
     )
+    sectors = _section_html("强势板块", "◆", f'<div class="ranking">{sector_rows}</div>') if sector_rows else ""
+    laggards = _section_html("弱势板块", "◇", f'<div class="ranking">{laggard_rows}</div>') if laggard_rows else ""
+    sector_dual = (
+        f'<div class="market-two-column"><div class="market-left">{sectors}</div>'
+        f'<div class="market-right">{laggards}</div></div>'
+        if sectors or laggards else ""
+    )
+    focus_rows = "".join(
+        f'<div class="focus-row"><b>关注</b><span>{_escape(value)}</span></div>'
+        for value in data.focus
+    ) + "".join(
+        f'<div class="focus-row avoid"><b>回避</b><span>{_escape(value)}</span></div>'
+        for value in data.avoid
+    )
+    fund_rows = "".join(
+        f'<div class="fund-row {_escape(tone)}"><span>{_escape(label)}</span><strong>{_escape(value)}</strong></div>'
+        for label, value, tone in data.funds
+    )
+    focus = _section_html("重点跟踪", "◎", f'<div class="focus-list">{focus_rows}</div>') if focus_rows else ""
+    funds = _section_html("资金观察", "↗", f'<div class="fund-list">{fund_rows}</div>') if fund_rows else ""
+    detail_dual = (
+        f'<div class="market-two-column market-details"><div class="market-left">{focus}</div>'
+        f'<div class="market-right">{funds}</div></div>'
+        if focus or funds else ""
+    )
+    plan = _section_html("明日策略", "✓", _list_html(data.plan), "strategy-strip") if data.plan else ""
     risks = _section_html("风险提示", "!", _list_html(data.risks), "risk-strip") if data.risks else ""
-    structured = any((signal, indices, breadth, dual, risks))
+    structured = any((signal, indices, breadth, dimensions, sector_dual, detail_dual, plan, risks))
     keep_fallback = not structured or _should_keep_market_fallback(markdown_text, data)
     fallback = f'<section class="report-fallback"><article class="report-content">{fallback_html}</article></section>' if keep_fallback else ""
-    return f"{signal}{indices}{breadth}{dual}{risks}{fallback}"
+    return f"{signal}{indices}{breadth}{dimensions}{sector_dual}{detail_dual}{plan}{risks}{fallback}"
 
 
 def _generic_body(report_html: str) -> str:
@@ -956,28 +1470,39 @@ def _multi_market_body(segments: list[MarketSegment], generated_on: date) -> str
     return "".join(blocks)
 
 
-def _footer(project_qr: str, xiaohongshu_qr: str, source_line: str) -> str:
+def _footer(xiaohongshu_qr: str, source_line: str) -> str:
     return f"""
     <footer class="poster-footer">
-      <div class="footer-brand"><strong>DSA</strong><span>AI 股票分析</span><small>开源股票智能分析系统</small><small class="project-url">{_escape(PROJECT_URL)}</small></div>
-      <div class="qr-card"><div class="qr-frame"><img src="{project_qr}" alt="项目主页二维码"></div><span>GitHub 项目</span></div>
-      <div class="qr-card"><div class="qr-frame"><img src="{xiaohongshu_qr}" alt="小红书二维码"></div><span>小红书</span></div>
+      <div class="footer-brand">
+        <div class="footer-title"><strong>DSA</strong><span>{_escape(PROJECT_DISPLAY_NAME)}</span></div>
+        <small>让股票研究更简单、更高效</small>
+        <div class="repo-line">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.64 0 8.13c0 3.59 2.29 6.64 5.47 7.71.4.08.55-.18.55-.39 0-.19-.01-.83-.01-1.51-2.01.38-2.53-.5-2.69-.96-.09-.23-.48-.96-.82-1.15-.28-.15-.68-.53-.01-.54.63-.01 1.08.59 1.23.83.72 1.23 1.87.88 2.33.67.07-.53.28-.88.51-1.08-1.78-.21-3.64-.91-3.64-4.02 0-.89.31-1.62.82-2.19-.08-.21-.36-1.04.08-2.16 0 0 .67-.22 2.2.84A7.45 7.45 0 0 1 8 3.91c.68 0 1.36.09 2 .27 1.53-1.06 2.2-.84 2.2-.84.44 1.12.16 1.95.08 2.16.51.57.82 1.3.82 2.19 0 3.12-1.87 3.81-3.65 4.02.29.25.54.74.54 1.5 0 1.08-.01 1.95-.01 2.22 0 .22.15.47.55.39A8.15 8.15 0 0 0 16 8.13C16 3.64 12.42 0 8 0Z"/></svg>
+          <div><em>开源项目 · GitHub</em><b>{_escape(PROJECT_REPOSITORY)}</b></div>
+        </div>
+      </div>
+      <div class="qr-card"><div class="qr-frame"><img src="{xiaohongshu_qr}" alt="小红书二维码"></div><span><b>小红书</b> {_escape(XIAOHONGSHU_HANDLE)}</span></div>
     </footer>
     <div class="disclaimer">AI 生成，仅供研究交流，不构成投资建议。市场有风险，决策需谨慎。{_escape(source_line)}</div>
     """
 
 
-def build_share_image_html(markdown_text: str, *, generated_on: Optional[date] = None) -> str:
+def build_share_image_html(
+    markdown_text: str,
+    *,
+    generated_on: Optional[date] = None,
+    structured_payload: Optional[Mapping[str, Any]] = None,
+) -> str:
     """Build a deterministic 1080px stock, market, or dashboard share poster.
 
-    Data is populated from the stable Markdown emitted by ``NotificationService``
-    and ``MarketAnalyzer``.  Unknown or unavailable fields are omitted.  Both QR
-    codes are embedded as data URIs so rendering never depends on network access.
+    Structured analysis JSON is preferred when available; stable Markdown remains
+    the compatibility fallback. Unknown fields are omitted. The Xiaohongshu QR is
+    embedded as a data URI so rendering never depends on network access.
     """
 
     generated = generated_on or date.today()
     headings = _extract_sections(markdown_text)
-    first_title = headings[0][0] if headings else "Daily Stock Analysis"
+    first_title = headings[0][0] if headings else "股票智能分析报告"
     stock_headings = _stock_headings(markdown_text)
     market_segments = _market_segments(markdown_text)
     candidate_market_titles = headings[:2]
@@ -998,12 +1523,20 @@ def build_share_image_html(markdown_text: str, *, generated_on: Optional[date] =
             subtitle = "按市场分段展示指数、主线与风险边界"
             content = _multi_market_body(market_segments, generated)
         else:
-            data = _market_data(markdown_text, generated)
+            data = (
+                _market_data_from_payload(structured_payload, markdown_text, generated)
+                if isinstance(structured_payload, Mapping)
+                else _market_data(markdown_text, generated)
+            )
             title = data.title
             subtitle = data.summary or "指数、宽度、主线与风险的收盘复盘"
             content = _market_body(data, fallback_html, markdown_text)
     elif report_kind == "stock":
-        data = _stock_data(markdown_text, generated)
+        data = (
+            _stock_data_from_payload(structured_payload, markdown_text, generated)
+            if isinstance(structured_payload, Mapping)
+            else _stock_data(markdown_text, generated)
+        )
         title = data.title
         subtitle = "个股决策卡 · 结论、点位与风险一图读懂"
         content = _stock_body(data, fallback_html)
@@ -1013,8 +1546,7 @@ def build_share_image_html(markdown_text: str, *, generated_on: Optional[date] =
         subtitle = "多股决策摘要"
         content = _generic_body(fallback_html)
 
-    project_qr = _asset_data_uri("project_qr.png", "image/png")
-    xiaohongshu_qr = _asset_data_uri("xiaohongshu_qr.png", "image/png")
+    xiaohongshu_qr = _asset_data_uri("xiaohongshu_qr.jpg", "image/jpeg")
 
     return f"""<!DOCTYPE html>
 <html lang="zh-CN">
@@ -1033,18 +1565,18 @@ def build_share_image_html(markdown_text: str, *, generated_on: Optional[date] =
     .brand-mark {{ display: inline-block; width: 39px; height: 40px; vertical-align: middle; white-space: nowrap; }} .brand-mark i {{ display:inline-block; width:8px; margin-right:4px; border-radius:5px 5px 2px 2px; vertical-align:bottom; }} .brand-mark i:nth-child(1){{height:18px;background:#ff3b30}} .brand-mark i:nth-child(2){{height:28px;background:#00a86b}} .brand-mark i:nth-child(3){{height:40px;margin:0;background:#1677ff}}
     .meta {{ text-align:right; color:#3e506c; font-size:21px; }} .date-chip {{ display:inline-block; padding:10px 17px; border:1px solid #aec4e7; border-radius:16px; background:rgba(255,255,255,.85); }}
     .hero {{ min-height: 145px; margin-bottom: 24px; padding: 10px 10px 20px; }} .hero h1 {{ margin:0 0 8px; max-width:820px; font-size:68px; line-height:1.15; letter-spacing:-3px; }} .hero .code {{ margin-left:18px; color:#1768e8; font-size:38px; letter-spacing:0; white-space:nowrap; }} .hero p {{ margin:0; max-width:810px; color:#3c4f70; font-size:24px; }}
-    .signal-row {{ display:table; width:100%; margin:0 0 26px; border-spacing:14px 0; table-layout:fixed; }} .signal-row>div {{ display:table-cell; height:88px; padding:14px 20px; border:1px solid #cad8ec; border-radius:16px; vertical-align:middle; background:rgba(255,255,255,.92); }} .signal-row .action-chip {{ width:24%; color:#fff; text-align:center; font-size:38px; font-weight:850; background:#1974ed; box-shadow:0 10px 24px rgba(25,116,237,.22); }} .signal-row .action-chip.positive{{background:linear-gradient(135deg,#118a55,#19b66f)}} .signal-row .action-chip.negative{{background:linear-gradient(135deg,#e63b45,#ff5a52)}} .signal-score span,.signal-trend span{{margin-right:14px;font-weight:750}} .signal-score strong{{color:#0da15d;font-size:41px}} .signal-score small{{color:#53627b;font-size:20px}} .signal-trend strong{{color:#0a9c58;font-size:30px}}
+    .signal-row {{ display:table; width:100%; margin:0 0 26px; border-spacing:14px 0; table-layout:fixed; }} .signal-row>div {{ display:table-cell; height:88px; padding:14px 20px; border:1px solid #cad8ec; border-radius:16px; vertical-align:middle; background:rgba(255,255,255,.92); }} .signal-row .action-chip {{ width:24%; color:#fff; text-align:center; font-size:38px; font-weight:850; background:#1974ed; box-shadow:0 10px 24px rgba(25,116,237,.22); }} .signal-row .action-chip.positive{{background:linear-gradient(135deg,#118a55,#19b66f)}} .signal-row .action-chip.negative{{background:linear-gradient(135deg,#e63b45,#ff5a52)}} .signal-score span,.signal-trend span{{margin-right:14px;font-weight:750}} .signal-score strong{{color:#0da15d;font-size:41px}} .signal-score.warning strong{{color:#f59e0b}} .signal-score.negative strong{{color:#ed343d}} .signal-score small{{color:#53627b;font-size:20px}} .signal-trend strong{{color:#1768e8;font-size:30px}} .signal-trend>small{{display:block;margin-top:3px;color:#64748b;font-size:15px}} .signal-trend.positive strong{{color:#0a9c58}} .signal-trend.negative strong{{color:#ed343d}}
     .poster-section {{ margin:0 10px 25px; }} .poster-section h2 {{ margin:0 0 12px; font-size:29px; line-height:1.3; }} .poster-section h2 b {{ display:inline-block; width:34px; color:#176ff2; font-family:Arial,sans-serif; }}
     .conclusion {{ padding:16px 24px; border:1.5px solid #72a8ff; border-radius:14px; color:#13294e; background:linear-gradient(90deg,#f9fcff,#eff6ff); font-size:25px; font-weight:600; }}
-    .metric-grid {{ display:table; width:100%; border-spacing:12px 0; table-layout:fixed; }} .metric {{ display:table-cell; height:112px; padding:14px 12px; border:1px solid #d0dced; border-radius:16px; text-align:center; vertical-align:middle; background:rgba(255,255,255,.92); }} .metric span {{ display:block; margin-bottom:5px; color:#233653; font-weight:700; }} .metric strong {{ display:block; color:#10254b; font-size:31px; line-height:1.25; overflow-wrap:anywhere; }} .metric.primary strong{{color:#1768e8}} .metric.up strong,.metric.positive strong,.metric.buy strong,.metric.green strong{{color:#0a9c58}} .metric.down strong,.metric.negative strong,.metric.stop strong,.metric.red strong{{color:#ed343d}} .metric.hot strong{{color:#ff4a36}} .metric.secondary strong{{color:#1768e8}} .metric.target strong{{color:#ff8a00}} .sniper-grid .metric{{height:128px}} .sniper-grid .metric strong{{font-size:23px}} .technical-grid .metric strong{{font-size:22px}}
-    .two-column {{ display:table; width:100%; border-spacing:12px 0; table-layout:fixed; }} .insight {{ display:table-cell; width:50%; padding:15px 20px; border:1px solid #d5e1f0; border-radius:15px; background:#fff; vertical-align:top; }} .insight.positive{{background:#f4fcf7}} .insight.negative{{background:#fff7f7}} .insight h3{{margin:0 0 6px;color:#0a9c58;font-size:23px}} .insight.negative h3{{color:#ed343d}} ul{{margin:4px 0;padding-left:25px}} li{{margin:5px 0}}
+    .metric-grid {{ display:table; width:100%; border-spacing:12px 0; table-layout:fixed; }} .metric {{ display:table-cell; height:112px; padding:14px 12px; border:1px solid #d0dced; border-radius:16px; text-align:center; vertical-align:middle; background:rgba(255,255,255,.92); }} .metric span {{ display:block; margin-bottom:5px; color:#233653; font-weight:700; }} .metric strong {{ display:block; color:#10254b; font-size:31px; line-height:1.25; overflow-wrap:break-word; word-break:normal; }} .metric.primary strong{{color:#1768e8}} .metric.up strong,.metric.positive strong,.metric.buy strong,.metric.green strong{{color:#0a9c58}} .metric.down strong,.metric.negative strong,.metric.stop strong,.metric.red strong{{color:#ed343d}} .metric.hot strong{{color:#ff4a36}} .metric.secondary strong{{color:#1768e8}} .metric.target strong{{color:#ff8a00}} .sniper-grid .metric{{height:112px}} .sniper-grid .metric strong{{font-size:29px}} .technical-grid .metric strong{{font-size:26px}}
+    .watch-grid{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px 12px}} .watch-card{{min-height:78px;padding:12px 16px;border:1px solid #d2deef;border-left:4px solid #1768e8;border-radius:13px;background:linear-gradient(145deg,#f7faff,#fff)}} .watch-card.warning{{border-left-color:#f59e0b}} .watch-card.secondary{{border-left-color:#6d5dfc}} .watch-card span{{display:block;color:#52647f;font-size:16px;font-weight:750}} .watch-card p{{margin:4px 0 0;color:#152a4d;font-size:18px;font-weight:650;line-height:1.35}} .two-column {{ display:table; width:100%; border-spacing:12px 0; table-layout:fixed; }} .insight {{ display:table-cell; width:50%; padding:15px 20px; border:1px solid #d5e1f0; border-radius:15px; background:#fff; vertical-align:top; }} .insight.positive{{background:linear-gradient(145deg,#f1fff7,#fff)}} .insight.negative{{background:linear-gradient(145deg,#fff4f4,#fff)}} .insight h3{{margin:0 0 6px;color:#0a9c58;font-size:23px}} .insight.negative h3{{color:#ed343d}} .insight ul{{font-size:19px}} ul{{margin:4px 0;padding-left:25px}} li{{margin:5px 0}}
     .position-box {{ overflow:hidden; border:1px solid #d5e1f0; border-radius:15px; background:#fff; }} .position-row {{ display:table; width:100%; padding:10px 18px; border-bottom:1px solid #e5ecf5; }} .position-row:last-child{{border:0}} .position-row .pill,.position-row p{{display:table-cell;vertical-align:middle}} .position-row .pill{{width:92px;padding:5px 10px;border-radius:8px;color:#fff;text-align:center;font-size:18px;font-weight:750;background:#357dea}} .position-row .pill.warning{{background:#f2a20c}} .position-row .pill.positive{{background:#13a365}} .position-row .pill.negative{{background:#eb3e47}} .position-row p{{margin:0;padding-left:16px}}
-    .market-signal {{ display:table; position:relative; width:calc(100% - 20px); min-height:190px; margin:0 10px 24px; padding:18px 27px 52px; border:1px solid #d0dced; border-radius:20px; background:rgba(255,255,255,.94); box-shadow:0 10px 32px rgba(18,71,153,.07); table-layout:fixed; }} .signal-main,.market-label,.signal-reasons{{display:table-cell;vertical-align:middle}} .signal-main{{width:28%}} .market-signal span{{display:block;font-weight:750}} .market-signal strong{{color:#1768e8;font-size:82px;line-height:1.15}} .market-signal small{{font-size:34px}} .market-label{{width:18%;padding:8px 13px;border:1px solid #23ad69;border-radius:9px;color:#0d9958;text-align:center;font-weight:750;background:#f1fff7}} .signal-reasons{{width:54%;padding-left:28px}} .signal-reasons ul{{margin-top:7px;font-size:19px}} .signal-guidance{{position:absolute;left:27px;right:27px;bottom:14px;margin:0;color:#435572;font-size:20px}}
-    .index-grid {{ display:table; width:100%; margin:0 0 24px; border-spacing:12px 0; table-layout:fixed; }} .index-card{{display:table-cell;padding:16px 22px;border:1px solid #d0dced;border-radius:17px;background:#fff}} .index-card span,.index-card small{{display:block}} .index-card span{{font-weight:750}} .index-card strong{{display:block;margin:8px 0 0;font-size:36px}} .index-card strong.red{{color:#ed3f36}} .index-card strong.green{{color:#0a9c58}} .index-card small{{color:#3d506f;font-size:20px}}
-    .breadth-grid .metric strong{{font-size:29px}} .market-two-column{{display:table;width:calc(100% - 20px);margin:0 10px 24px;border-spacing:7px 0;table-layout:fixed}} .market-left,.market-right{{display:table-cell;width:50%;vertical-align:top}} .market-two-column .poster-section{{margin:0 0 14px;padding:18px 20px;border:1px solid #d3dfef;border-radius:18px;background:#fff}} .ranking-row{{display:table;width:100%;padding:11px 0;border-bottom:1px solid #e6edf6}} .ranking-row:last-child{{border:0}} .ranking-row>*{{display:table-cell;vertical-align:middle}} .ranking-row b{{width:44px;color:#fff;border-radius:9px;text-align:center;background:#1677ff}} .ranking-row span{{padding-left:13px}} .ranking-row strong{{text-align:right;color:#ed3f36}}
-    .risk-strip{{padding:14px 20px;border:1px solid #ffc5c5;border-radius:16px;background:#fff6f6}} .risk-strip h2{{color:#e7373f}} .risk-strip ul{{display:table;width:100%;padding-left:25px}} .risk-strip li{{display:table-cell;width:33%;padding-right:20px}}
+    .market-signal {{ display:table; width:calc(100% - 20px); min-height:154px; margin:0 10px 24px; padding:20px 27px; border:1px solid #bfd4f4; border-radius:22px; background:linear-gradient(135deg,#fff 0%,#f1f7ff 58%,#ecfff6 100%); box-shadow:0 12px 34px rgba(18,71,153,.08); table-layout:fixed; }} .signal-main,.market-label,.signal-guidance{{display:table-cell;vertical-align:middle}} .signal-main{{width:25%}} .market-signal span{{display:block;font-weight:750}} .market-signal strong{{color:#1768e8;font-size:74px;line-height:1.05}} .market-signal small{{font-size:30px}} .market-label{{width:19%;padding:9px 12px;border:1px solid #23ad69;border-radius:10px;color:#0d9958;text-align:center;font-size:23px;font-weight:800;background:#f1fff7}} .signal-guidance{{width:56%;padding-left:28px;color:#233653}} .signal-guidance span{{color:#1768e8;font-size:18px;letter-spacing:1px}} .signal-guidance p{{margin:6px 0 0;font-size:23px;font-weight:700;line-height:1.45}}
+    .index-grid {{ display:table; width:100%; margin:0 0 24px; border-spacing:10px 0; table-layout:fixed; }} .index-card{{display:table-cell;padding:16px 18px;border:1px solid #d0dced;border-radius:18px;background:linear-gradient(160deg,#fff,#f6f9ff);box-shadow:0 8px 22px rgba(25,78,153,.05)}} .index-card span,.index-card small{{display:block}} .index-card span{{font-weight:750}} .index-card strong{{display:block;margin:8px 0 0;font-size:35px}} .index-card strong.red{{color:#ed3f36}} .index-card strong.green{{color:#0a9c58}} .index-card small{{color:#3d506f;font-size:19px}}
+    .breadth-grid .metric{{background:linear-gradient(160deg,#fff,#f7faff)}} .breadth-grid .metric strong{{font-size:29px}} .dimension-grid .metric{{height:94px;background:linear-gradient(145deg,#f7faff,#fff)}} .dimension-grid .metric strong{{font-size:33px}} .market-two-column{{display:table;width:calc(100% - 20px);margin:0 10px 24px;border-spacing:8px 0;table-layout:fixed}} .market-left,.market-right{{display:table-cell;width:50%;vertical-align:top}} .market-two-column .poster-section{{min-height:238px;margin:0;padding:20px 22px;border:1px solid #d3dfef;border-radius:19px;background:linear-gradient(160deg,#fff,#f8fbff)}} .ranking-row{{display:table;width:100%;padding:13px 0;border-bottom:1px solid #e6edf6}} .ranking-row:last-child{{border:0}} .ranking-row>*{{display:table-cell;vertical-align:middle}} .ranking-row b{{width:44px;color:#fff;border-radius:9px;text-align:center;background:linear-gradient(135deg,#1677ff,#6a5cff)}} .ranking-row:nth-child(2) b{{background:linear-gradient(135deg,#ff8a00,#ffb020)}} .ranking-row:nth-child(3) b{{background:linear-gradient(135deg,#12a66a,#37c98a)}} .ranking-row span{{padding-left:13px;font-weight:700}} .ranking-row strong{{text-align:right;color:#ed3f36}} .ranking-row.lagging b{{background:linear-gradient(135deg,#64748b,#94a3b8)}} .ranking-row.lagging strong{{color:#0a9c58}} .market-details .poster-section{{min-height:214px}} .focus-row,.fund-row{{display:table;width:100%;padding:10px 0;border-bottom:1px solid #e6edf6}} .focus-row:last-child,.fund-row:last-child{{border:0}} .focus-row b,.focus-row span,.fund-row span,.fund-row strong{{display:table-cell;vertical-align:middle}} .focus-row b{{width:66px;color:#fff;border-radius:8px;text-align:center;background:#1677ff}} .focus-row.avoid b{{background:#ef4444}} .focus-row span{{padding-left:14px;font-weight:700}} .fund-row span{{color:#52647f}} .fund-row strong{{text-align:right;color:#1768e8}} .fund-row.positive strong{{color:#0a9c58}} .fund-row.warning strong{{color:#f59e0b}} .strategy-strip{{padding:16px 22px;border:1px solid #cbdcf4;border-radius:17px;background:linear-gradient(90deg,#f6faff,#fff)}} .strategy-strip ul{{display:table;width:100%;padding-left:25px}} .strategy-strip li{{display:table-cell;width:33.33%;padding-right:20px;font-size:19px;vertical-align:top}}
+    .risk-strip{{padding:16px 22px;border:1px solid #ffc5c5;border-radius:17px;background:linear-gradient(90deg,#fff3f3,#fffafa)}} .risk-strip h2{{color:#e7373f}} .risk-strip ul{{display:table;width:100%;padding-left:25px}} .risk-strip li{{display:table-cell;width:50%;padding-right:24px;font-size:19px}}
     .report-fallback {{ margin:0 10px 26px; padding:24px 28px; border:1px solid #d5e1f0; border-radius:18px; background:#fff; }} .report-content h1,.report-content h2,.report-content h3{{color:#153d78}} .report-content h2{{font-size:29px}} .report-content h3{{font-size:25px}} .report-content table{{width:100%;border-collapse:collapse;font-size:19px}} .report-content th,.report-content td{{padding:10px;border:1px solid #dbe4f1}} .report-content th{{background:#eef4fc}} .report-content blockquote{{margin:15px 0;padding:12px 18px;border-left:5px solid #4385ef;background:#f3f7fd}}
-    .poster-footer {{ display:table; width:100%; margin-top:20px; padding:20px 34px 8px; border-top:1px solid #ccdaec; table-layout:fixed; }} .footer-brand,.qr-card{{display:table-cell;vertical-align:middle}} .footer-brand{{width:50%}} .footer-brand strong,.footer-brand span,.footer-brand small{{display:block}} .footer-brand strong{{color:#1768e8;font-size:52px;font-style:italic}} .footer-brand span{{font-size:29px;font-weight:800}} .footer-brand small{{color:#536683}} .footer-brand .project-url{{margin-top:5px;color:#8795aa;font-size:12px}} .qr-card{{width:25%;text-align:center;font-weight:750}} .qr-frame{{width:172px;height:172px;margin:0 auto 5px;padding:6px;border:1px solid #d3deed;border-radius:14px;background:#fff}} .qr-frame img{{display:block;width:160px;height:160px;object-fit:contain;image-rendering:pixelated}} .disclaimer{{margin:8px -34px -24px;padding:10px 34px;color:#285b9d;font-size:15px;text-align:center;background:#eaf3ff}}
+    .poster-footer {{ display:table; width:100%; margin-top:18px; padding:14px 34px 5px; border-top:1px solid #ccdaec; table-layout:fixed; }} .footer-brand,.qr-card{{display:table-cell;vertical-align:middle}} .footer-brand{{width:74%;padding-left:6px}} .footer-title{{display:flex;align-items:baseline;gap:15px}} .footer-title strong{{color:#1768e8;font-size:43px;font-style:italic;line-height:1}} .footer-title span{{font-size:24px;font-weight:800}} .footer-brand>small{{display:block;margin-top:4px;color:#536683;font-size:16px}} .repo-line{{display:flex;align-items:center;gap:9px;margin-top:11px;color:#111827}} .repo-line svg{{width:25px;height:25px;flex:none;fill:currentColor}} .repo-line div{{min-width:0}} .repo-line em,.repo-line b{{display:block;font-style:normal}} .repo-line em{{margin-bottom:1px;color:#64748b;font-size:12px;letter-spacing:.6px}} .repo-line b{{font-size:16px;line-height:1.15;white-space:nowrap}} .qr-card{{width:26%;text-align:center;font-size:16px;font-weight:750;line-height:1.2}} .qr-card>span b{{color:#ff2442}} .qr-frame{{width:132px;height:132px;margin:0 auto 5px;padding:4px;border:1px solid #d3deed;border-radius:13px;background:#fff}} .qr-frame img{{display:block;width:122px;height:122px;object-fit:contain}} .disclaimer{{margin:6px -34px -24px;padding:8px 34px;color:#285b9d;font-size:14px;text-align:center;background:#eaf3ff}}
   </style>
 </head>
 <body>
@@ -1052,10 +1584,18 @@ def build_share_image_html(markdown_text: str, *, generated_on: Optional[date] =
     <header class="poster-header"><div class="brand"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span><strong>DSA</strong><em>|</em> AI 股票分析</div><div class="meta"><span class="date-chip">{_escape(stamp)}</span></div></header>
     <section class="hero"><h1>{_escape(title)}{f'<span class="code">{_escape(data.code)}</span>' if report_kind == 'stock' and data.code else ''}</h1><p>{_escape(subtitle)}</p></section>
     {content}
-    {_footer(project_qr, xiaohongshu_qr, source_line)}
+    {_footer(xiaohongshu_qr, source_line)}
   </main>
 </body>
 </html>"""
 
 
-__all__ = ["PROJECT_URL", "XIAOHONGSHU_URL", "build_share_image_html"]
+__all__ = [
+    "PROJECT_REPOSITORY",
+    "PROJECT_DISPLAY_NAME",
+    "PROJECT_URL",
+    "XIAOHONGSHU_HANDLE",
+    "XIAOHONGSHU_ID",
+    "XIAOHONGSHU_URL",
+    "build_share_image_html",
+]

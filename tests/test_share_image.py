@@ -5,10 +5,15 @@ from pathlib import Path
 
 import pytest
 
-from src.share_image import PROJECT_URL, build_share_image_html
+from src.share_image import (
+    PROJECT_DISPLAY_NAME,
+    PROJECT_REPOSITORY,
+    XIAOHONGSHU_HANDLE,
+    build_share_image_html,
+)
 
 
-def test_stock_share_image_has_brand_content_and_two_embedded_qr_codes():
+def test_stock_share_image_has_brand_content_and_real_xiaohongshu_qr():
     html = build_share_image_html(
         "# 贵州茅台 600519 分析报告\n\n## 核心判断\n\n- 趋势偏多\n",
         generated_on=date(2026, 7, 31),
@@ -18,14 +23,169 @@ def test_stock_share_image_has_brand_content_and_two_embedded_qr_codes():
     assert "个股决策卡" in html
     assert "贵州茅台" in html
     assert '<span class="code">600519</span>' in html
-    assert html.count('class="qr-frame"') == 2
-    assert "data:image/png;base64," in html
-    assert html.count("data:image/png;base64,") == 2
-    assert "项目主页二维码" in html
+    assert html.count('class="qr-frame"') == 1
+    assert html.count("data:image/jpeg;base64,") == 1
+    assert "项目主页二维码" not in html
+    assert "GitHub 项目" not in html
+    assert PROJECT_REPOSITORY in html
     assert "小红书二维码" in html
-    assert PROJECT_URL in html
+    assert PROJECT_DISPLAY_NAME in html
+    assert XIAOHONGSHU_HANDLE in html
+    assert f"<b>小红书</b> {XIAOHONGSHU_HANDLE}" in html
     assert "2026-07-31" in html
     assert html.count("<h1>") == 1
+
+
+def test_stock_share_image_prefers_structured_json_and_compacts_trade_points():
+    payload = {
+        "name": "中钨高新",
+        "code": "000657",
+        "sentiment_score": 40,
+        "trend_prediction": "看空",
+        "confidence_level": "中",
+        "operation_advice": "观望",
+        "current_price": 49.51,
+        "change_pct": 2.29,
+        "dashboard": {
+            "core_conclusion": {
+                "one_sentence": "空头趋势未止跌，冲高回落收最低，观望待企稳",
+                "position_advice": {
+                    "no_position": "等待右侧企稳信号（收复MA5并放量或回踩47.5缩量止跌）后再考虑",
+                    "has_position": "反弹至MA10（55元附近）逢高减仓，跌破47.47前低务必止损离场",
+                },
+            },
+            "data_perspective": {
+                "trend_status": {"ma_alignment": "空头排列 MA5<MA10<MA20", "trend_score": 25},
+                "price_position": {"support_level": 47.47, "resistance_level": 53.24, "bias_ma5": -6.02},
+                "volume_analysis": {"volume_ratio": 1.13, "turnover_rate": 4.48},
+            },
+            "intelligence": {
+                "positive_catalysts": ["2026H1归母净利预增261%~298%，基本面景气度高"],
+                "risk_alerts": ["近7个交易日累计下跌16.07%，趋势破位未止跌"],
+            },
+            "battle_plan": {
+                "sniper_points": {
+                    "ideal_buy": "暂无理想买点：需先收复并站稳MA5（52.68）且放量",
+                    "secondary_buy": "放量收复MA10（55.13）确认趋势反转后介入",
+                    "stop_loss": "跌破47.47即止损",
+                    "take_profit": "第一压力53.24-55.13，第二压力63.76",
+                }
+            },
+            "phase_decision": {
+                "action_window": "非交易日观察（周六休市）",
+                "next_check_time": "2026-08-03 09:15集合竞价及09:30开盘",
+                "watch_conditions": [
+                    "08-03能否守住47.47前低支撑，不破为短线企稳前提",
+                    "能否放量收复MA5（52.68），上攻53.24-55.13压力区",
+                ],
+            },
+        },
+    }
+
+    html = build_share_image_html(
+        "# 中钨高新 000657 分析报告\n\n## 核心结论\n\n观望",
+        generated_on=date(2026, 8, 1),
+        structured_payload=payload,
+    )
+
+    assert "中钨高新" in html
+    assert 'class="signal-score warning"' in html
+    assert 'class="signal-trend negative"' in html
+    assert "置信度 中" in html
+    assert 'class="metric red"><span>涨跌</span><strong>+2.29%</strong>' in html
+    assert "等待企稳" in html
+    assert "确认买入" in html
+    assert "确认买入</span><strong>55.13" in html
+    assert "47.47" in html
+    assert "53.24–55.13" in html
+    assert "25/100" in html
+    assert "-6.02%" in html
+    assert "下一步观察" in html
+    assert "非交易日观察" in html
+    assert "2026-08-03 09:15集合竞价" in html
+    assert "需先收复并站稳" not in html
+    assert "建仓策略" not in html
+    assert "风控策略" not in html
+
+
+def test_market_share_image_prefers_structured_market_metrics():
+    payload = {
+        "kind": "market_review",
+        "region": "cn",
+        "title": "A股市场复盘",
+        "date": "2026-08-01",
+        "market_light": {
+            "score": 83,
+            "temperature_label": "强势",
+            "dimensions": {
+                "breadth": {"score": 86},
+                "index": {"score": 69},
+                "limit": {"score": 100},
+            },
+        },
+        "indices": [
+            {"name": "上证指数", "current": 3559.95, "change_pct": 0.72},
+            {"name": "深证成指", "current": 11206.12, "change_pct": 2.21},
+            {"name": "创业板指", "current": 2328.31, "change_pct": 3.06},
+            {"name": "科创50", "current": 1635.96, "change_pct": 2.99},
+        ],
+        "breadth": {
+            "up_count": 4690,
+            "down_count": 728,
+            "limit_up_count": 101,
+            "limit_down_count": 0,
+            "total_amount": 25591,
+            "turnover_unit": "亿元",
+        },
+        "sectors": {
+            "top": [{"name": "半导体", "change_pct": 4.25}],
+            "bottom": [{"name": "货币金融服务", "change_pct": -1.10}],
+        },
+    }
+    html = build_share_image_html(
+        """# A股大盘复盘
+
+## 2026-08-01 大盘复盘
+
+> 指数普涨，市场情绪明显回暖。
+
+### 一、盘面总览
+- **盘面信号**：20/100（偏弱，防守）
+- **操作建议**：关注成交额和主线持续性。
+
+### 四、资金与情绪
+涨跌比接近6.4:1，成交额较前一交易日放量逾2000亿元；科创方向冲高回落，资金分歧明显。
+
+### 六、明日交易计划
+结论：均衡偏进攻。
+- 仓位区间：建议维持5-7成。
+- 关注方向：其一，软件、AI应用等方向；其二，建筑装饰、食品制造等低位方向。
+- 回避方向：科创50中冲高回落的半导体设备等高位标的；银行、保险等防御板块。
+- 触发失效条件：成交额缩至2.2万亿以下则降仓。
+
+### 七、风险提示
+- 高位板块回撤。
+""",
+        generated_on=date(2026, 8, 1),
+        structured_payload=payload,
+    )
+
+    assert "<strong>83</strong><small>/100</small>" in html
+    assert "+0.72%" in html
+    assert "4690" in html
+    assert "2.56万亿" in html
+    assert "半导体" in html
+    assert "科创50" in html
+    assert "信号拆解" in html
+    assert "86/100" in html
+    assert "弱势板块" in html
+    assert "货币金融服务" in html
+    assert "重点跟踪" in html
+    assert "软件、AI应用" in html
+    assert "半导体设备" in html
+    assert "资金观察" in html
+    assert "+2000亿" in html
+    assert "20/100" not in html
 
 
 def test_market_share_image_uses_market_variant_and_preserves_tables():
@@ -104,6 +264,57 @@ def test_market_share_image_populates_decision_modules_from_report_contract():
     assert "高位板块回撤" in html
 
 
+def test_market_share_image_does_not_duplicate_full_report_for_extra_detail_sections():
+    html = build_share_image_html(
+        """# 大盘复盘
+
+### 一、盘面总览
+
+- **盘面信号**：83/100（强势，可进攻）
+- **操作建议**：关注主线延续与仓位纪律。
+
+| 指标 | 数值 |
+| --- | --- |
+| 上涨/下跌/平盘 | 4690 / 728 / 109 |
+| 涨停/跌停 | 101 / 0 |
+| 两市成交额 | 25591 亿 |
+
+### 二、指数结构
+
+| 指数 | 最新 | 涨跌幅 |
+| --- | --- | --- |
+| 上证指数 | 3832.26 | +0.72% |
+
+### 三、板块主线
+
+| 排名 | 行业板块 | 涨跌幅 |
+| --- | --- | --- |
+| 1 | 软件和信息技术服务业 | +7.75% |
+
+### 四、资金与情绪
+
+成交额放大，赚钱效应扩散，但高位股分歧增加。
+
+### 五、消息催化
+
+- 稳增长政策预期升温。
+
+### 六、明日交易计划
+
+- 仓位区间：5-7成。
+
+### 七、风险提示
+
+- 高位科技股分歧扩散。
+""",
+        generated_on=date(2026, 8, 1),
+    )
+
+    assert '<section class="market-signal">' in html
+    assert "软件和信息技术服务业" in html
+    assert '<section class="report-fallback">' not in html
+
+
 def test_market_share_image_preserves_report_color_scheme_from_index_markers():
     html = build_share_image_html(
         """# 大盘复盘
@@ -128,7 +339,7 @@ def test_market_share_image_preserves_report_color_scheme_from_index_markers():
     )
 
     assert '<strong class="red">+0.80%</strong>' in html
-    assert 'class="metric  red"><span>上涨</span>' in html
+    assert 'class="metric red"><span>上涨</span>' in html
 
 
 def test_real_single_stock_shape_uses_h2_title_score_and_sniper_contract():
@@ -159,7 +370,7 @@ def test_real_single_stock_shape_uses_h2_title_score_and_sniper_contract():
     assert '<strong>72</strong><small>/100</small>' in html
     assert "回调到支撑区可分批关注" in html
     assert "综合评分" not in html
-    assert 'class="signal-trend"' in html
+    assert 'class="signal-trend positive"' in html
     assert ">看多<" in html
     assert "sniper-table" in html
     assert 'class="metric sniper buy"' in html
@@ -400,7 +611,7 @@ def test_stock_report_market_snapshot_does_not_route_to_market_poster():
     assert "个股决策卡" in html
     assert "Apple Inc." in html
     assert "理想买入" in html
-    assert "A failed earnings guide can break momentum." in html
+    assert "failed earnings guide" in html
 
 
 def test_multi_market_review_keeps_every_region_in_share_image():
@@ -705,8 +916,8 @@ def test_market_share_image_keeps_signal_card_without_breadth_for_hk_review():
     assert '<section class="market-signal">' in html
     assert '<strong>58</strong><small>/100</small>' in html
     assert "selective" in html
-    assert "Hang Seng held above prior support" in html
-    assert "Signals are mixed; keep position sizing moderate" in html
+    assert "Hang Seng held above prior support" not in html
+    assert "Signals are mixed" in html
     assert "市场宽度" not in html
 
 
@@ -862,8 +1073,8 @@ def test_market_share_image_uses_red_up_gain_color_for_breadth_when_all_indices_
     )
 
     assert '<strong class="green">-0.80%</strong>' in html
-    assert 'class="metric  red"><span>上涨</span>' in html
-    assert 'class="metric  green"><span>下跌</span>' in html
+    assert 'class="metric red"><span>上涨</span>' in html
+    assert 'class="metric green"><span>下跌</span>' in html
 
 
 def test_market_share_image_preserves_red_up_colors_for_english_fallback_index_bullets():
@@ -889,8 +1100,8 @@ def test_market_share_image_preserves_red_up_colors_for_english_fallback_index_b
 
     assert '<strong class="red">🔴 +0.80%</strong>' in html
     assert '<strong class="green">🟢 -0.20%</strong>' in html
-    assert 'class="metric  red"><span>上涨</span>' in html
-    assert 'class="metric  green"><span>下跌</span>' in html
+    assert 'class="metric red"><span>上涨</span>' in html
+    assert 'class="metric green"><span>下跌</span>' in html
 
 
 def test_single_stock_dashboard_title_routes_to_stock_poster():

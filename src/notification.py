@@ -2583,6 +2583,7 @@ class NotificationService(
         severity: Optional[str] = None,
         dedup_key: Optional[str] = None,
         cooldown_key: Optional[str] = None,
+        structured_payload: Optional[Dict[str, Any]] = None,
     ) -> NotificationDispatchResult:
         """
         Send a notification and return per-channel diagnostics.
@@ -2603,6 +2604,7 @@ class NotificationService(
             severity: 通知严重级别；未设置时按路由类型推断
             dedup_key: 可选稳定去重 key；未设置时使用内容 hash
             cooldown_key: 可选冷却 key；未设置时使用路由/级别默认 key
+            structured_payload: 可选的个股或市场结构化结果，仅用于图片模板精确填充
 
         Returns:
             Structured dispatch diagnostics.
@@ -2698,7 +2700,9 @@ class NotificationService(
         if channels_needing_image:
             from src.md2img import markdown_to_image
             image_bytes = markdown_to_image(
-                content, max_chars=self._markdown_to_image_max_chars
+                content,
+                max_chars=self._markdown_to_image_max_chars,
+                structured_payload=structured_payload,
             )
             if image_bytes:
                 logger.info("Markdown 已转换为图片，将向 %s 发送图片",
@@ -2797,6 +2801,7 @@ class NotificationService(
         severity: Optional[str] = None,
         dedup_key: Optional[str] = None,
         cooldown_key: Optional[str] = None,
+        structured_payload: Optional[Dict[str, Any]] = None,
     ) -> bool:
         """
         统一发送接口 - 向所有已配置的渠道发送。
@@ -2812,6 +2817,7 @@ class NotificationService(
             severity=severity,
             dedup_key=dedup_key,
             cooldown_key=cooldown_key,
+            structured_payload=structured_payload,
         )
         return bool(result.success)
 
