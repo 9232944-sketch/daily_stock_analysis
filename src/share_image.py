@@ -1385,8 +1385,13 @@ def _market_data_from_payload(
     if isinstance(light, Mapping):
         if light.get("score") is not None:
             poster.score = _number_text(light.get("score"))
-        poster.temperature = _clean_value(light.get("temperature_label"), limit=12) or poster.temperature
-        if poster.temperature:
+        temperature_label = _clean_value(light.get("temperature_label"), limit=12)
+        if temperature_label:
+            poster.temperature = temperature_label
+        signal_label = _clean_value(light.get("label"), limit=12)
+        if signal_label:
+            poster.signal = signal_label
+        elif not poster.signal and poster.temperature:
             poster.signal = poster.temperature
         dimensions = light.get("dimensions")
         if isinstance(dimensions, Mapping):

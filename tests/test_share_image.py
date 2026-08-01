@@ -188,6 +188,34 @@ def test_market_share_image_prefers_structured_market_metrics():
     assert "20/100" not in html
 
 
+def test_market_share_image_preserves_structured_market_light_action_label():
+    payload = {
+        "kind": "market_review",
+        "region": "cn",
+        "market_light": {
+            "score": 66,
+            "temperature_label": "偏暖",
+            "label": "可进攻",
+        },
+    }
+
+    html = build_share_image_html(
+        """# A股大盘复盘
+
+## 2026-08-01 大盘复盘
+
+### 一、盘面总览
+- **盘面信号**：66/100（偏暖，需观察）
+- **操作建议**：等待主线确认。
+""",
+        generated_on=date(2026, 8, 1),
+        structured_payload=payload,
+    )
+
+    assert '<div class="market-label">可进攻</div>' in html
+    assert '<div class="market-label">偏暖</div>' not in html
+
+
 def test_market_share_image_hides_unavailable_dimensions_and_uses_payload_color_scheme():
     payload = {
         "kind": "market_review",

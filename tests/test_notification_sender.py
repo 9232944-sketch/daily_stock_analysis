@@ -967,6 +967,30 @@ class TestEmailSender(unittest.TestCase):
         server.quit.assert_called_once()
 
     @mock.patch("smtplib.SMTP_SSL")
+    def test_send_to_email_strips_hidden_market_region_metadata_from_plain_text(self, mock_smtp_ssl):
+        cfg = _config(
+            email_sender="a@qq.com",
+            email_password="p",
+            email_receivers=["b@qq.com"],
+        )
+        sender = EmailSender(cfg)
+
+        result = sender.send_to_email(
+            "[dsa-market-region]: # (cn)\n\n# 🎯 Market Review\n\nBody",
+            subject="测试主题",
+        )
+
+        self.assertTrue(result)
+        msg = mock_smtp_ssl.return_value.send_message.call_args[0][0]
+        plain_part, html_part = msg.get_payload()
+        plain_text = plain_part.get_payload(decode=True).decode("utf-8")
+        html_text = html_part.get_payload(decode=True).decode("utf-8")
+        self.assertNotIn("[dsa-market-region]", plain_text)
+        self.assertIn("Body", plain_text)
+        self.assertIn("Market Review", plain_text)
+        self.assertIn("Body", html_text)
+
+    @mock.patch("smtplib.SMTP_SSL")
     def test_send_image_email_encodes_non_ascii_sender_name(self, mock_smtp_ssl):
         cfg = _config(
             email_sender="a@qq.com",
