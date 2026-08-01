@@ -75,7 +75,8 @@ export const ShareImageButton: React.FC<ShareImageButtonProps> = ({
             setState('idle');
             return;
           }
-          throw error;
+          console.warn('Native file sharing failed; falling back to download:', error);
+          downloadBlob(blob, filename);
         }
       } else {
         downloadBlob(blob, filename);

@@ -792,6 +792,11 @@ Focus on index trend, liquidity, and sector rotation to shape the next-session t
             "kind": "market_review",
             "region": self.region,
             "language": language,
+            "color_scheme": getattr(
+                getattr(self, "config", None),
+                "market_review_color_scheme",
+                "green_up",
+            ),
             "title": title,
             "generated_at": datetime.now().isoformat(),
             "date": overview.date,

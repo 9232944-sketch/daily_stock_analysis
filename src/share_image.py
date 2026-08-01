@@ -53,6 +53,79 @@ _NUMERIC_CODE_RE = re.compile(
     rf"(?:{_SUFFIXED_NUMERIC_CODE_PATTERN}|(?:(?i:sh|sz|bj|hk))?\d{{5,6}}(?:\.[A-Z]{{2}})?)"
 )
 _NA_VALUES = {"", "-", "--", "n/a", "na", "none", "null", "暂无", "暂无数据"}
+_POSTER_TEXT = {
+    "zh": {
+        "brand": "AI 股票分析", "stock_subtitle": "个股决策卡 · 结论、点位与风险一图读懂",
+        "market_subtitle": "指数、宽度、主线与风险的收盘复盘", "multi_title": "多市场复盘",
+        "multi_subtitle": "按市场分段展示指数、主线与风险边界", "dashboard_subtitle": "多股决策摘要",
+        "score": "评分", "confidence": "置信度", "trend": "趋势", "core": "核心结论",
+        "snapshot": "市场快照", "execution": "执行计划", "technical": "技术参考",
+        "next_watch": "下一步观察", "positive_catalysts": "利好催化", "risk_alerts": "风险警报",
+        "catalysts_risks": "催化与风险", "no_position": "未持仓", "holding": "已持仓",
+        "position": "仓位", "entry": "建仓", "risk_control": "风控", "position_advice": "持仓建议",
+        "market_signal": "市场信号", "today_conclusion": "今日结论", "breadth": "市场宽度",
+        "dimensions": "信号拆解", "leaders": "强势板块", "laggards": "弱势板块",
+        "focus_tag": "关注", "avoid_tag": "回避", "focus": "重点跟踪", "funds": "资金观察",
+        "strategy": "明日策略", "risks": "风险提示", "tagline": "让股票研究更简单、更高效",
+        "open_source": "开源项目 · GitHub", "xiaohongshu": "小红书",
+        "disclaimer": "AI 生成，仅供研究交流，不构成投资建议。市场有风险，决策需谨慎。",
+        "source": "数据源",
+    },
+    "en": {
+        "brand": "AI Stock Analysis", "stock_subtitle": "Stock decision card · thesis, levels, and risks",
+        "market_subtitle": "Closing review of indices, breadth, themes, and risks", "multi_title": "Multi-market Recap",
+        "multi_subtitle": "Indices, themes, and risk boundaries by market", "dashboard_subtitle": "Multi-stock Decision Summary",
+        "score": "Score", "confidence": "Confidence", "trend": "Trend", "core": "Core Conclusion",
+        "snapshot": "Market Snapshot", "execution": "Execution Plan", "technical": "Technical Reference",
+        "next_watch": "Next Watch", "positive_catalysts": "Positive Catalysts", "risk_alerts": "Risk Alerts",
+        "catalysts_risks": "Catalysts & Risks", "no_position": "No Position", "holding": "Holding",
+        "position": "Position", "entry": "Entry", "risk_control": "Risk Control", "position_advice": "Position Advice",
+        "market_signal": "Market Signal", "today_conclusion": "Conclusion", "breadth": "Market Breadth",
+        "dimensions": "Signal Breakdown", "leaders": "Leading Sectors", "laggards": "Lagging Sectors",
+        "focus_tag": "Watch", "avoid_tag": "Avoid", "focus": "Key Watchlist", "funds": "Fund Flow Watch",
+        "strategy": "Next-session Plan", "risks": "Risk Alerts", "tagline": "Make stock research simpler and more efficient",
+        "open_source": "Open Source · GitHub", "xiaohongshu": "Xiaohongshu",
+        "disclaimer": "AI-generated for research only; not investment advice. Markets involve risk.",
+        "source": "Source",
+    },
+    "ko": {
+        "brand": "AI 주식 분석", "stock_subtitle": "종목 의사결정 카드 · 결론, 가격대, 리스크",
+        "market_subtitle": "지수, 시장 폭, 주도주와 리스크 마감 리뷰", "multi_title": "다중 시장 리뷰",
+        "multi_subtitle": "시장별 지수, 주도주와 리스크 경계", "dashboard_subtitle": "다중 종목 의사결정 요약",
+        "score": "점수", "confidence": "신뢰도", "trend": "추세", "core": "핵심 결론",
+        "snapshot": "시세 스냅샷", "execution": "실행 계획", "technical": "기술 참고",
+        "next_watch": "다음 관찰", "positive_catalysts": "긍정 촉매", "risk_alerts": "리스크 경보",
+        "catalysts_risks": "촉매와 리스크", "no_position": "미보유", "holding": "보유 중",
+        "position": "포지션", "entry": "진입", "risk_control": "리스크 관리", "position_advice": "포지션 제안",
+        "market_signal": "시장 신호", "today_conclusion": "오늘의 결론", "breadth": "시장 폭",
+        "dimensions": "신호 분석", "leaders": "강세 섹터", "laggards": "약세 섹터",
+        "focus_tag": "관찰", "avoid_tag": "회피", "focus": "주요 관찰", "funds": "자금 흐름",
+        "strategy": "다음 거래일 전략", "risks": "리스크 경고", "tagline": "주식 리서치를 더 쉽고 효율적으로",
+        "open_source": "오픈소스 · GitHub", "xiaohongshu": "샤오홍슈",
+        "disclaimer": "AI 생성 연구 자료이며 투자 조언이 아닙니다. 투자에는 위험이 따릅니다.",
+        "source": "데이터 소스",
+    },
+}
+_POSTER_LABELS = {
+    "en": {
+        "当前/收盘": "Current/Close", "现价": "Current", "涨跌幅": "Change", "涨跌": "Change",
+        "量比": "Volume Ratio", "换手率": "Turnover", "换手": "Turnover", "理想买入": "Ideal Entry",
+        "确认买入": "Confirmed Entry", "止损": "Stop Loss", "目标": "Target", "均线": "MA Alignment",
+        "量能": "Volume", "趋势分": "Trend Score", "MA5乖离": "MA5 Bias", "支撑": "Support", "压力": "Resistance",
+        "行动窗口": "Action Window", "下次检查": "Next Check", "上涨": "Advancers", "下跌": "Decliners",
+        "涨停": "Limit-up", "跌停": "Limit-down", "成交额": "Turnover", "赚钱效应": "Breadth Score",
+        "指数强度": "Index Strength", "涨停结构": "Limit Structure",
+    },
+    "ko": {
+        "当前/收盘": "현재/종가", "现价": "현재가", "涨跌幅": "등락률", "涨跌": "등락",
+        "量比": "거래량 비율", "换手率": "회전율", "换手": "회전율", "理想买入": "이상적 진입",
+        "确认买入": "확인 진입", "止损": "손절", "目标": "목표", "均线": "이동평균",
+        "量能": "거래량", "趋势分": "추세 점수", "MA5乖离": "MA5 이격", "支撑": "지지", "压力": "저항",
+        "行动窗口": "행동 구간", "下次检查": "다음 점검", "上涨": "상승", "下跌": "하락",
+        "涨停": "상한가", "跌停": "하한가", "成交额": "거래대금", "赚钱效应": "시장 폭 점수",
+        "指数强度": "지수 강도", "涨停结构": "상한가 구조",
+    },
+}
 _MARKET_LABEL_PATTERNS = (
     (
         "A股",
@@ -90,6 +163,7 @@ class Table:
 @dataclass
 class StockPoster:
     title: str
+    language: str = "zh"
     code: str = ""
     report_date: str = ""
     action: str = ""
@@ -114,6 +188,7 @@ class StockPoster:
 @dataclass
 class MarketPoster:
     title: str
+    language: str = "zh"
     report_date: str = ""
     summary: str = ""
     score: str = ""
@@ -192,6 +267,77 @@ def _nested_mapping(value: object, *keys: str) -> Mapping[str, Any]:
             return {}
         current = current.get(key)
     return current if isinstance(current, Mapping) else {}
+
+
+def _poster_language(
+    markdown_text: str,
+    payload: Optional[Mapping[str, Any]] = None,
+) -> str:
+    """Resolve poster chrome language from the persisted contract or report."""
+
+    if isinstance(payload, Mapping):
+        raw_language = payload.get("report_language") or payload.get("language")
+        normalized = str(raw_language or "").strip().lower().replace("_", "-")
+        if normalized.startswith("en"):
+            return "en"
+        if normalized.startswith("ko"):
+            return "ko"
+        if normalized.startswith("zh"):
+            return "zh"
+    if re.search(r"[\uac00-\ud7af]", markdown_text or ""):
+        return "ko"
+    if re.search(
+        r"(?:core conclusion|market snapshot|action levels|market (?:review|recap)|major indices)",
+        markdown_text or "",
+        re.IGNORECASE,
+    ):
+        return "en"
+    return "zh"
+
+
+def _poster_text(language: str, key: str) -> str:
+    return _POSTER_TEXT.get(language, _POSTER_TEXT["zh"]).get(key, _POSTER_TEXT["zh"].get(key, key))
+
+
+def _poster_label(language: str, label: str) -> str:
+    translated = _POSTER_LABELS.get(language, {}).get(label)
+    if translated:
+        return translated
+    if language == "en" and label.startswith("观察 "):
+        return label.replace("观察 ", "Watch ", 1)
+    if language == "ko" and label.startswith("观察 "):
+        return label.replace("观察 ", "관찰 ", 1)
+    return label
+
+
+def _metric_value(
+    items: Iterable[tuple[str, str, str]],
+    *labels: str,
+) -> str:
+    for label, value, _tone in items:
+        if any(candidate == label for candidate in labels) and value:
+            return value
+    return ""
+
+
+def _merge_metrics(
+    existing: Iterable[tuple[str, str, str]],
+    overlay: Iterable[tuple[str, str, str]],
+) -> list[tuple[str, str, str]]:
+    """Overlay populated metric cards without erasing Markdown fallbacks."""
+
+    merged = list(existing)
+    positions = {label: index for index, (label, _value, _tone) in enumerate(merged)}
+    for item in overlay:
+        label, value, _tone = item
+        if not value:
+            continue
+        if label in positions:
+            merged[positions[label]] = item
+        else:
+            positions[label] = len(merged)
+            merged.append(item)
+    return merged
 
 
 def _number_text(value: object, *, suffix: str = "") -> str:
@@ -589,10 +735,24 @@ def _stock_data(markdown_text: str, generated_on: date) -> StockPoster:
 
     score_match = re.search(r"(?:评分|score)\s*[:：]?\s*\*{0,2}(\d{1,3})", markdown_text, re.IGNORECASE)
     core = _section(markdown_text, "核心结论", "core conclusion", "核心判断")
-    action_match = re.search(
-        r"\*\*[^\w\u4e00-\u9fff]*(买入|加仓|持有|观望|减仓|卖出|回避|警戒|buy|add|hold|watch|reduce|sell|avoid|alert)\*\*",
-        core or markdown_text,
-        re.IGNORECASE,
+    action_terms = (
+        "买入", "加仓", "持有", "观望", "减仓", "卖出", "回避", "警戒",
+        "buy", "add", "hold", "watch", "reduce", "sell", "avoid", "alert",
+    )
+    action_value = next(
+        (
+            candidate
+            for candidate in (
+                _clean_value(raw_candidate, limit=18)
+                for raw_candidate in re.findall(
+                    r"\*\*([^*\n]+)\*\*\s*[:：]",
+                    core or markdown_text,
+                    re.IGNORECASE,
+                )
+            )
+            if any(term in candidate.lower() for term in action_terms)
+        ),
+        "",
     )
     quote_trend_match = re.search(
         r"^\s*>\s+.*?(?:评分|score)\s*[:：]?\s*\*{0,2}\d{1,3}\*{0,2}\s*\|\s*([^\n|]+)",
@@ -607,9 +767,10 @@ def _stock_data(markdown_text: str, generated_on: date) -> StockPoster:
 
     poster = StockPoster(
         title=name or "个股分析",
+        language=_poster_language(markdown_text),
         code=code,
         report_date=_extract_date(markdown_text, generated_on),
-        action=_clean_value(action_match.group(1), limit=12) if action_match else "",
+        action=action_value,
         score=score_match.group(1) if score_match else "",
         trend=(
             _clean_value(quote_trend_match.group(1), limit=16)
@@ -729,9 +890,10 @@ def _stock_data_from_payload(
     """Prefer the analysis JSON contract and retain Markdown as a field fallback."""
 
     poster = _stock_data(markdown_text, generated_on)
+    poster.language = _poster_language(markdown_text, payload)
     dashboard = payload.get("dashboard")
     if not isinstance(dashboard, Mapping):
-        return poster
+        dashboard = {}
 
     core = _nested_mapping(dashboard, "core_conclusion")
     data_view = _nested_mapping(dashboard, "data_perspective")
@@ -759,10 +921,26 @@ def _stock_data_from_payload(
     )
     poster.conclusion = _compact_text(core.get("one_sentence"), limit=54) or poster.conclusion
 
+    persisted_snapshot = _nested_mapping(payload, "market_snapshot")
     current = _number_text(payload.get("current_price") or price.get("current_price"))
+    if not current:
+        current = _clean_value(
+            persisted_snapshot.get("price") or persisted_snapshot.get("close"),
+            limit=18,
+        )
+    current = current or _metric_value(poster.snapshot, "现价", "当前/收盘")
     change = _signed_percent(payload.get("change_pct"))
+    if not change:
+        change = _clean_value(persisted_snapshot.get("pct_chg"), limit=18)
+    change = change or _metric_value(poster.snapshot, "涨跌", "涨跌幅")
     ratio = _number_text(volume.get("volume_ratio"))
+    if not ratio:
+        ratio = _clean_value(persisted_snapshot.get("volume_ratio"), limit=18)
+    ratio = ratio or _metric_value(poster.snapshot, "量比")
     turnover = _number_text(volume.get("turnover_rate"), suffix="%")
+    if not turnover:
+        turnover = _clean_value(persisted_snapshot.get("turnover_rate"), limit=18)
+    turnover = turnover or _metric_value(poster.snapshot, "换手", "换手率")
     positive_tone = _stock_positive_tone(poster.code)
     negative_tone = _opposite_color(positive_tone)
     poster.snapshot = [
@@ -773,6 +951,10 @@ def _stock_data_from_payload(
             ("换手", turnover, "neutral"),
         ) if item[1]
     ]
+    poster.data_source = (
+        _clean_value(persisted_snapshot.get("source"), limit=30)
+        or poster.data_source
+    )
 
     ma_alignment = _clean_value(trend.get("ma_alignment"), limit=60)
     ma_summary = next(
@@ -783,7 +965,7 @@ def _stock_data_from_payload(
     resistance = _number_text(price.get("resistance_level"))
     trend_score = _number_text(trend.get("trend_score"), suffix="/100")
     bias_ma5 = _signed_percent(price.get("bias_ma5"))
-    poster.technical = [
+    payload_technical = [
         item for item in (
             ("均线", ma_summary, "positive" if "多头" in ma_summary else "negative" if "空头" in ma_summary else "neutral"),
             ("趋势分", trend_score, _tone_for_score(_number_text(trend.get("trend_score")))),
@@ -792,8 +974,17 @@ def _stock_data_from_payload(
             ("压力", resistance, "negative"),
         ) if item[1]
     ]
+    existing_technical = poster.technical
+    if any(volume.get(key) is not None for key in ("volume_ratio", "turnover_rate")):
+        # Ratio/turnover already appear in the snapshot.  Keep the verbose
+        # Markdown volume prose only for older/partial payloads that do not
+        # carry those exact structured fields.
+        existing_technical = [
+            item for item in existing_technical if item[0] != "量能"
+        ]
+    poster.technical = _merge_metrics(existing_technical, payload_technical)
 
-    poster.sniper = []
+    payload_sniper: list[tuple[str, str, str]] = []
     for key, label, tone in (
         ("ideal_buy", "理想买入", "buy"),
         ("secondary_buy", "确认买入", "secondary"),
@@ -802,7 +993,8 @@ def _stock_data_from_payload(
     ):
         value = _compact_sniper_value(key, sniper.get(key))
         if value:
-            poster.sniper.append((label, value, tone))
+            payload_sniper.append((label, value, tone))
+    poster.sniper = _merge_metrics(poster.sniper, payload_sniper)
 
     catalysts = intelligence.get("positive_catalysts")
     risks = intelligence.get("risk_alerts")
@@ -812,21 +1004,29 @@ def _stock_data_from_payload(
         poster.risks = [_compact_text(item, limit=36) for item in risks[:2] if _clean_value(item)]
 
     watch_conditions = phase.get("watch_conditions")
-    poster.watch_items = [
+    payload_watch_items = [
         item for item in (
             ("行动窗口", _compact_text(phase.get("action_window"), limit=24), "primary"),
             ("下次检查", _compact_text(phase.get("next_check_time"), limit=28), "secondary"),
         ) if item[1]
     ]
     if isinstance(watch_conditions, list):
-        poster.watch_items.extend(
+        payload_watch_items.extend(
             (f"观察 {index}", _compact_text(value, limit=31), "warning")
             for index, value in enumerate(watch_conditions[:2], 1)
             if _clean_value(value)
         )
+    if payload_watch_items:
+        poster.watch_items = payload_watch_items
 
-    poster.no_position = _compact_position(position_advice.get("no_position"), holding=False)
-    poster.has_position = _compact_position(position_advice.get("has_position"), holding=True)
+    poster.no_position = (
+        _compact_position(position_advice.get("no_position"), holding=False)
+        or poster.no_position
+    )
+    poster.has_position = (
+        _compact_position(position_advice.get("has_position"), holding=True)
+        or poster.has_position
+    )
     # The full report keeps sizing, entry and risk-control prose.  The share
     # poster intentionally shows only the two user states above.
     poster.position_size = ""
@@ -837,6 +1037,9 @@ def _stock_data_from_payload(
 
 def _market_title(markdown_text: str) -> str:
     first_title = next((title for title, _body, _level in _extract_sections(markdown_text)), "")
+    language = _poster_language(markdown_text)
+    if language in {"en", "ko"} and _is_market_review_title(first_title):
+        return first_title
     market = _market_label(first_title)
     if market:
         return f"{market}市场复盘"
@@ -973,6 +1176,7 @@ def _market_data(markdown_text: str, generated_on: date) -> MarketPoster:
     quote = _QUOTE_RE.search(markdown_text)
     poster = MarketPoster(
         title=_market_title(markdown_text),
+        language=_poster_language(markdown_text),
         report_date=_extract_date(markdown_text, generated_on),
         summary=_compact_text(quote.group(1), limit=58) if quote else "",
         score=score_match.group(1) if score_match else "",
@@ -1024,10 +1228,6 @@ def _market_data(markdown_text: str, generated_on: date) -> MarketPoster:
             inferred_positive_color = _positive_color_from_change(first_change, first_change)
             if inferred_positive_color:
                 positive_color = inferred_positive_color
-            elif any(marker in first_change for marker in ("↑", "+")):
-                positive_color = "green"
-            elif any(marker in first_change for marker in ("↓", "-")):
-                positive_color = "red"
 
     breadth_table = (
         _find_table(overview, "上涨", "成交额")
@@ -1131,15 +1331,23 @@ def _market_data_from_payload(
     """Overlay exact market metrics from the persisted market-review payload."""
 
     poster = _market_data(markdown_text, generated_on)
+    poster.language = _poster_language(markdown_text, payload)
     payload_title = _clean_value(payload.get("title"), limit=36)
     if payload_title and not _DATE_RE.match(payload_title):
         poster.title = payload_title
     poster.report_date = _clean_value(payload.get("date"), limit=18) or poster.report_date
-    positive_tone = (
-        "red"
-        if str(payload.get("region") or "").lower() in {"cn", "hk", "jp", "kr"}
-        else "green"
-    )
+    color_scheme = str(payload.get("color_scheme") or "").strip().lower()
+    if color_scheme == "red_up":
+        positive_tone = "red"
+    elif color_scheme == "green_up":
+        positive_tone = "green"
+    else:
+        positive_tone = "green"
+        for _name, _current, change, color in poster.indices:
+            if not color or not change:
+                continue
+            positive_tone = _opposite_color(color) if change.strip().startswith("-") else color
+            break
     negative_tone = _opposite_color(positive_tone)
 
     light = payload.get("market_light")
@@ -1157,7 +1365,11 @@ def _market_data_from_payload(
                 ("limit", "涨停结构"),
             ):
                 dimension = dimensions.get(key)
-                if not isinstance(dimension, Mapping) or dimension.get("score") is None:
+                if (
+                    not isinstance(dimension, Mapping)
+                    or dimension.get("score") is None
+                    or dimension.get("available") is False
+                ):
                     continue
                 score = _number_text(dimension.get("score"))
                 try:
@@ -1194,7 +1406,7 @@ def _market_data_from_payload(
             breadth.get("total_amount"),
             breadth.get("turnover_unit"),
         )
-        poster.breadth = [
+        exact_breadth = [
             item for item in (
                 ("上涨", _number_text(breadth.get("up_count")), positive_tone),
                 ("下跌", _number_text(breadth.get("down_count")), negative_tone),
@@ -1203,6 +1415,8 @@ def _market_data_from_payload(
                 ("成交额", amount, "primary"),
             ) if item[1]
         ]
+        if exact_breadth:
+            poster.breadth = exact_breadth
 
     sectors = payload.get("sectors")
     top_sectors = sectors.get("top") if isinstance(sectors, Mapping) else None
@@ -1312,12 +1526,17 @@ def _stock_positive_tone(code: str) -> str:
     return "red" if red_up_market else "green"
 
 
-def _metric_cards(items: Iterable[tuple[str, str, str]], class_name: str = "") -> str:
+def _metric_cards(
+    items: Iterable[tuple[str, str, str]],
+    class_name: str = "",
+    *,
+    language: str = "zh",
+) -> str:
     cards = []
     for label, value, tone in items:
         classes = " ".join(part for part in ("metric", class_name, tone) if part)
         cards.append(
-            f'<div class="{_escape(classes)}"><span>{_escape(label)}</span><strong>{_escape(value)}</strong></div>'
+            f'<div class="{_escape(classes)}"><span>{_escape(_poster_label(language, label))}</span><strong>{_escape(value)}</strong></div>'
         )
     return "".join(cards)
 
@@ -1344,59 +1563,61 @@ def _render_markdown_fragment(markdown_text: str) -> str:
 
 
 def _stock_body(data: StockPoster, fallback_html: str) -> str:
+    language = data.language
     tone = _tone_for_action(data.action)
     score_tone = _tone_for_score(data.score)
     trend_tone = _tone_for_trend(data.trend)
-    score = f'<div class="signal-score {score_tone}"><span>评分</span><strong>{_escape(data.score)}</strong><small>/100</small></div>' if data.score else ""
-    confidence = f'<small>置信度 {_escape(data.confidence)}</small>' if data.confidence else ""
-    trend = f'<div class="signal-trend {trend_tone}"><span>趋势</span><strong>{_escape(data.trend)}</strong>{confidence}</div>' if data.trend else ""
+    score = f'<div class="signal-score {score_tone}"><span>{_escape(_poster_text(language, "score"))}</span><strong>{_escape(data.score)}</strong><small>/100</small></div>' if data.score else ""
+    confidence = f'<small>{_escape(_poster_text(language, "confidence"))} {_escape(data.confidence)}</small>' if data.confidence else ""
+    trend = f'<div class="signal-trend {trend_tone}"><span>{_escape(_poster_text(language, "trend"))}</span><strong>{_escape(data.trend)}</strong>{confidence}</div>' if data.trend else ""
     action = f'<div class="action-chip {tone}">{_escape(data.action)}</div>' if data.action else ""
     signal_row = f'<div class="signal-row">{action}{score}{trend}</div>' if action or score or trend else ""
-    conclusion = _section_html("核心结论", "◎", f'<div class="conclusion">{_escape(data.conclusion)}</div>') if data.conclusion else ""
-    snapshot = _section_html("市场快照", "▥", f'<div class="metric-grid snapshot-grid">{_metric_cards(data.snapshot)}</div>') if data.snapshot else ""
-    sniper = _section_html("执行计划", "◎", f'<div class="metric-grid sniper-grid sniper-table">{_metric_cards(data.sniper, "sniper")}</div>') if data.sniper else ""
-    technical = _section_html("技术参考", "⌁", f'<div class="metric-grid technical-grid">{_metric_cards(data.technical)}</div>') if data.technical else ""
+    conclusion = _section_html(_poster_text(language, "core"), "◎", f'<div class="conclusion">{_escape(data.conclusion)}</div>') if data.conclusion else ""
+    snapshot = _section_html(_poster_text(language, "snapshot"), "▥", f'<div class="metric-grid snapshot-grid">{_metric_cards(data.snapshot, language=language)}</div>') if data.snapshot else ""
+    sniper = _section_html(_poster_text(language, "execution"), "◎", f'<div class="metric-grid sniper-grid sniper-table">{_metric_cards(data.sniper, "sniper", language=language)}</div>') if data.sniper else ""
+    technical = _section_html(_poster_text(language, "technical"), "⌁", f'<div class="metric-grid technical-grid">{_metric_cards(data.technical, language=language)}</div>') if data.technical else ""
     watch = _section_html(
-        "下一步观察",
+        _poster_text(language, "next_watch"),
         "✓",
         '<div class="watch-grid">' + "".join(
-            f'<div class="watch-card {tone_name}"><span>{_escape(label)}</span><p>{_escape(value)}</p></div>'
+            f'<div class="watch-card {tone_name}"><span>{_escape(_poster_label(language, label))}</span><p>{_escape(value)}</p></div>'
             for label, value, tone_name in data.watch_items
         ) + "</div>",
     ) if data.watch_items else ""
     insight_cards = ""
     if data.catalysts:
-        insight_cards += f'<div class="insight positive"><h3>利好催化</h3>{_list_html(data.catalysts)}</div>'
+        insight_cards += f'<div class="insight positive"><h3>{_escape(_poster_text(language, "positive_catalysts"))}</h3>{_list_html(data.catalysts)}</div>'
     if data.risks:
-        insight_cards += f'<div class="insight negative"><h3>风险警报</h3>{_list_html(data.risks)}</div>'
-    insights = _section_html("催化与风险", "!", f'<div class="two-column">{insight_cards}</div>') if insight_cards else ""
+        insight_cards += f'<div class="insight negative"><h3>{_escape(_poster_text(language, "risk_alerts"))}</h3>{_list_html(data.risks)}</div>'
+    insights = _section_html(_poster_text(language, "catalysts_risks"), "!", f'<div class="two-column">{insight_cards}</div>') if insight_cards else ""
     position_rows = ""
     for label, value, tone_name in (
-        ("未持仓", data.no_position, "primary"),
-        ("已持仓", data.has_position, "warning"),
-        ("仓位", data.position_size, "positive"),
+        (_poster_text(language, "no_position"), data.no_position, "primary"),
+        (_poster_text(language, "holding"), data.has_position, "warning"),
+        (_poster_text(language, "position"), data.position_size, "positive"),
     ):
         if value:
             position_rows += f'<div class="position-row"><span class="pill {tone_name}">{label}</span><p>{_escape(value)}</p></div>'
     if data.entry_plan:
-        position_rows += f'<div class="position-row"><span class="pill primary">建仓</span><p>{_escape(data.entry_plan)}</p></div>'
+        position_rows += f'<div class="position-row"><span class="pill primary">{_escape(_poster_text(language, "entry"))}</span><p>{_escape(data.entry_plan)}</p></div>'
     if data.risk_control:
-        position_rows += f'<div class="position-row"><span class="pill negative">风控</span><p>{_escape(data.risk_control)}</p></div>'
-    positions = _section_html("持仓建议", "▣", f'<div class="position-box">{position_rows}</div>') if position_rows else ""
+        position_rows += f'<div class="position-row"><span class="pill negative">{_escape(_poster_text(language, "risk_control"))}</span><p>{_escape(data.risk_control)}</p></div>'
+    positions = _section_html(_poster_text(language, "position_advice"), "▣", f'<div class="position-box">{position_rows}</div>') if position_rows else ""
     structured = any((signal_row, conclusion, snapshot, sniper, technical, watch, insights, positions))
     fallback = f'<section class="report-fallback"><article class="report-content">{fallback_html}</article></section>' if not structured else ""
     return f"{signal_row}{conclusion}{snapshot}{sniper}{technical}{watch}{insights}{positions}{fallback}"
 
 
 def _market_body(data: MarketPoster, fallback_html: str, markdown_text: str) -> str:
+    language = data.language
     signal = ""
     if data.score:
         signal = (
             '<section class="market-signal">'
-            '<div class="signal-main"><span>市场信号</span>'
+            f'<div class="signal-main"><span>{_escape(_poster_text(language, "market_signal"))}</span>'
             f'<strong>{_escape(data.score)}</strong><small>/100</small></div>'
             f'<div class="market-label">{_escape(data.signal or data.temperature)}</div>'
-            f'<div class="signal-guidance"><span>今日结论</span><p>{_escape(data.guidance or data.summary)}</p></div>'
+            f'<div class="signal-guidance"><span>{_escape(_poster_text(language, "today_conclusion"))}</span><p>{_escape(data.guidance or data.summary)}</p></div>'
             '</section>'
         )
     indices = ""
@@ -1405,11 +1626,11 @@ def _market_body(data: MarketPoster, fallback_html: str, markdown_text: str) -> 
         for name, current, change, color in data.indices:
             cards.append(f'<div class="index-card"><span>{_escape(name)}</span><strong class="{color}">{_escape(change)}</strong><small>{_escape(current)}</small></div>')
         indices = f'<div class="index-grid">{"".join(cards)}</div>'
-    breadth = _section_html("市场宽度", "↕", f'<div class="metric-grid breadth-grid">{_metric_cards(data.breadth)}</div>') if data.breadth else ""
+    breadth = _section_html(_poster_text(language, "breadth"), "↕", f'<div class="metric-grid breadth-grid">{_metric_cards(data.breadth, language=language)}</div>') if data.breadth else ""
     dimensions = _section_html(
-        "信号拆解",
+        _poster_text(language, "dimensions"),
         "◫",
-        f'<div class="metric-grid dimension-grid">{_metric_cards(data.dimensions)}</div>',
+        f'<div class="metric-grid dimension-grid">{_metric_cards(data.dimensions, language=language)}</div>',
     ) if data.dimensions else ""
     sector_rows = "".join(
         f'<div class="ranking-row"><b>{index:02d}</b><span>{_escape(name)}</span><strong>{_escape(change)}</strong></div>'
@@ -1419,33 +1640,33 @@ def _market_body(data: MarketPoster, fallback_html: str, markdown_text: str) -> 
         f'<div class="ranking-row lagging"><b>{index:02d}</b><span>{_escape(name)}</span><strong>{_escape(change)}</strong></div>'
         for index, (name, change) in enumerate(data.laggards, 1)
     )
-    sectors = _section_html("强势板块", "◆", f'<div class="ranking">{sector_rows}</div>') if sector_rows else ""
-    laggards = _section_html("弱势板块", "◇", f'<div class="ranking">{laggard_rows}</div>') if laggard_rows else ""
+    sectors = _section_html(_poster_text(language, "leaders"), "◆", f'<div class="ranking">{sector_rows}</div>') if sector_rows else ""
+    laggards = _section_html(_poster_text(language, "laggards"), "◇", f'<div class="ranking">{laggard_rows}</div>') if laggard_rows else ""
     sector_dual = (
         f'<div class="market-two-column"><div class="market-left">{sectors}</div>'
         f'<div class="market-right">{laggards}</div></div>'
         if sectors or laggards else ""
     )
     focus_rows = "".join(
-        f'<div class="focus-row"><b>关注</b><span>{_escape(value)}</span></div>'
+        f'<div class="focus-row"><b>{_escape(_poster_text(language, "focus_tag"))}</b><span>{_escape(value)}</span></div>'
         for value in data.focus
     ) + "".join(
-        f'<div class="focus-row avoid"><b>回避</b><span>{_escape(value)}</span></div>'
+        f'<div class="focus-row avoid"><b>{_escape(_poster_text(language, "avoid_tag"))}</b><span>{_escape(value)}</span></div>'
         for value in data.avoid
     )
     fund_rows = "".join(
-        f'<div class="fund-row {_escape(tone)}"><span>{_escape(label)}</span><strong>{_escape(value)}</strong></div>'
+        f'<div class="fund-row {_escape(tone)}"><span>{_escape(_poster_label(language, label))}</span><strong>{_escape(value)}</strong></div>'
         for label, value, tone in data.funds
     )
-    focus = _section_html("重点跟踪", "◎", f'<div class="focus-list">{focus_rows}</div>') if focus_rows else ""
-    funds = _section_html("资金观察", "↗", f'<div class="fund-list">{fund_rows}</div>') if fund_rows else ""
+    focus = _section_html(_poster_text(language, "focus"), "◎", f'<div class="focus-list">{focus_rows}</div>') if focus_rows else ""
+    funds = _section_html(_poster_text(language, "funds"), "↗", f'<div class="fund-list">{fund_rows}</div>') if fund_rows else ""
     detail_dual = (
         f'<div class="market-two-column market-details"><div class="market-left">{focus}</div>'
         f'<div class="market-right">{funds}</div></div>'
         if focus or funds else ""
     )
-    plan = _section_html("明日策略", "✓", _list_html(data.plan), "strategy-strip") if data.plan else ""
-    risks = _section_html("风险提示", "!", _list_html(data.risks), "risk-strip") if data.risks else ""
+    plan = _section_html(_poster_text(language, "strategy"), "✓", _list_html(data.plan), "strategy-strip") if data.plan else ""
+    risks = _section_html(_poster_text(language, "risks"), "!", _list_html(data.risks), "risk-strip") if data.risks else ""
     structured = any((signal, indices, breadth, dimensions, sector_dual, detail_dual, plan, risks))
     keep_fallback = not structured or _should_keep_market_fallback(markdown_text, data)
     fallback = f'<section class="report-fallback"><article class="report-content">{fallback_html}</article></section>' if keep_fallback else ""
@@ -1456,12 +1677,44 @@ def _generic_body(report_html: str) -> str:
     return f'<section class="report-fallback"><article class="report-content">{report_html}</article></section>'
 
 
-def _multi_market_body(segments: list[MarketSegment], generated_on: date) -> str:
+def _market_region_for_segment(segment: MarketSegment) -> str:
+    label = _market_label(segment.title) or _market_label(segment.markdown[:500])
+    return {
+        "A股": "cn",
+        "港股": "hk",
+        "美股": "us",
+        "日股": "jp",
+        "韩股": "kr",
+    }.get(label, "")
+
+
+def _multi_market_body(
+    segments: list[MarketSegment],
+    generated_on: date,
+    structured_payload: Optional[Mapping[str, Any]] = None,
+) -> str:
     blocks: list[str] = []
+    markets = structured_payload.get("markets") if isinstance(structured_payload, Mapping) else None
+    market_payloads = markets if isinstance(markets, Mapping) else {}
+    unused_regions = [
+        region for region in ("cn", "hk", "us", "jp", "kr")
+        if isinstance(market_payloads.get(region), Mapping)
+    ]
     for segment in segments:
         body_markdown = _HEADING_RE.sub("", segment.markdown, count=1).strip()
         fallback_html = _render_markdown_fragment(body_markdown)
-        data = _market_data(segment.markdown, generated_on)
+        region = _market_region_for_segment(segment)
+        payload = market_payloads.get(region) if region else None
+        if not isinstance(payload, Mapping) and unused_regions:
+            payload = market_payloads.get(unused_regions[0])
+            region = unused_regions[0]
+        if region in unused_regions:
+            unused_regions.remove(region)
+        data = (
+            _market_data_from_payload(payload, segment.markdown, generated_on)
+            if isinstance(payload, Mapping)
+            else _market_data(segment.markdown, generated_on)
+        )
         title = data.title or segment.title
         blocks.append(
             f'<section class="poster-section market-region-title"><h2><b>◎</b>{_escape(title)}</h2></section>'
@@ -1470,20 +1723,20 @@ def _multi_market_body(segments: list[MarketSegment], generated_on: date) -> str
     return "".join(blocks)
 
 
-def _footer(xiaohongshu_qr: str, source_line: str) -> str:
+def _footer(xiaohongshu_qr: str, source_line: str, language: str) -> str:
     return f"""
     <footer class="poster-footer">
       <div class="footer-brand">
         <div class="footer-title"><strong>DSA</strong><span>{_escape(PROJECT_DISPLAY_NAME)}</span></div>
-        <small>让股票研究更简单、更高效</small>
+        <small>{_escape(_poster_text(language, "tagline"))}</small>
         <div class="repo-line">
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.64 0 8.13c0 3.59 2.29 6.64 5.47 7.71.4.08.55-.18.55-.39 0-.19-.01-.83-.01-1.51-2.01.38-2.53-.5-2.69-.96-.09-.23-.48-.96-.82-1.15-.28-.15-.68-.53-.01-.54.63-.01 1.08.59 1.23.83.72 1.23 1.87.88 2.33.67.07-.53.28-.88.51-1.08-1.78-.21-3.64-.91-3.64-4.02 0-.89.31-1.62.82-2.19-.08-.21-.36-1.04.08-2.16 0 0 .67-.22 2.2.84A7.45 7.45 0 0 1 8 3.91c.68 0 1.36.09 2 .27 1.53-1.06 2.2-.84 2.2-.84.44 1.12.16 1.95.08 2.16.51.57.82 1.3.82 2.19 0 3.12-1.87 3.81-3.65 4.02.29.25.54.74.54 1.5 0 1.08-.01 1.95-.01 2.22 0 .22.15.47.55.39A8.15 8.15 0 0 0 16 8.13C16 3.64 12.42 0 8 0Z"/></svg>
-          <div><em>开源项目 · GitHub</em><b>{_escape(PROJECT_REPOSITORY)}</b></div>
+          <div><em>{_escape(_poster_text(language, "open_source"))}</em><b>{_escape(PROJECT_REPOSITORY)}</b></div>
         </div>
       </div>
-      <div class="qr-card"><div class="qr-frame"><img src="{xiaohongshu_qr}" alt="小红书二维码"></div><span><b>小红书</b> {_escape(XIAOHONGSHU_HANDLE)}</span></div>
+      <div class="qr-card"><div class="qr-frame"><img src="{xiaohongshu_qr}" alt="小红书二维码"></div><span><b>{_escape(_poster_text(language, "xiaohongshu"))}</b> {_escape(XIAOHONGSHU_HANDLE)}</span></div>
     </footer>
-    <div class="disclaimer">AI 生成，仅供研究交流，不构成投资建议。市场有风险，决策需谨慎。{_escape(source_line)}</div>
+    <div class="disclaimer">{_escape(_poster_text(language, "disclaimer"))}{_escape(source_line)}</div>
     """
 
 
@@ -1501,6 +1754,7 @@ def build_share_image_html(
     """
 
     generated = generated_on or date.today()
+    language = _poster_language(markdown_text, structured_payload)
     headings = _extract_sections(markdown_text)
     first_title = headings[0][0] if headings else "股票智能分析报告"
     stock_headings = _stock_headings(markdown_text)
@@ -1519,9 +1773,13 @@ def build_share_image_html(
     source_line = ""
     if report_kind == "market":
         if market_segments:
-            title = "多市场复盘"
-            subtitle = "按市场分段展示指数、主线与风险边界"
-            content = _multi_market_body(market_segments, generated)
+            title = _poster_text(language, "multi_title")
+            subtitle = _poster_text(language, "multi_subtitle")
+            content = _multi_market_body(
+                market_segments,
+                generated,
+                structured_payload=structured_payload,
+            )
         else:
             data = (
                 _market_data_from_payload(structured_payload, markdown_text, generated)
@@ -1529,7 +1787,8 @@ def build_share_image_html(
                 else _market_data(markdown_text, generated)
             )
             title = data.title
-            subtitle = data.summary or "指数、宽度、主线与风险的收盘复盘"
+            language = data.language
+            subtitle = data.summary or _poster_text(language, "market_subtitle")
             content = _market_body(data, fallback_html, markdown_text)
     elif report_kind == "stock":
         data = (
@@ -1538,18 +1797,24 @@ def build_share_image_html(
             else _stock_data(markdown_text, generated)
         )
         title = data.title
-        subtitle = "个股决策卡 · 结论、点位与风险一图读懂"
+        language = data.language
+        subtitle = _poster_text(language, "stock_subtitle")
         content = _stock_body(data, fallback_html)
-        source_line = f" 数据源：{data.data_source}。" if data.data_source else ""
+        if data.data_source:
+            source_line = (
+                f" 数据源：{data.data_source}。"
+                if language == "zh"
+                else f" {_poster_text(language, 'source')}: {data.data_source}."
+            )
     else:
         title = first_title
-        subtitle = "多股决策摘要"
+        subtitle = _poster_text(language, "dashboard_subtitle")
         content = _generic_body(fallback_html)
 
     xiaohongshu_qr = _asset_data_uri("xiaohongshu_qr.jpg", "image/jpeg")
 
     return f"""<!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="{'en' if language == 'en' else 'ko' if language == 'ko' else 'zh-CN'}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=1080, initial-scale=1">
@@ -1581,10 +1846,10 @@ def build_share_image_html(
 </head>
 <body>
   <main class="poster {report_kind}">
-    <header class="poster-header"><div class="brand"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span><strong>DSA</strong><em>|</em> AI 股票分析</div><div class="meta"><span class="date-chip">{_escape(stamp)}</span></div></header>
+    <header class="poster-header"><div class="brand"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span><strong>DSA</strong><em>|</em> {_escape(_poster_text(language, "brand"))}</div><div class="meta"><span class="date-chip">{_escape(stamp)}</span></div></header>
     <section class="hero"><h1>{_escape(title)}{f'<span class="code">{_escape(data.code)}</span>' if report_kind == 'stock' and data.code else ''}</h1><p>{_escape(subtitle)}</p></section>
     {content}
-    {_footer(xiaohongshu_qr, source_line)}
+    {_footer(xiaohongshu_qr, source_line, language)}
   </main>
 </body>
 </html>"""

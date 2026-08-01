@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - [修复] 本地 CLI 的 `stdout_preview` / `stderr_preview` 按环境变量、JSON、YAML/日志标量与 URL 的独立契约脱敏短凭证，避免小于 32 字符的 API key、secret 或 token 进入诊断；普通字段仅按敏感名称判定，未加引号的 YAML 敏感标量则 fail-closed 脱敏至行尾（refs #1784）。
 - [改进] 图片报告改用独立的 1080px 个股决策卡和高密度市场复盘卡，优先从 `AnalysisResult.to_dict()` / `market_review_payload` 精确填充数据并保留 Markdown 回退；个股图增加置信度、趋势分、乖离率和阶段观察窗口，市场图增加灯号拆解、强弱板块、资金观察、关注/回避方向和策略失效条件，使用真实小红书二维码并直接展示 GitHub 仓库地址；Web 历史报告新增一键生成、系统分享或下载 PNG，并增加 Playwright 渲染引擎。
 - [修复] PyInstaller 冻结包在 NLTK 3.10 导入保护下将内置 `_internal` 标准库误判为当前目录模块并启动失败；新增仅在冻结包中先于 NLTK 执行的兼容 runtime hook，并由 Windows/macOS 打包脚本统一接入。
+- [修复] 分享图按字段合并历史结构化数据与 Markdown，多市场逐区域复用持久化 payload，隐藏不可用市场灯号维度并保留 `MARKET_REVIEW_COLOR_SCHEME`；中英韩模板界面跟随报告语言，Web 原生分享失败时自动回退下载。
 - [修复] `redact_diagnostic_text()` 在 `export SENSITIVE_ENV=$(printenv OTHER_SECRET) session_id=...` 形态下不再因第二遍 `$(...)` 扫描与第一遍敏感赋值替换区重叠而吞掉 `session_id` 等尾随非敏感诊断字段；第二遍扫描现以 first-pass 已替换 span 列表为可信跳过表，并对 prior-head / prior-semicolon 分支的 leading regex 加上 `(?:export[ \t]+)?` 前缀，使 `export FOO=$(...)` 与 `FOO=$(...)` 在所有分支行为对齐（关闭 PR #2118 review blocker OR-COR-7c0a5d41）。
 - [修复] LongbridgeFetcher._compute_volume_ratio 调用 history_candlesticks_by_offset 时把 time 与 count 两个位置参数传反，PyO3 转换层抛 argument 'time': 'int' object cannot be converted to 'PyDateTime'，异常被 try/except 静默吞到 DEBUG 日志，导致港股/美股实时行情链路上的量比字段恒为 None 并对外表现为"未获取到数据"；改用 adaptive keyword args 调用，兼容 0.2.74 (forward, time, count) 与 4.x (forward, count, time) 两种 SDK 契约，并按 keyword args 契约覆盖两版本回归测试（fixes #2100）
 

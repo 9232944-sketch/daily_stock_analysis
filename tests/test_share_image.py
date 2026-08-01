@@ -188,6 +188,37 @@ def test_market_share_image_prefers_structured_market_metrics():
     assert "20/100" not in html
 
 
+def test_market_share_image_hides_unavailable_dimensions_and_uses_payload_color_scheme():
+    payload = {
+        "kind": "market_review",
+        "region": "us",
+        "color_scheme": "red_up",
+        "market_light": {
+            "score": 65,
+            "dimensions": {
+                "breadth": {"score": 50, "available": False},
+                "index": {"score": 72, "available": True},
+                "limit": {"score": 50, "available": False},
+            },
+        },
+        "indices": [
+            {"name": "S&P 500", "current": 6500, "change_pct": 0.8},
+        ],
+    }
+
+    html = build_share_image_html(
+        "# US Market Recap\n\n## Major Indices\n\n- S&P 500 closed higher.",
+        generated_on=date(2026, 8, 1),
+        structured_payload=payload,
+    )
+
+    assert "Index Strength" in html
+    assert "72/100" in html
+    assert "Breadth Score" not in html
+    assert "Limit Structure" not in html
+    assert '<strong class="red">+0.80%</strong>' in html
+
+
 def test_market_share_image_uses_market_variant_and_preserves_tables():
     html = build_share_image_html(
         "# A 股大盘复盘\n\n## 指数表现\n\n| 指数 | 涨跌 |\n| --- | --- |\n| 上证 | +0.8% |",
@@ -427,6 +458,114 @@ def test_stock_share_image_reads_close_only_market_snapshot_column():
     assert "0.76%" in html
 
 
+def test_partial_stock_payload_preserves_markdown_snapshot_technical_and_trade_points():
+    payload = {
+        "name": "贵州茅台",
+        "code": "600519",
+        "dashboard": {
+            "core_conclusion": {"one_sentence": "等待支撑确认。"},
+        },
+    }
+    html = build_share_image_html(
+        """# 贵州茅台 600519 分析报告
+
+## 核心结论
+
+**买入**：等待支撑确认。
+
+### 当日行情
+
+| 当前价 | 涨跌幅 | 量比 | 换手率 |
+| --- | --- | --- | --- |
+| 1425.00 | +1.20% | 1.35 | 0.82% |
+
+### 数据透视
+
+**成交量**: 量比 1.35 | 换手率 0.82%
+
+### 作战计划
+
+| 点位类型 | 价格 |
+| --- | --- |
+| 理想买入点 | 1420-1450 |
+| 止损位 | 1350 |
+""",
+        generated_on=date(2026, 8, 1),
+        structured_payload=payload,
+    )
+
+    assert "1425.00" in html
+    assert "+1.20%" in html
+    assert "量比 1.35" in html
+    assert "<strong>1420</strong>" in html
+    assert "1350" in html
+
+
+def test_complete_stock_volume_payload_does_not_duplicate_verbose_volume_card():
+    payload = {
+        "name": "贵州茅台",
+        "code": "600519",
+        "dashboard": {
+            "data_perspective": {
+                "volume_analysis": {
+                    "volume_ratio": 1.35,
+                    "turnover_rate": 0.82,
+                },
+            },
+        },
+    }
+    html = build_share_image_html(
+        """# 贵州茅台 600519 分析报告
+
+## 核心结论
+
+**持有**：继续观察。
+
+### 数据透视
+
+**成交量**: 量比 1.35，量能正常，较 5 日均量放大约 5% | 换手率 0.82%
+""",
+        generated_on=date(2026, 8, 1),
+        structured_payload=payload,
+    )
+
+    assert "较 5 日均量放大" not in html
+    assert "1.35" in html
+    assert "0.82%" in html
+
+
+def test_stock_payload_market_snapshot_overlays_only_populated_fields():
+    payload = {
+        "name": "贵州茅台",
+        "code": "600519",
+        "dashboard": {},
+        "market_snapshot": {"price": "1430.00", "source": "tencent"},
+    }
+    html = build_share_image_html(
+        """# 贵州茅台 600519 分析报告
+
+## 核心结论
+
+**持有**：继续观察。
+
+### 当日行情
+
+| 当前价 | 涨跌幅 | 量比 | 换手率 |
+| --- | --- | --- | --- |
+| 1425.00 | +1.20% | 1.35 | 0.82% |
+""",
+        generated_on=date(2026, 8, 1),
+        structured_payload=payload,
+    )
+
+    assert "1430.00" in html
+    assert "1425.00" not in html
+    assert "+1.20%" in html
+    assert "1.35" in html
+    assert "0.82%" in html
+    assert "数据源：tencent" in html
+
+
 def test_stock_share_image_prefers_realtime_price_over_close_in_combined_snapshot():
     html = build_share_image_html(
         """# 贵州茅台 600519 分析报告
@@ -531,7 +670,7 @@ def test_korean_market_review_heading_uses_market_poster():
 
     assert 'class="poster market"' in html
     assert "多股决策摘要" not in html
-    assert "美股市场复盘" in html
+    assert "미국 시황 리뷰" in html
 
 
 def test_korean_multi_market_review_skips_root_wrapper_segment():
@@ -574,9 +713,9 @@ def test_korean_multi_market_review_skips_root_wrapper_segment():
     )
 
     assert 'class="poster market"' in html
-    assert "多市场复盘" in html
-    assert "美股市场复盘" in html
-    assert "港股市场复盘" in html
+    assert "다중 시장 리뷰" in html
+    assert "미국 시황 리뷰" in html
+    assert "홍콩 시황 리뷰" in html
     assert "여러 시장 마감 요약" not in html
 
 
@@ -608,9 +747,9 @@ def test_stock_report_market_snapshot_does_not_route_to_market_poster():
     )
 
     assert 'class="poster stock"' in html
-    assert "个股决策卡" in html
+    assert "Stock decision card" in html
     assert "Apple Inc." in html
-    assert "理想买入" in html
+    assert "Ideal Entry" in html
     assert "failed earnings guide" in html
 
 
@@ -669,6 +808,99 @@ def test_multi_market_review_keeps_every_region_in_share_image():
     assert "港股市场复盘" in html
     assert "上证指数" in html
     assert "恒生指数" in html
+
+
+def test_multi_market_review_uses_each_structured_market_payload():
+    payload = {
+        "kind": "market_review",
+        "region": "cn,us",
+        "language": "zh",
+        "markets": {
+            "cn": {
+                "region": "cn",
+                "title": "A股市场复盘",
+                "color_scheme": "green_up",
+                "market_light": {
+                    "score": 81,
+                    "dimensions": {
+                        "breadth": {"score": 88, "available": True},
+                    },
+                },
+                "indices": [
+                    {"name": "结构化上证", "current": 3999, "change_pct": 0.9},
+                ],
+            },
+            "us": {
+                "region": "us",
+                "title": "美股市场复盘",
+                "color_scheme": "green_up",
+                "market_light": {
+                    "score": 67,
+                    "dimensions": {
+                        "breadth": {"score": 50, "available": False},
+                        "index": {"score": 71, "available": True},
+                    },
+                },
+                "indices": [
+                    {"name": "Structured Nasdaq", "current": 7777, "change_pct": 1.1},
+                ],
+            },
+        },
+    }
+    html = build_share_image_html(
+        """# A股大盘复盘
+
+## 指数结构
+
+| 指数 | 最新 | 涨跌幅 |
+| --- | --- | --- |
+| 上证指数 | 3200 | +0.80% |
+
+# 美股大盘复盘
+
+## Major Indices
+
+| Index | Last | Change % |
+| --- | --- | --- |
+| Nasdaq | 6500 | +0.70% |
+""",
+        generated_on=date(2026, 8, 1),
+        structured_payload=payload,
+    )
+
+    assert "结构化上证" in html
+    assert "3999" in html
+    assert "Structured Nasdaq" in html
+    assert "7777" in html
+    assert "88/100" in html
+    assert "71/100" in html
+    assert html.count("赚钱效应") == 1
+
+
+@pytest.mark.parametrize("action", ["强烈买入", "Strong Buy"])
+def test_stock_share_image_preserves_compound_buy_action(action):
+    html = build_share_image_html(
+        f"## Apple (AAPL)\n\n## Core Conclusion\n\n**{action}**: Momentum remains constructive.",
+        generated_on=date(2026, 8, 1),
+    )
+
+    assert f'<div class="action-chip positive">{action}</div>' in html
+
+
+def test_stock_share_image_finds_action_after_other_bold_labeled_fields():
+    html = build_share_image_html(
+        """## Apple (AAPL)
+
+## Core Conclusion
+
+**One-line Decision**: Wait for confirmation.
+
+**Strong Buy**: Momentum remains constructive.
+""",
+        generated_on=date(2026, 8, 1),
+    )
+
+    assert '<div class="action-chip positive">Strong Buy</div>' in html
 
 
 def test_multi_market_review_ignores_root_wrapper_title_when_splitting_regions():
@@ -770,8 +1002,8 @@ def test_english_multi_market_review_maps_region_titles_from_headings():
     )
 
     assert 'class="poster market"' in html
-    assert "美股市场复盘" in html
-    assert "港股市场复盘" in html
+    assert "US Market Recap" in html
+    assert "HK Market Recap" in html
     assert "A股市场复盘" not in html
 
 
@@ -880,8 +1112,8 @@ def test_english_breadth_line_populates_structured_market_breadth_cards():
     )
 
     assert 'class="poster market"' in html
-    assert "美股市场复盘" in html
-    assert "市场宽度" in html
+    assert "US Market Recap" in html
+    assert "Market Breadth" in html
     assert "3200" in html
     assert "1800" in html
     assert "88" in html
@@ -966,7 +1198,7 @@ def test_korean_market_review_preserves_localized_sections_with_english_sector_f
 
     assert 'class="poster market"' in html
     assert '<section class="market-signal">' in html
-    assert "A股市场复盘" in html
+    assert "중국 A주 시황 리뷰" in html
     assert "주도 섹터 눌림목만 선별한다" in html
     assert "상하이종합" in html
     assert "3200" in html
@@ -1048,6 +1280,25 @@ def test_market_share_image_parses_fallback_major_indices_bullets():
     assert "↓0.20%" in html
 
 
+def test_arrow_only_fallback_keeps_default_gain_color_when_first_index_declines():
+    html = build_share_image_html(
+        """# US Market Recap
+
+## Market Summary
+
+- **Breadth**: Advancers 1200 / Decliners 3800
+
+## Major Indices
+
+- **S&P 500**: 5000.00 (↓0.80%)
+""",
+        generated_on=date(2026, 8, 1),
+    )
+
+    assert 'class="metric green"><span>Advancers</span>' in html
+    assert 'class="metric red"><span>Decliners</span>' in html
+
+
 def test_market_share_image_uses_red_up_gain_color_for_breadth_when_all_indices_decline():
     html = build_share_image_html(
         """# 大盘复盘
@@ -1100,8 +1351,8 @@ def test_market_share_image_preserves_red_up_colors_for_english_fallback_index_b
 
     assert '<strong class="red">🔴 +0.80%</strong>' in html
     assert '<strong class="green">🟢 -0.20%</strong>' in html
-    assert 'class="metric red"><span>上涨</span>' in html
-    assert 'class="metric green"><span>下跌</span>' in html
+    assert 'class="metric red"><span>Advancers</span>' in html
+    assert 'class="metric green"><span>Decliners</span>' in html
 
 
 def test_single_stock_dashboard_title_routes_to_stock_poster():
@@ -1126,7 +1377,7 @@ def test_single_stock_dashboard_title_routes_to_stock_poster():
     )
 
     assert 'class="poster stock"' in html
-    assert "个股决策卡" in html
+    assert "Stock decision card" in html
     assert "Apple Inc." in html
     assert '<span class="code">AAPL</span>' in html
 
@@ -1168,7 +1419,7 @@ def test_single_stock_dashboard_uses_trailing_parenthesized_us_ticker():
     )
 
     assert 'class="poster stock"' in html
-    assert "个股决策卡" in html
+    assert "Stock decision card" in html
     assert "IBM" in html
     assert '<span class="code">IBM</span>' in html
 

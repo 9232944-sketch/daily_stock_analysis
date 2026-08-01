@@ -11,20 +11,20 @@
   -> AnalysisResult.to_dict() 结构化 JSON + 稳定 Markdown
   -> share_image 优先读取 JSON，Markdown 兼容回退
   -> 个股决策卡 HTML
-  -> wkhtmltoimage / markdown-to-file 输出 PNG
+  -> wkhtmltoimage / markdown-to-file / Playwright 输出 PNG
 
 大盘 MarketOverview + market_light + LLM 复盘
   -> MarketAnalyzer 生成 market_review_payload + 稳定 Markdown
   -> share_image 优先读取 payload，Markdown 兼容回退
   -> 市场复盘卡 HTML
-  -> wkhtmltoimage / markdown-to-file 输出 PNG
+  -> wkhtmltoimage / markdown-to-file / Playwright 输出 PNG
 ```
 
 `MARKDOWN_TO_IMAGE_CHANNELS`、`MD2IMG_ENGINE`、`MARKDOWN_TO_IMAGE_MAX_CHARS` 继续控制哪些通知渠道转图、使用哪个引擎以及最大输入长度。转换失败时仍回退为文本通知。
 
 ## Web 一键分享
 
-历史个股报告、市场复盘和完整报告抽屉右上角都会显示“分享”按钮。点击后，Web 调用 `GET /api/v1/history/{record_id}/share-image`，使用该条历史记录的 Markdown 与结构化 JSON 生成同一套固定模板。支持文件分享的浏览器会打开系统分享面板；其他浏览器会直接下载 PNG。
+历史个股报告、市场复盘和完整报告抽屉右上角都会显示“分享”按钮。点击后，Web 调用 `GET /api/v1/history/{record_id}/share-image`，使用该条历史记录的 Markdown 与结构化 JSON 生成同一套固定模板。支持文件分享的浏览器会打开系统分享面板；其他浏览器会直接下载 PNG。如果浏览器已声明支持文件分享、但系统分享面板实际打开失败，除用户主动取消外也会自动回退下载已经生成的 PNG。
 
 Web 手工生成不受 `MARKDOWN_TO_IMAGE_CHANNELS` 限制，但服务端仍需配置可用的 `MD2IMG_ENGINE`。使用 Playwright 时先执行：
 
@@ -34,7 +34,7 @@ npm ci
 npx playwright install chromium
 ```
 
-结构化数据用于精确填充名称、动作、评分、价格、宽度和板块等字段；Markdown 仍负责兼容旧调用以及计划、风险等文本章节。模板不根据分数自行推导操作，也不补造价格或指标。字段为 `N/A`、`-`、空值或没有对应模块时，相关卡片自动隐藏。
+结构化数据用于精确填充名称、动作、评分、价格、宽度和板块等字段；Markdown 仍负责兼容旧调用以及计划、风险等文本章节。部分历史 JSON 只覆盖其中实际存在的字段，不会清空 Markdown 中已有的行情、技术参考或执行点位。模板不根据分数自行推导操作，也不补造价格或指标。字段为 `N/A`、`-`、空值或没有对应模块时，相关卡片自动隐藏。
 
 ## 个股卡字段映射
 
@@ -45,22 +45,22 @@ npx playwright install chromium
 | 核心结论 | `dashboard.core_conclusion.one_sentence` | 没有时隐藏 |
 | 市场快照 | `market_snapshot` | 当前/收盘价、涨跌幅、量比、换手率按可用字段展示；数据源进入底部声明 |
 | 执行计划 | `dashboard.battle_plan.sniper_points` | 只展示理想/确认买入、止损和首个目标价格；复杂触发条件保留在完整报告 |
-| 技术参考 | `dashboard.data_perspective` | 展示均线状态、趋势分、MA5 乖离、支撑和压力，不重复快照里的量比 |
+| 技术参考 | `dashboard.data_perspective` | 展示均线状态、趋势分、MA5 乖离、支撑和压力；结构化量比/换手已进入快照时不重复展示冗长量能描述，旧记录缺失结构化量能时仍保留 Markdown 兜底 |
 | 下一步观察 | `dashboard.phase_decision` | 展示行动窗口、下次检查时间和最多两条观察条件 |
 | 催化与风险 | `dashboard.intelligence` | `positive_catalysts` 与 `risk_alerts` 最多各展示 2 条短摘要 |
 | 持仓建议 | `core_conclusion.position_advice` | 只区分未持仓和已持仓，仓位、建仓、风控长文保留在完整报告 |
 
-模板支持项目当前的中英文报告标签。一个“决策仪表盘”只有一只股票时会自动使用个股卡；包含多只股票时保留多股报告布局，避免错误地把第一只股票当成整份报告。
+模板支持项目当前的中文、英文和韩文报告标签，海报栏目、指标标签和底部声明跟随报告语言。一个“决策仪表盘”只有一只股票时会自动使用个股卡；包含多只股票时保留多股报告布局，避免错误地把第一只股票当成整份报告。`强烈买入`、`Strong Buy` 等复合动作会保留完整动作标签。
 
 ## 大盘卡字段映射
 
 | 图片区域 | 项目字段 / 生成来源 | 填充规则 |
 | --- | --- | --- |
-| 日期、市场范围 | `MarketOverview.date`、复盘区域 | 生成 A股/美股/港股/日股/韩股市场复盘标题 |
+| 日期、市场范围 | `MarketOverview.date`、复盘区域 | 生成 A股/美股/港股/日股/韩股市场复盘标题；多市场报告逐段匹配 `market_review_payload.markets` |
 | 市场信号 | `market_light.score`、`temperature_label`、`label`、`guidance` | 使用确定性市场灯号结果，不由模板二次评分 |
-| 指数表现 | `MarketOverview.indices` | 最多展示 3 个主要指数的最新值和涨跌幅 |
+| 指数表现 | `MarketOverview.indices`、`color_scheme` | 最多展示 4 个主要指数的最新值和涨跌幅；结构化 payload 持久化生成时的 `green_up` / `red_up` 颜色语义 |
 | 市场宽度 | `up_count`、`down_count`、`limit_up_count`、`limit_down_count`、`total_amount` | 仅在数据源支持且报告包含结构化数据时展示 |
-| 信号拆解 | `market_light.dimensions` | 展示赚钱效应、指数强度和涨停结构三个确定性评分 |
+| 信号拆解 | `market_light.dimensions` | 只展示 `available != false` 的确定性评分；不把不支持的维度占位分 50 当作真实数据 |
 | 强弱板块 | `sectors.top`、`sectors.bottom` | 领涨、领跌各展示 Top 3；没有板块榜的市场自动隐藏 |
 | 资金观察 | 复盘“资金与情绪”章节 | 提炼涨跌比、增量成交和资金风格，不把成交额或新闻推断伪装成净流入 |
 | 重点跟踪 | 复盘“明日交易计划”的关注/回避方向 | 最多各展示 2 个板块或主题；当前 payload 没有 `leader_stocks`，因此不编造重点个股 |
@@ -130,7 +130,7 @@ png_bytes = markdown_to_image(
 
 ## 视觉与内容边界
 
-- 涨跌颜色以最终报告内容为准；模板不改变项目现有市场颜色配置和业务判断。
+- 涨跌颜色优先使用结构化 payload 持久化的 `color_scheme`，旧记录则从最终报告颜色标记恢复；模板不按市场地区硬编码涨跌色。
 - 分享图中的买入、止损和目标只保留可扫描的价格或“等待企稳”；完整条件始终保留在原报告中。
 - 没有真实价格序列时不绘制伪 K 线；顶部仅保留非数据化的品牌光晕。
 - 小红书二维码使用 `docs/assets/xiaohongshu_tick.jpg` 对应的随包资源并以内嵌 Data URI 渲染，不依赖运行时网络；GitHub 直接展示仓库标识 `ZhuLinsen/daily_stock_analysis`，不生成二维码。

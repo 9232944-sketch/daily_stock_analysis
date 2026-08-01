@@ -3439,6 +3439,26 @@ Index text.
 
         assert "breadth" not in payload
         assert payload["indices"][0]["code"] == "SPX"
+        assert payload["color_scheme"] == "green_up"
+
+    def test_market_review_payload_persists_red_up_color_scheme(self):
+        from src.market_analyzer import MarketIndex, MarketOverview
+
+        ma = self._make_market_analyzer_with_mock_generate_text(return_value="复盘结果")
+        ma.config.market_review_color_scheme = "red_up"
+
+        payload = ma.build_market_review_payload(
+            MarketOverview(
+                date="2026-08-01",
+                indices=[
+                    MarketIndex(code="000001", name="上证指数", current=3500, change_pct=0.8),
+                ],
+            ),
+            [],
+            "A股复盘报告",
+        )
+
+        assert payload["color_scheme"] == "red_up"
 
     def test_market_review_payload_omits_breadth_for_cn_market_without_available_stats(self):
         from src.market_analyzer import MarketIndex, MarketOverview
