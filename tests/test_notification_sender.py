@@ -118,6 +118,33 @@ class TestDiscordSender(unittest.TestCase):
         self.assertIn("username", call_kw["json"])
 
     @mock.patch("src.notification_sender.discord_sender.requests.post")
+    def test_send_strips_hidden_market_region_metadata_from_text_payload(self, mock_post):
+        mock_post.return_value = _response(204)
+        cfg = _config(discord_webhook_url="https://discord.com/webhook/1")
+        sender = DiscordSender(cfg)
+
+        result = sender.send_to_discord("[dsa-market-region]: # (cn)\n\n# 🎯 Market Review\n\nBody")
+
+        self.assertTrue(result)
+        call_kw = mock_post.call_args[1]
+        self.assertNotIn("[dsa-market-region]", call_kw["json"]["content"])
+        self.assertIn("# 🎯 Market Review", call_kw["json"]["content"])
+        self.assertIn("Body", call_kw["json"]["content"])
+
+    @mock.patch("src.notification_sender.discord_sender.requests.post")
+    def test_send_preserves_standard_markdown_reference_definitions(self, mock_post):
+        mock_post.return_value = _response(204)
+        cfg = _config(discord_webhook_url="https://discord.com/webhook/1")
+        sender = DiscordSender(cfg)
+
+        content = "[详情][ref]\n\n[ref]: https://example.com/report"
+        result = sender.send_to_discord(content)
+
+        self.assertTrue(result)
+        call_kw = mock_post.call_args[1]
+        self.assertEqual(call_kw["json"]["content"], content)
+
+    @mock.patch("src.notification_sender.discord_sender.requests.post")
     def test_send_webhook_http_error_returns_false(self, mock_post):
         mock_post.return_value = _response(400)
         cfg = _config(discord_webhook_url="https://discord.com/webhook/1")
@@ -242,6 +269,21 @@ class TestWechatSender(unittest.TestCase):
         result = sender.send_to_wechat("hello")
         self.assertTrue(result)
 
+    @mock.patch("src.notification_sender.wechat_sender.requests.post")
+    def test_send_strips_hidden_market_region_metadata_from_text_payload(self, mock_post):
+        mock_post.return_value = _response(200, {"errcode": 0})
+        cfg = _config(wechat_webhook_url="https://wechat.example/hook", wechat_msg_type="text")
+        sender = WechatSender(cfg)
+
+        result = sender.send_to_wechat("[dsa-market-region]: # (us)\n\n# 🎯 Market Review\n\nBody")
+
+        self.assertTrue(result)
+        payload = mock_post.call_args.kwargs["json"]
+        self.assertEqual(payload["msgtype"], "text")
+        self.assertNotIn("[dsa-market-region]", payload["text"]["content"])
+        self.assertIn("# 🎯 Market Review", payload["text"]["content"])
+        self.assertIn("Body", payload["text"]["content"])
+
     def test_gen_wechat_payload_markdown(self):
         cfg = _config(wechat_webhook_url="u", wechat_msg_type="markdown")
         sender = WechatSender(cfg)
@@ -255,6 +297,15 @@ class TestWechatSender(unittest.TestCase):
         payload = sender._gen_wechat_payload("plain")
         self.assertEqual(payload["msgtype"], "text")
         self.assertEqual(payload["text"]["content"], "plain")
+
+    def test_gen_wechat_payload_text_strips_hidden_market_region_metadata(self):
+        cfg = _config(wechat_webhook_url="u", wechat_msg_type="text")
+        sender = WechatSender(cfg)
+        payload = sender._gen_wechat_payload("[dsa-market-region]: # (us)\n\n# 🎯 Market Review\n\nBody")
+        self.assertEqual(payload["msgtype"], "text")
+        self.assertNotIn("[dsa-market-region]", payload["text"]["content"])
+        self.assertIn("# 🎯 Market Review", payload["text"]["content"])
+        self.assertIn("Body", payload["text"]["content"])
 
     @mock.patch("src.notification_sender.wechat_sender.requests.post")
     def test_send_wechat_image_over_limit_returns_false(self, mock_post):
@@ -1368,6 +1419,20 @@ class TestPushoverSender(unittest.TestCase):
         self.assertEqual(call_data["user"], "U")
         self.assertEqual(call_data["token"], "T")
 
+    @mock.patch("src.notification_sender.pushover_sender.requests.post")
+    def test_send_strips_hidden_market_region_metadata_from_plain_text(self, mock_post):
+        mock_post.return_value = _response(200, {"status": 1})
+        cfg = _config(pushover_user_key="U", pushover_api_token="T")
+        sender = PushoverSender(cfg)
+
+        result = sender.send_to_pushover("[dsa-market-region]: # (us)\n\n# 🎯 Market Review\n\nBody")
+
+        self.assertTrue(result)
+        call_data = mock_post.call_args[1]["data"]
+        self.assertNotIn("[dsa-market-region]", call_data["message"])
+        self.assertIn("🎯 Market Review", call_data["message"])
+        self.assertIn("Body", call_data["message"])
+
     @mock.patch("time.sleep")
     @mock.patch("src.notification_sender.pushover_sender.requests.post")
     def test_send_chunked_uses_test_timeout(self, mock_post, _mock_sleep):
@@ -1520,6 +1585,40 @@ class TestSlackSender(unittest.TestCase):
         self.assertIn("[详情](https://example.com/report)", payload["text"])
 
     @mock.patch("src.notification_sender.slack_sender.requests.post")
+    def test_send_strips_hidden_market_region_metadata_from_text_payload(self, mock_post):
+        resp = mock.MagicMock()
+        resp.status_code = 200
+        resp.text = "ok"
+        mock_post.return_value = resp
+        cfg = _config(slack_webhook_url="https://hooks.slack.com/services/T/B/xxx")
+        sender = SlackSender(cfg)
+
+        result = sender.send_to_slack("[dsa-market-region]: # (us)\n\n# 🎯 Market Review\n\nBody")
+
+        self.assertTrue(result)
+        payload = json.loads(mock_post.call_args.kwargs["data"].decode("utf-8"))
+        self.assertNotIn("[dsa-market-region]", payload["text"])
+        self.assertIn("# 🎯 Market Review", payload["text"])
+        self.assertIn("Body", payload["text"])
+
+    @mock.patch("src.notification_sender.slack_sender.requests.post")
+    def test_send_preserves_standard_markdown_reference_definitions(self, mock_post):
+        resp = mock.MagicMock()
+        resp.status_code = 200
+        resp.text = "ok"
+        mock_post.return_value = resp
+        cfg = _config(slack_webhook_url="https://hooks.slack.com/services/T/B/xxx")
+        sender = SlackSender(cfg)
+
+        content = "[详情][ref]\n\n[ref]: https://example.com/report"
+        result = sender.send_to_slack(content)
+
+        self.assertTrue(result)
+        payload = json.loads(mock_post.call_args.kwargs["data"].decode("utf-8"))
+        self.assertIn("[详情][ref]", payload["text"])
+        self.assertIn("[ref]: https://example.com/report", payload["text"])
+
+    @mock.patch("src.notification_sender.slack_sender.requests.post")
     def test_send_text_prefers_bot_when_both_configured(self, mock_post):
         """When both webhook and bot are configured, text must go via bot
         so it lands in the same channel as images."""
@@ -1649,6 +1748,20 @@ class TestTelegramSender(unittest.TestCase):
         self.assertIn("| 股票 | 信号 |", rendered)
         self.assertIn("[详情](https://example.com/report)", rendered)
         self.assertNotIn("# 日报", rendered)
+
+    @mock.patch("src.notification_sender.telegram_sender.requests.post")
+    def test_send_strips_hidden_market_region_metadata_from_text_payload(self, mock_post):
+        mock_post.return_value = _response(200, {"ok": True})
+        cfg = _config(telegram_bot_token="BOT", telegram_chat_id="CHAT")
+        sender = TelegramSender(cfg)
+
+        result = sender.send_to_telegram("[dsa-market-region]: # (us)\n\n# 🎯 Market Review\n\nBody")
+
+        self.assertTrue(result)
+        payload = mock_post.call_args.kwargs["json"]
+        self.assertNotIn("[dsa-market-region]", payload["text"])
+        self.assertIn("🎯 Market Review", payload["text"])
+        self.assertIn("Body", payload["text"])
 
     @mock.patch.object(TelegramSender, "_send_telegram_message", return_value=True)
     def test_send_telegram_chunked_splits_large_reason_without_delimiter(self, mock_send_telegram_message):

@@ -12,6 +12,7 @@ A股自选股智能分析系统 - 核心分析流水线
 """
 
 import logging
+import inspect
 import threading
 import time
 import uuid
@@ -101,6 +102,30 @@ from bot.models import BotMessage
 
 
 logger = logging.getLogger(__name__)
+
+
+def _share_image_payload(result: Any) -> Optional[Dict[str, Any]]:
+    """Return structured poster data when the result exposes the real contract."""
+
+    to_dict = getattr(result, "to_dict", None)
+    if not callable(to_dict):
+        return None
+    try:
+        payload = to_dict()
+    except Exception as exc:
+        logger.debug("构建分享图片结构化数据失败，回退 Markdown: %s", exc)
+        return None
+    return payload if isinstance(payload, dict) and payload else None
+
+
+def _supports_explicit_keyword(callable_obj: Any, keyword: str) -> bool:
+    """Avoid breaking custom notifier overrides that predate an optional kwarg."""
+
+    try:
+        return keyword in inspect.signature(callable_obj).parameters
+    except (TypeError, ValueError):
+        return False
+
 
 # 防御性 guard：当实例绕过 __init__（如测试中 __new__）构造时，
 # double-check 初始化 _single_stock_notify_lock 仍然线程安全。
@@ -3312,14 +3337,16 @@ class StockAnalysisPipeline:
                     report_content = self.notifier.generate_single_stock_report(result)
                     logger.info(f"[{stock_code}] 使用精简报告格式")
 
-                sent = self.notifier.send(
-                    report_content,
-                    email_stock_codes=[stock_code],
-                    route_type="report",
-                    severity="info",
-                    dedup_key=f"report:single:{stock_code}:{report_type.value}",
-                    cooldown_key=f"report:single:{stock_code}:{report_type.value}",
-                )
+                send_kwargs: Dict[str, Any] = {
+                    "email_stock_codes": [stock_code],
+                    "route_type": "report",
+                    "severity": "info",
+                    "dedup_key": f"report:single:{stock_code}:{report_type.value}",
+                    "cooldown_key": f"report:single:{stock_code}:{report_type.value}",
+                }
+                if _supports_explicit_keyword(self.notifier.send, "structured_payload"):
+                    send_kwargs["structured_payload"] = _share_image_payload(result)
+                sent = self.notifier.send(report_content, **send_kwargs)
                 notification_run = self._build_notification_run_snapshot(
                     channel="report",
                     status="success" if sent else "failed",
@@ -3521,6 +3548,9 @@ class StockAnalysisPipeline:
                 non_wechat_channels_needing_image = {
                     ch for ch in channels_needing_image if ch != NotificationChannel.WECHAT
                 }
+                single_share_payload = (
+                    _share_image_payload(results[0]) if len(results) == 1 else None
+                )
 
                 def _get_md2img_hint() -> str:
                     try:
@@ -3534,9 +3564,12 @@ class StockAnalysisPipeline:
 
                 image_bytes = None
                 if non_wechat_channels_needing_image:
-                    image_bytes = markdown_to_image(
-                        report, max_chars=self.notifier._markdown_to_image_max_chars
-                    )
+                    image_kwargs: Dict[str, Any] = {
+                        "max_chars": self.notifier._markdown_to_image_max_chars,
+                    }
+                    if single_share_payload is not None:
+                        image_kwargs["structured_payload"] = single_share_payload
+                    image_bytes = markdown_to_image(report, **image_kwargs)
                     if image_bytes:
                         logger.info(
                             "Markdown 已转换为图片，将向 %s 发送图片",
@@ -3560,9 +3593,14 @@ class StockAnalysisPipeline:
                         logger.debug(f"企业微信推送内容:\n{dashboard_content}")
                         wechat_image_bytes = None
                         if NotificationChannel.WECHAT in channels_needing_image:
+                            wechat_image_kwargs: Dict[str, Any] = {
+                                "max_chars": self.notifier._markdown_to_image_max_chars,
+                            }
+                            if single_share_payload is not None:
+                                wechat_image_kwargs["structured_payload"] = single_share_payload
                             wechat_image_bytes = markdown_to_image(
                                 dashboard_content,
-                                max_chars=self.notifier._markdown_to_image_max_chars,
+                                **wechat_image_kwargs,
                             )
                             if wechat_image_bytes is None:
                                 logger.warning(
@@ -3657,9 +3695,19 @@ class StockAnalysisPipeline:
                                     grp_report = self._generate_aggregate_report(group_results, report_type)
                                     grp_image_bytes = None
                                     if channel.value in self.notifier._markdown_to_image_channels:
+                                        group_payload = (
+                                            _share_image_payload(group_results[0])
+                                            if len(group_results) == 1
+                                            else None
+                                        )
+                                        group_image_kwargs: Dict[str, Any] = {
+                                            "max_chars": self.notifier._markdown_to_image_max_chars,
+                                        }
+                                        if group_payload is not None:
+                                            group_image_kwargs["structured_payload"] = group_payload
                                         grp_image_bytes = markdown_to_image(
                                             grp_report,
-                                            max_chars=self.notifier._markdown_to_image_max_chars,
+                                            **group_image_kwargs,
                                         )
                                     use_image = self.notifier._should_use_image_for_channel(
                                         channel, grp_image_bytes

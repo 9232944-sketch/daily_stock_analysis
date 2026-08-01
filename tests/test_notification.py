@@ -17,6 +17,7 @@ TODO:
 import os
 import sys
 import unittest
+from datetime import date
 from unittest import mock
 from typing import Optional
 
@@ -33,6 +34,7 @@ from src.config import Config
 from src.notification import NotificationBuilder, NotificationChannel, NotificationService
 from src.notification_noise import reset_notification_noise_state
 from src.analyzer import AnalysisResult
+from src.share_image import build_share_image_html
 from bot.models import BotMessage, ChatType
 import requests
 
@@ -1295,6 +1297,92 @@ class TestNotificationServiceReportGeneration(unittest.TestCase):
         self.assertIn("Core Conclusion", out)
         self.assertIn("Action Levels", out)
         self.assertIn("Buy", out)
+
+    @mock.patch("src.notification.get_config")
+    def test_single_stock_share_image_reads_trend_from_generated_report(self, mock_get_config: mock.MagicMock):
+        mock_get_config.return_value = _make_config(report_renderer_enabled=False)
+        service = NotificationService()
+        result = AnalysisResult(
+            code="600519",
+            name="贵州茅台",
+            sentiment_score=72,
+            trend_prediction="看多",
+            operation_advice="持有",
+            analysis_summary="回调到支撑区可分批关注。",
+            dashboard={
+                "core_conclusion": {"one_sentence": "回调到支撑区可分批关注。"},
+                "battle_plan": {
+                    "sniper_points": {
+                        "ideal_buy": "1420-1450",
+                        "stop_loss": "1350",
+                        "take_profit": "1580",
+                    }
+                },
+            },
+        )
+
+        markdown = service.generate_single_stock_report(result)
+        html = build_share_image_html(markdown, generated_on=date(2026, 7, 31))
+
+        self.assertIn('class="signal-trend positive"', html)
+        self.assertIn(">看多<", html)
+        self.assertIn("个股决策卡", html)
+
+    @mock.patch("src.notification.get_config")
+    def test_dashboard_share_image_reads_chinese_volume_line_from_generated_report(
+        self, mock_get_config: mock.MagicMock
+    ):
+        mock_get_config.return_value = _make_config(report_renderer_enabled=False)
+        service = NotificationService()
+        result = AnalysisResult(
+            code="600519",
+            name="贵州茅台",
+            sentiment_score=72,
+            trend_prediction="看多",
+            operation_advice="持有",
+            analysis_summary="稳健持有。",
+            dashboard={
+                "core_conclusion": {"one_sentence": "稳健持有。"},
+                "data_perspective": {
+                    "trend_status": {
+                        "ma_alignment": "多头排列",
+                        "is_bullish": True,
+                        "trend_score": 78,
+                    },
+                    "price_position": {
+                        "current_price": "1450",
+                        "ma5": "1442",
+                        "ma10": "1430",
+                        "ma20": "1408",
+                        "bias_ma5": "0.55",
+                        "bias_status": "偏强",
+                        "support_level": "1420",
+                        "resistance_level": "1490",
+                    },
+                    "volume_analysis": {
+                        "volume_ratio": "1.35",
+                        "volume_status": "放量",
+                        "turnover_rate": "0.82",
+                        "volume_meaning": "量能配合上攻",
+                    },
+                },
+                "battle_plan": {
+                    "sniper_points": {
+                        "ideal_buy": "1420-1450",
+                        "stop_loss": "1350",
+                        "take_profit": "1580",
+                    }
+                },
+            },
+        )
+
+        markdown = service.generate_dashboard_report([result], report_date="2026-07-31")
+        html = build_share_image_html(markdown, generated_on=date(2026, 7, 31))
+
+        self.assertIn("技术参考", html)
+        self.assertIn(">量能<", html)
+        self.assertIn("1.35", html)
+        self.assertIn("0.82%", html)
 
     def _make_fundamental_context(self) -> dict:
         return {
