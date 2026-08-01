@@ -64,13 +64,14 @@ def apply_seeded_selection_variant(
             return not any(status == "skipped" for status in status_map.values())
 
         # If analyzers were configured, require each configured analyzer to have
-        # a non-skipped status recorded for this pick. Missing entries are treated
-        # as "not explicitly excluded" rather than "not analyzed", allowing candidates
-        # that exceeded the analysis cap to still participate in rotation.
+        # an explicit completed status recorded for this pick. Missing entries or
+        # explicit 'not_requested' indicate the candidate did not receive the
+        # same L3 treatment and must be excluded from near-cutoff rotation. This
+        # prevents promoting candidates that never completed post-analysis.
         for analyzer in analyzer_names:
             s = status_map.get(analyzer)
-            # Reject only if explicitly marked skipped; missing/unset is allowed.
-            if s == "skipped":
+            # Only allow picks that explicitly completed the analyzer run.
+            if s != "completed":
                 return False
         return True
 

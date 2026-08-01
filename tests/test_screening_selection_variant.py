@@ -114,3 +114,31 @@ def test_selection_variant_never_promotes_skipped_post_analysis() -> None:
     # Ensure none of the final picks have 'skipped' for scorecard
     for pick in result.picks:
         assert pick.post_analysis_status.get("scorecard") != "skipped"
+
+
+def test_selection_variant_excludes_unanalyzed_from_rotation() -> None:
+    """Regression: candidates without explicit completed post-analysis must not
+    be eligible for near-cutoff rotation when analyzers are configured.
+    """
+    picks = _picks()
+    # Simulate post-analysis: first 3 completed, ranks 4-5 not requested (or missing)
+    for i, pick in enumerate(picks, start=1):
+        if i <= 3:
+            pick.post_analysis_status = {"scorecard": "completed"}
+        elif i in (4, 5):
+            # Either missing entry or explicit not_requested should exclude them
+            pick.post_analysis_status = {"scorecard": "not_requested"}
+        else:
+            pick.post_analysis_status = {}
+
+    result = apply_seeded_selection_variant(
+        picks,
+        max_output=3,
+        seed="browser-variation",
+        period="2026-08-01",
+        analyzer_names=["scorecard"],
+    )
+
+    # Since only first three completed the analyzer, rotation must not promote
+    # unanalyzed candidates into the Top-3 — result should remain the original Top-3
+    assert [pick.code for pick in result.picks] == ["000001", "000002", "000003"]

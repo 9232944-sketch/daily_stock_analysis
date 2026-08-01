@@ -158,6 +158,17 @@ def _run_dsa_analyzer(
             risk_flags=pick.deep_analysis_risk_flags,
             tags=["dsa"] if status == "completed" else [],
         )
+
+    # Mark candidates beyond the analyzer cap as explicitly skipped so selection
+    # variant logic can reliably exclude unanalyzed picks from near-cutoff
+    # rotation. Use the original picks ordering to identify which were not
+    # attempted.
+    for pick in picks[max_picks:]:
+        # If a pick already has a dsa entry (e.g., analyzed or failed), leave it.
+        if pick.post_analysis_status.get("dsa"):
+            continue
+        _record_post_result(pick, "dsa", status="skipped", summary="", score_delta=0.0)
+
     return analyzed, degradation
 
 
@@ -169,9 +180,9 @@ def _run_scorecard_analyzer(
 ) -> tuple[list[Pick], list[str]]:
     for idx, pick in enumerate(picks):
         if idx >= max_picks:
-            # Do not mark candidates beyond max_picks as "skipped" in post_analysis_status.
-            # This allows them to be eligible for near-cutoff rotation. Unanalyzed
-            # candidates are distinct from explicitly-skipped ones.
+            # Candidates beyond max_picks are explicitly marked as 'skipped'
+            # so selection_variant can reliably exclude them from rotation.
+            _record_post_result(pick, "scorecard", status="skipped", summary="", score_delta=0.0)
             continue
         delta, flags, tags, summary = _scorecard_delta(pick, profile=profile)
         pick.final_score = round(float(pick.final_score) + delta, 4)
