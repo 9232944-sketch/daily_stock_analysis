@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # Derived from AlphaSift revision 9f522747caafd3c0b1ddb7e14d5cf44c8580b6cf.
 # Licensed under Apache-2.0 and modified for daily_stock_analysis.
-"""Deterministic near-score rotation for per-client screening variants."""
+"""Bounded near-score sampling for per-run screening variants."""
 
 from __future__ import annotations
 
@@ -26,15 +26,14 @@ def apply_seeded_selection_variant(
     seed: str,
     period: str,
     max_score_gap: float = 1.5,
-    rotation_ratio: float = 0.34,
+    rotation_ratio: float = 1.0,
     analyzer_names: list[str] | None = None,
 ) -> SelectionVariant:
-    """Rotate only the tail of Top-N among candidates with comparable scores.
+    """Sample output slots among candidates with comparable final scores.
 
-    The highest-ranked part of the result remains protected. The opaque client
-    seed only affects which near-cutoff candidates fill the remaining slots;
-    hard filters, risk vetoes, score values, and portfolio penalties are never
-    changed.
+    Candidates that materially outperform the original cutoff remain protected.
+    The opaque client seed only affects the remaining near-score pool; hard
+    filters, risk vetoes, score values, and portfolio penalties are never changed.
 
     Compatibility note: when the client does not provide a seed (empty string
     or None), preserve the original pick ordering and return a strict Top-N
@@ -58,15 +57,22 @@ def apply_seeded_selection_variant(
     ordered = sorted(picks, key=lambda item: (-float(item.final_score), item.code))
     output_count = min(max(int(max_output), 0), len(ordered))
 
+    cutoff_score = float(ordered[output_count - 1].final_score)
+    score_gap = max(float(max_score_gap), 0.0)
+    minimum_score = cutoff_score - score_gap
+    # Only protect candidates whose lead over the original Top-N cutoff is
+    # larger than the full allowed sampling gap. In a genuinely near-score
+    # result, including rank 1, every slot may therefore vary between runs.
+    quality_protected = [
+        pick
+        for pick in ordered[:output_count]
+        if float(pick.final_score) > cutoff_score + score_gap
+    ]
+    remaining_slots = output_count - len(quality_protected)
     rotation_slots = min(
-        output_count - 1,
+        remaining_slots,
         max(1, int(round(output_count * max(float(rotation_ratio), 0.0)))),
     )
-    protected_count = output_count - rotation_slots
-    protected = ordered[:protected_count]
-    cutoff_score = float(ordered[output_count - 1].final_score)
-    minimum_score = cutoff_score - max(float(max_score_gap), 0.0)
-
     def _was_post_analyzed(pick: Pick) -> bool:
         # If analyzers were configured for this run, a pick must have explicit
         # non-skipped post-analysis results for all configured analyzers to be
@@ -90,10 +96,19 @@ def apply_seeded_selection_variant(
                 return False
         return True
 
+    position_protected_count = remaining_slots - rotation_slots
+    quality_protected_codes = {pick.code for pick in quality_protected}
+    unprotected = [pick for pick in ordered if pick.code not in quality_protected_codes]
+    position_protected = unprotected[:position_protected_count]
+    position_protected_codes = {pick.code for pick in position_protected}
+    protected = [*quality_protected, *position_protected]
     pool = [
         pick
-        for pick in ordered[protected_count:]
-        if float(pick.final_score) >= minimum_score and _was_post_analyzed(pick)
+        for pick in ordered
+        if pick.code not in quality_protected_codes
+        and pick.code not in position_protected_codes
+        if float(pick.final_score) >= minimum_score
+        and _was_post_analyzed(pick)
     ]
     if len(pool) <= rotation_slots:
         return SelectionVariant(

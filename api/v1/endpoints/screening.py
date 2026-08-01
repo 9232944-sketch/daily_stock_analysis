@@ -113,10 +113,21 @@ def screening_hotspot_detail(
     topic: str,
     provider: str = Query("", max_length=32),
     refresh: bool = Query(False),
+    include_search: bool = Query(False),
     config: Config = Depends(get_config_dep),
 ) -> Dict[str, Any]:
     refresh_value = refresh if isinstance(refresh, bool) else bool(getattr(refresh, "default", False))
-    return _service(config).hotspot_detail(topic=topic, provider=provider, refresh=refresh_value)
+    include_search_value = (
+        include_search
+        if isinstance(include_search, bool)
+        else bool(getattr(include_search, "default", False))
+    )
+    return _service(config).hotspot_detail(
+        topic=topic,
+        provider=provider,
+        refresh=refresh_value,
+        include_search=include_search_value,
+    )
 
 
 @router.post("/screen/tasks", status_code=202, response_model=ScreeningScreenAccepted)
@@ -135,15 +146,20 @@ def screening_start_screen_task(
             20,
             "正在执行内建选股，外部数据源较慢时会持续后台运行",
         )
+
+        def report_progress(progress: int, message: str) -> None:
+            task_queue.update_task_progress(task_id, progress, message)
+
         result = _service(config, db_manager).screen(
             strategy=request.strategy,
             market=request.market,
             max_results=request.max_results,
             selection_seed=request.variant_seed,
+            progress_callback=report_progress,
         )
         task_queue.update_task_progress(
             task_id,
-            90,
+            98,
             f"选股已完成，正在整理 {result.get('candidate_count', 0)} 条候选",
         )
         return result

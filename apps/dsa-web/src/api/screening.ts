@@ -121,6 +121,9 @@ export type ScreeningHotspot = {
   stage?: string;
   sampleStockCount?: number | null;
   leaders?: string[];
+  leaderStocks?: ScreeningHotspotStock[];
+  qualityStatus?: 'available' | 'partial' | 'stale' | 'failed' | string;
+  missingFields?: string[];
   providerUsed?: string;
   fallbackUsed?: boolean;
   cacheUsed?: boolean;
@@ -138,6 +141,7 @@ export type ScreeningHotspotRouteItem = {
   time?: string;
   publishedAt?: string;
   url?: string;
+  searchResult?: boolean;
 };
 
 export type ScreeningHotspotStock = {
@@ -177,6 +181,8 @@ export type ScreeningHotspotDetail = {
   cacheUsed?: boolean;
   cachedAt?: string | null;
   resolverCandidates?: Record<string, unknown>[];
+  newsSearchRequested?: boolean;
+  newsSearchStatus?: 'available' | 'no_results' | string;
 };
 
 export type ScreeningHotspotsResponse = {
@@ -397,7 +403,7 @@ export const screeningApi = {
         provider: payload.provider || 'akshare',
         top: payload.top ?? 12,
         refresh: payload.refresh ?? false,
-        include_details: payload.includeDetails ?? true,
+        include_details: payload.includeDetails ?? false,
       },
       timeout: SCREENING_REQUEST_TIMEOUT_MS,
     });
@@ -414,11 +420,20 @@ export const screeningApi = {
     return normalized;
   },
 
-  async getHotspotDetail(payload: { topic: string; provider?: string; refresh?: boolean }): Promise<ScreeningHotspotDetail> {
+  async getHotspotDetail(payload: {
+    topic: string;
+    provider?: string;
+    refresh?: boolean;
+    includeSearch?: boolean;
+  }): Promise<ScreeningHotspotDetail> {
     const response = await apiClient.get<Record<string, unknown>>(
       `/api/v1/screening/hotspots/${encodeURIComponent(payload.topic)}`,
       {
-        params: { provider: payload.provider || 'akshare', refresh: payload.refresh ?? false },
+        params: {
+          provider: payload.provider || 'akshare',
+          refresh: payload.refresh ?? false,
+          include_search: payload.includeSearch ?? false,
+        },
         timeout: SCREENING_REQUEST_TIMEOUT_MS,
       },
     );
@@ -430,8 +445,7 @@ export const screeningApi = {
     try {
       const status = await screeningApi.getStatus();
       if (!status.available) {
-        const reason = status.diagnostics?.reason ? `（${status.diagnostics.reason}）` : '';
-        throw new Error(`DSA 内建选股引擎不可用${reason}。请检查策略文件、后端依赖和服务日志。`);
+        throw new Error('选股功能不可用。请检查策略配置、数据依赖和服务日志。');
       }
     } catch (error) {
       try {

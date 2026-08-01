@@ -92,8 +92,44 @@ def test_selection_variant_produces_multiple_bounded_client_variants() -> None:
     }
 
     assert len(variants) >= 2
-    assert all(codes[:2] == ("000001", "000002") for codes in variants)
-    assert all(codes[2] in {"000003", "000004", "000005"} for codes in variants)
+    assert all(len(codes) == 3 for codes in variants)
+    assert all(set(codes) <= {"000001", "000002", "000003", "000004", "000005"} for codes in variants)
+    assert any("000003" not in codes for codes in variants)
+
+
+def test_selection_variant_can_vary_rank_one_when_top_scores_are_close() -> None:
+    close_picks = _picks()
+    close_picks[0].final_score = 84.2
+    close_picks[0].screen_score = 84.2
+    variants = [
+        apply_seeded_selection_variant(
+            copy.deepcopy(close_picks),
+            max_output=3,
+            seed="browser-a",
+            period=f"2026-08-01:run-{index}",
+        )
+        for index in range(30)
+    ]
+
+    assert any("000001" not in {pick.code for pick in result.picks} for result in variants)
+    assert all(
+        all(pick.final_score >= 82.5 for pick in result.picks)
+        for result in variants
+    )
+
+
+def test_selection_variant_protects_materially_superior_candidates() -> None:
+    variants = [
+        apply_seeded_selection_variant(
+            copy.deepcopy(_picks()),
+            max_output=3,
+            seed="browser-a",
+            period=f"2026-08-01:run-{index}",
+        )
+        for index in range(20)
+    ]
+
+    assert all([pick.code for pick in result.picks][:2] == ["000001", "000002"] for result in variants)
 
 
 def test_selection_variant_keeps_scores_and_risk_metadata_unchanged() -> None:

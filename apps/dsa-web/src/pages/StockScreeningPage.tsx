@@ -38,11 +38,29 @@ import {
   type ScreeningStrategy,
 } from '../api/screening';
 import { formatParsedApiError, getParsedApiError, toApiErrorMessage, type ParsedApiError } from '../api/error';
-import { AppPage, Button, InlineAlert } from '../components/common';
+import { AppPage, Button, InlineAlert, Select } from '../components/common';
 
 const MARKETS = [{ id: 'cn', label: 'A 股' }];
 const SCREEN_TASK_STORAGE_KEY = 'dsa.screening.activeScreenTask.v1';
 const SCREEN_TASK_POLL_INTERVAL_MS = 2000;
+const CUSTOM_STRATEGY_OPTION_VALUE = '__custom_strategy__';
+const STRATEGY_CATEGORY_LABELS: Record<string, string> = {
+  framework: '综合',
+  income: '收益',
+  momentum: '动量',
+  quality: '质量',
+  reversal: '反转',
+  trend: '趋势',
+  value: '价值',
+};
+
+const formatStrategyCategory = (value?: string) => {
+  const normalized = value?.trim();
+  if (!normalized) {
+    return '自定义';
+  }
+  return STRATEGY_CATEGORY_LABELS[normalized.toLowerCase()] || normalized;
+};
 
 type PersistedScreenTask = {
   taskId: string;
@@ -159,6 +177,63 @@ const POST_TAG_LABELS: Record<string, string> = {
   liquidity: '流动性',
 };
 
+const HOTSPOT_QUALITY_LABELS: Record<string, string> = {
+  available: '可用',
+  failed: '不可用',
+  partial: '部分可用',
+  stale: '缓存',
+};
+
+const HOTSPOT_STAGE_LABELS: Record<string, string> = {
+  accelerating: '加速主升',
+  cooling: '降温退潮',
+  diverging: '分歧放量',
+  initial: '初次异动',
+  persistent_hot: '确认扩散',
+  warming: '确认扩散',
+  weakening: '降温退潮',
+};
+
+const HOTSPOT_ROLE_LABELS: Record<string, string> = {
+  core_leader: '核心龙头',
+  follower: '助攻',
+  laggard: '掉队',
+  leader: '核心龙头',
+  secondary: '补涨',
+};
+
+const HOTSPOT_MISSING_FIELD_LABELS: Record<string, string> = {
+  canonical_topic: '标准题材',
+  hotspot_constituents: '概念股列表',
+  leader_stocks: '核心股',
+  live_stocks: '实时概念股行情',
+  route: '发酵路径',
+  source: '数据来源',
+  stocks: '概念股列表',
+  timeline: '发酵时间线',
+};
+
+const getHotspotStageLabel = (value: unknown) => {
+  const text = String(value || '').trim();
+  if (!text) {
+    return '';
+  }
+  return HOTSPOT_STAGE_LABELS[text.toLowerCase()] || text;
+};
+
+const getHotspotRoleLabel = (value: unknown) => {
+  const text = String(value || '').trim();
+  if (!text) {
+    return '概念股';
+  }
+  return HOTSPOT_ROLE_LABELS[text.toLowerCase()] || text;
+};
+
+const getHotspotQualityLabel = (value: unknown) => {
+  const text = String(value || '').trim();
+  return HOTSPOT_QUALITY_LABELS[text.toLowerCase()] || '待确认';
+};
+
 const getLocalFactorReason = (item: ScreeningCandidate) => {
   const factors = Object.entries(item.factorScores || {})
     .filter(([, value]) => typeof value === 'number')
@@ -190,7 +265,7 @@ const getCandidateReason = (item: ScreeningCandidate) => {
   if (typeof summary === 'string') {
     return summary;
   }
-  return '内建引擎返回了候选，但没有给出文字摘要。请查看下方因子、风险和原始字段。';
+  return '暂无摘要，请查看因子和风险信息。';
 };
 
 const getSignal = (item: ScreeningCandidate) => {
@@ -270,6 +345,12 @@ const normalizeScreenMessageKey = (value: string) => {
   return formatted ? formatted.trim().toLowerCase() : value.trim().toLowerCase();
 };
 
+const formatEnrichmentSummary = (value: string) =>
+  value
+    .replace(/DSA行情\s*[:：]\s*/gi, '行情：')
+    .replace(/DSA新闻\s*[:：]\s*/gi, '新闻：')
+    .replace(/DSA事件\s*[:：]\s*/gi, '事件：');
+
 const formatScreenMessage = (value: string) => {
   if (/^DSA provider context applied \d+ of \d+ candidates/i.test(value)) {
     return '';
@@ -340,7 +421,7 @@ const formatHotspotEmptyMessage = (result: ScreeningHotspotsResponse) => {
     return message;
   }
   if (message === SCREENING_HOTSPOT_NO_CACHE_HINT) {
-    return '暂无缓存热点题材，展开后可点击刷新拉取实时数据。';
+    return '暂无热点缓存';
   }
   const sourceError = sourceErrors[0];
   if (sourceError) {
@@ -395,7 +476,7 @@ const getRiskLabel = (riskLevel: string | undefined) => {
 const getRouteTimeLabel = (item: ScreeningHotspotDetail['route'][number]) => {
   const rawTime = item.publishedAt || item.date || item.time || '';
   if (!rawTime) {
-    return item.source || '待确认';
+    return '时间待确认';
   }
   if (/^\d{4}-\d{2}-\d{2}$/.test(rawTime)) {
     return rawTime;
@@ -411,6 +492,158 @@ const getRouteTimeLabel = (item: ScreeningHotspotDetail['route'][number]) => {
     });
   }
   return rawTime;
+};
+
+const formatHotspotRouteTitle = (value: string) => {
+  const text = String(value || '').trim();
+  const normalized = text.toLowerCase();
+  if (normalized === 'current fermentation') {
+    return '当前发酵';
+  }
+  if (normalized === 'news catalyst') {
+    return '消息催化';
+  }
+  return text || '热点变化';
+};
+
+const formatHotspotRouteDescription = (value: string) => {
+  const text = String(value || '').trim();
+  if (!text) {
+    return '暂无更多说明。';
+  }
+  const parts = text.split(/\s*;\s*/).map((part) => part.trim()).filter(Boolean);
+  if (parts.some((part) => /\b(?:heat|stage|leaders?)\b/i.test(part))) {
+    const localized = parts.map((part) => {
+      const heat = part.match(/^(.*?)\s+heat\s+(-?\d+(?:\.\d+)?)$/i);
+      if (heat) {
+        return `${heat[1]}热度 ${formatNumber(heat[2], 1)}`;
+      }
+      const stage = part.match(/^stage\s+(.+)$/i);
+      if (stage) {
+        return `阶段 ${getHotspotStageLabel(stage[1])}`;
+      }
+      const leaders = part.match(/^leaders?\s+(.+)$/i);
+      if (leaders) {
+        return `核心股 ${leaders[1].split(/\s*,\s*/).filter(Boolean).join('、')}`;
+      }
+      return part;
+    });
+    return `${localized.join('，')}。`;
+  }
+  if (/Dsa[A-Z]|Provider\b|stock_board_|concept_constituents|leader_stocks|last_good_cache/i.test(text)) {
+    return '热点数据出现新变化。';
+  }
+  return text;
+};
+
+const getHotspotMissingFieldLabels = (values: string[] | undefined) => {
+  const labels = (values || []).map((value) => HOTSPOT_MISSING_FIELD_LABELS[String(value).trim().toLowerCase()] || '部分明细');
+  return [...new Set(labels)];
+};
+
+const formatHotspotDiagnostic = (value: string) => {
+  const text = String(value || '').trim();
+  const timeoutSeconds = text.match(/timed out after\s*(\d+(?:\.\d+)?)s/i);
+  if (timeoutSeconds) {
+    return `热点明细请求超时（${timeoutSeconds[1]} 秒）`;
+  }
+  if (/timeout|timed out/i.test(text)) {
+    return '热点明细请求超时';
+  }
+  if (/RemoteDisconnected|Connection aborted|ProtocolError|ConnectionPool|Max retries exceeded|ProxyError|NameResolutionError/i.test(text)) {
+    return '热点数据源连接中断';
+  }
+  if (/eastmoney_hotspot_unavailable|returned no data|no live hotspot rows|\bempty\b/i.test(text)) {
+    return '热点数据源暂未返回数据';
+  }
+  if (/rate limit|too many requests|http\s*429/i.test(text)) {
+    return '热点数据请求过于频繁';
+  }
+  if (/Dsa[A-Z]|Provider\b|stock_board_|concept_constituents|leader_stocks|last_good_cache|^[a-z0-9_.:-]+$/i.test(text)) {
+    return '部分热点数据暂不可用';
+  }
+  if (/[\u0080-\uFFFF]/.test(text)) {
+    return truncateMessageDetail(text);
+  }
+  return '部分热点数据暂不可用';
+};
+
+const getHotspotDiagnosticMessages = (values: string[] | undefined) =>
+  [...new Set((values || []).map(formatHotspotDiagnostic).filter(Boolean))].slice(0, 4);
+
+const hasHotspotDetailDegradation = (detail: ScreeningHotspotDetail) => {
+  if ((detail.missingFields || []).length > 0) {
+    return true;
+  }
+  const qualityStatus = String(detail.qualityStatus || '').trim().toLowerCase();
+  if (qualityStatus) {
+    return qualityStatus !== 'available';
+  }
+  return (detail.sourceErrors || []).length > 0;
+};
+
+const getHotspotSummaryText = (detail: ScreeningHotspotDetail, hotspot?: ScreeningHotspot) => {
+  const summaryDetail = detail.summaryDetail || {};
+  const heatScore = summaryDetail.heatScore ?? summaryDetail.heat_score ?? hotspot?.heatScore;
+  const stage = summaryDetail.stage ?? hotspot?.stage ?? hotspot?.state;
+  const rawLeaders = summaryDetail.leaders ?? hotspot?.leaders;
+  const leaders = Array.isArray(rawLeaders)
+    ? rawLeaders.map((value) => String(value).trim()).filter(Boolean).slice(0, 3)
+    : [];
+  const parts: string[] = [];
+  if (heatScore != null && !Number.isNaN(Number(heatScore))) {
+    parts.push(`热度 ${formatNumber(heatScore, 1)}`);
+  }
+  if (stage) {
+    parts.push(`阶段 ${getHotspotStageLabel(stage)}`);
+  }
+  if (leaders.length > 0) {
+    parts.push(`核心股 ${leaders.join('、')}`);
+  }
+  if (parts.length > 0) {
+    return `${detail.name || detail.canonicalTopic || detail.topic}：${parts.join('，')}。`;
+  }
+  const summary = String(detail.summary || '').trim();
+  if (summary && !/\b(?:heat|stage|leaders?|quality status|available|partial|stale|failed)\b|Dsa[A-Z]|Provider\b|stock_board_/i.test(summary)) {
+    return summary;
+  }
+  return '已加载热点详情。';
+};
+
+const buildHotspotPreviewDetail = (hotspot: ScreeningHotspot): ScreeningHotspotDetail => {
+  const leaders = (hotspot.leaders || []).map((value) => String(value).trim()).filter(Boolean);
+  const stage = getHotspotStageLabel(hotspot.stage || hotspot.state);
+  const descriptionParts = [`${hotspot.name || hotspot.topic}热度 ${formatHotspotMetric(hotspot.heatScore)}`];
+  if (stage) {
+    descriptionParts.push(`阶段 ${stage}`);
+  }
+  if (leaders.length > 0) {
+    descriptionParts.push(`核心股 ${leaders.slice(0, 3).join('、')}`);
+  }
+  const stocks = (hotspot.leaderStocks || []).slice(0, 10);
+  return {
+    enabled: true,
+    provider: 'akshare',
+    topic: hotspot.topic,
+    name: hotspot.name || hotspot.topic,
+    canonicalTopic: hotspot.topic,
+    summaryDetail: {
+      heatScore: hotspot.heatScore,
+      stage: hotspot.stage || hotspot.state,
+      leaders,
+    },
+    route: [{ title: '当前发酵', description: `${descriptionParts.join('，')}。` }],
+    stocks,
+    stockCount: hotspot.sampleStockCount ?? stocks.length,
+    sourceErrors: hotspot.sourceErrors,
+    qualityStatus: hotspot.qualityStatus,
+    missingFields: hotspot.missingFields,
+    fallbackUsed: hotspot.fallbackUsed,
+    stale: hotspot.stale,
+    staleAgeHours: hotspot.staleAgeHours,
+    cacheUsed: hotspot.cacheUsed,
+    cachedAt: hotspot.cachedAt,
+  };
 };
 
 const getHotspotRouteItems = (detail: ScreeningHotspotDetail) => {
@@ -443,7 +676,7 @@ const getHotspotSampleText = (item: ScreeningHotspot) => {
 
 const formatStockChangeText = (value: unknown) => {
   const formatted = formatNumber(value);
-  return formatted === '-' ? '行情待取' : `${formatted}%`;
+  return formatted === '-' ? '暂无行情' : `${formatted}%`;
 };
 
 const formatHotspotUpdatedAt = (value: string | null) => {
@@ -532,6 +765,7 @@ const StockScreeningPage: React.FC = () => {
   const hotspotDetailsByTopicRef = useRef<Record<string, ScreeningHotspotDetail>>({});
   const [hotspotDetail, setHotspotDetail] = useState<ScreeningHotspotDetail | null>(null);
   const [loadingHotspotDetail, setLoadingHotspotDetail] = useState(false);
+  const [searchingHotspotNews, setSearchingHotspotNews] = useState(false);
   const [hotspotDetailError, setHotspotDetailError] = useState('');
   const [loadingHotspots, setLoadingHotspots] = useState(false);
   const [hotspotError, setHotspotError] = useState('');
@@ -548,9 +782,15 @@ const StockScreeningPage: React.FC = () => {
 
   const selectedStrategy = useMemo(() => strategies.find((item) => item.id === strategy), [strategies, strategy]);
   const selectedStrategyTitle = selectedStrategy?.name || selectedStrategy?.title || '自定义策略';
-  const selectedStrategyTag = selectedStrategy?.category || selectedStrategy?.tag || selectedStrategy?.tags?.[0] || '自定义';
+  const selectedStrategyTag = formatStrategyCategory(
+    selectedStrategy?.category || selectedStrategy?.tag || selectedStrategy?.tags?.[0],
+  );
   const displayedStrategy = selectedStrategy ? selectedStrategyTitle : `自定义策略 (${strategy})`;
   const screenMessages = useMemo(() => getScreenMessages(screenMeta), [screenMeta]);
+  const selectedHotspot = useMemo(
+    () => hotspots.find((item) => item.topic === selectedHotspotTopic),
+    [hotspots, selectedHotspotTopic],
+  );
   const factorRanking = Boolean(screenMeta && (screenMeta.rankingMode === 'factor' || screenMeta.llmRanked === false));
   const llmFailed = Boolean(factorRanking && screenMeta?.llmFailureReason);
   const alertMessages = llmFailed
@@ -574,11 +814,16 @@ const StockScreeningPage: React.FC = () => {
     setExpandedCode(null);
   };
 
-  const loadHotspotDetail = useCallback(async (topic: string, options: { refresh?: boolean } = {}) => {
+  const loadHotspotDetail = useCallback(async (
+    topic: string,
+    options: { refresh?: boolean; includeSearch?: boolean } = {},
+  ) => {
     if (!topic) {
       return;
     }
-    const cachedDetail = !options.refresh ? hotspotDetailsByTopicRef.current[topic] : null;
+    const cachedDetail = !options.refresh && !options.includeSearch
+      ? hotspotDetailsByTopicRef.current[topic]
+      : null;
     if (cachedDetail) {
       setHotspotDetail(cachedDetail);
       setHotspotDetailError('');
@@ -589,11 +834,17 @@ const StockScreeningPage: React.FC = () => {
     hotspotDetailRequestIdRef.current = requestId;
     const isCurrentRequest = () => hotspotDetailRequestIdRef.current === requestId;
     const canApplyRequest = () => isCurrentRequest() && selectedHotspotTopicRef.current === topic;
-    setLoadingHotspotDetail(true);
+    setLoadingHotspotDetail(!options.includeSearch);
+    setSearchingHotspotNews(Boolean(options.includeSearch));
     setHotspotDetail((currentDetail) => (currentDetail?.topic === topic ? currentDetail : null));
     setHotspotDetailError('');
     try {
-      const detail = await screeningApi.getHotspotDetail({ topic, provider: 'akshare', refresh: options.refresh ?? false });
+      const detail = await screeningApi.getHotspotDetail({
+        topic,
+        provider: 'akshare',
+        refresh: options.refresh ?? false,
+        ...(options.includeSearch ? { includeSearch: true } : {}),
+      });
       if (!canApplyRequest()) {
         return;
       }
@@ -602,15 +853,24 @@ const StockScreeningPage: React.FC = () => {
         [topic]: detail,
       };
       setHotspotDetail(detail);
+      if (options.includeSearch && detail.newsSearchStatus !== 'available') {
+        setHotspotDetailError('暂未搜到该题材近期的有效消息。');
+      }
     } catch (err) {
       if (!canApplyRequest()) {
         return;
       }
-      setHotspotDetail(null);
-      setHotspotDetailError(toApiErrorMessage(err, '热点题材详情加载失败，请稍后重试。'));
+      if (!options.includeSearch) {
+        setHotspotDetail(null);
+      }
+      setHotspotDetailError(toApiErrorMessage(
+        err,
+        options.includeSearch ? '消息搜索失败，请稍后重试。' : '热点题材详情加载失败，请稍后重试。',
+      ));
     } finally {
       if (isCurrentRequest()) {
         setLoadingHotspotDetail(false);
+        setSearchingHotspotNews(false);
       }
     }
   }, []);
@@ -629,7 +889,7 @@ const StockScreeningPage: React.FC = () => {
       }
     } catch (err) {
       setStrategies([]);
-      setStrategyLoadError(err instanceof Error ? err.message : '内建策略列表加载失败');
+      setStrategyLoadError(err instanceof Error ? err.message : '策略列表加载失败');
     } finally {
       setLoadingStrategies(false);
     }
@@ -656,8 +916,6 @@ const StockScreeningPage: React.FC = () => {
       if (nextTopic && nextDetails[nextTopic]) {
         setHotspotDetail(nextDetails[nextTopic]);
         setLoadingHotspotDetail(false);
-      } else if (retainedTopic && refresh && nextTopic) {
-        void loadHotspotDetail(nextTopic, { refresh: true });
       } else if (!retainedTopic) {
         setHotspotDetail(null);
       }
@@ -670,7 +928,7 @@ const StockScreeningPage: React.FC = () => {
     } finally {
       setLoadingHotspots(false);
     }
-  }, [loadHotspotDetail]);
+  }, []);
 
   const handleHotspotSelect = useCallback((topic: string) => {
     selectedHotspotTopicRef.current = topic;
@@ -681,9 +939,12 @@ const StockScreeningPage: React.FC = () => {
       setHotspotDetailError('');
       setLoadingHotspotDetail(false);
     } else {
-      setHotspotDetail((currentDetail) => (currentDetail?.topic === topic ? currentDetail : null));
+      const preview = hotspots.find((item) => item.topic === topic);
+      setHotspotDetail((currentDetail) => (
+        currentDetail?.topic === topic ? currentDetail : preview ? buildHotspotPreviewDetail(preview) : null
+      ));
     }
-  }, []);
+  }, [hotspots]);
 
   const toggleHotspotsExpanded = useCallback(() => {
     setHotspotsExpanded((expanded) => {
@@ -874,7 +1135,7 @@ const StockScreeningPage: React.FC = () => {
         setEnabled(false);
         setAvailable(false);
       }
-      setError(err instanceof Error ? err.message : '开启内建选股失败');
+      setError(err instanceof Error ? err.message : '开启选股失败');
     } finally {
       setEnabling(false);
     }
@@ -932,10 +1193,7 @@ const StockScreeningPage: React.FC = () => {
           <span className="grid h-7 w-7 place-items-center rounded-full border-2 border-cyan text-cyan shadow-[0_0_24px_hsl(var(--primary)/0.18)]">
             <PlusCircle className="h-4 w-4" />
           </span>
-          <div>
-            <h1 className="text-2xl font-bold tracking-normal text-foreground">内建选股</h1>
-            <p className="mt-1 text-sm text-secondary-text">由 DSA 内建引擎生成候选股票并补充行情与新闻，实现参考 AlphaSift</p>
-          </div>
+          <h1 className="text-2xl font-bold tracking-normal text-foreground">选股</h1>
         </div>
 
         <div className="inline-flex w-fit items-center gap-2 rounded-2xl border border-border/70 bg-card/80 px-4 py-2 text-sm shadow-soft-card">
@@ -947,8 +1205,8 @@ const StockScreeningPage: React.FC = () => {
       {!enabled ? (
         <InlineAlert
           variant="info"
-          title="内建选股未开启"
-          message="点击后启用 SCREENING_ENABLED，并开放内建策略选股入口。"
+          title="选股未开启"
+          message="开启后即可运行选股策略。"
           action={
             <Button size="sm" isLoading={enabling} loadingText="开启中..." onClick={() => void handleEnable()}>
               开启选股
@@ -960,22 +1218,8 @@ const StockScreeningPage: React.FC = () => {
       {enabled && !available ? (
         <InlineAlert
           variant="warning"
-          title="内建选股引擎不可用"
+          title="选股功能不可用"
           message="请检查后端日志、策略文件和基础数据依赖后重启服务。"
-        />
-      ) : null}
-
-      <InlineAlert
-        variant="warning"
-        title="实验功能与风险提示"
-        message="内建选股仍处于实验性质。结果仅用于研究和辅助判断，不构成投资建议；市场有风险，交易决策和损益由使用者自行承担。"
-      />
-
-      {loading ? (
-        <InlineAlert
-          variant="info"
-          title="选股任务运行中"
-          message={`${taskMessage || '正在执行选股'}。任务 ID：${activeTaskId ? activeTaskId.slice(0, 12) : '-'}`}
         />
       ) : null}
 
@@ -987,12 +1231,7 @@ const StockScreeningPage: React.FC = () => {
             <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-orange-500/10 text-orange-500 shadow-[0_10px_30px_rgba(249,115,22,0.16)]">
               <Flame className="h-5 w-5" />
             </span>
-            <div>
-              <h2 className="text-lg font-bold tracking-normal text-foreground">热点题材</h2>
-              <p className="mt-1 text-xs leading-5 text-secondary-text">
-                capital_heat、balanced_alpha 等策略会把热点题材的 theme_heat 纳入评分。
-              </p>
-            </div>
+            <h2 className="text-lg font-bold tracking-normal text-foreground">热点题材</h2>
           </div>
           <div className="flex flex-col items-start gap-2 lg:items-end">
             <div className="flex flex-wrap items-center gap-2">
@@ -1020,28 +1259,21 @@ const StockScreeningPage: React.FC = () => {
               </Button>
               ) : null}
             </div>
-            <p className="text-xs text-secondary-text">更新时间：{formatHotspotUpdatedAt(hotspotsUpdatedAt)}</p>
+            {hotspotsUpdatedAt ? (
+              <p className="text-xs text-secondary-text">更新于 {formatHotspotUpdatedAt(hotspotsUpdatedAt)}</p>
+            ) : null}
           </div>
         </div>
 
-        {hotspotError ? (
+        {hotspotsExpanded && hotspotError ? (
           <p className="mb-3 rounded-xl border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
             {hotspotError}
           </p>
         ) : null}
 
-        {!hotspotsExpanded ? (
-          <div className="flex flex-col gap-2 rounded-xl border border-border/70 bg-surface/70 px-4 py-3 text-sm text-secondary-text sm:flex-row sm:items-center sm:justify-between">
-            <span>
-              {hotspots.length > 0
-                ? `已缓存 ${hotspots.length} 个热点题材，展开后可查看热度、阶段和发酵路线。`
-                : '热点题材默认折叠；展开后可读取缓存，点击刷新才拉取实时数据。'}
-            </span>
-            <span className="text-xs">实时详情会在选择具体题材后加载</span>
-          </div>
-        ) : hotspots.length === 0 ? (
+        {!hotspotsExpanded ? null : hotspots.length === 0 ? (
           <div className="rounded-xl border border-dashed border-border bg-surface/70 px-4 py-6 text-sm text-secondary-text">
-            点击刷新后会拉取热点概念/行业排行、热度分、生命周期阶段和活跃龙头。
+            暂无热点数据，点击“刷新热点题材”获取。
           </div>
         ) : (
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
@@ -1106,16 +1338,36 @@ const StockScreeningPage: React.FC = () => {
                   {hotspotDetail?.name || selectedHotspotTopic}
                 </h3>
                 <p className="mt-1 text-xs leading-5 text-secondary-text">
-                  {loadingHotspotDetail ? '正在读取发酵路线与概念股...' : hotspotDetail?.summary || '点击题材查看发酵路线与概念股。'}
+                  {hotspotDetail
+                    ? getHotspotSummaryText(hotspotDetail, selectedHotspot)
+                    : loadingHotspotDetail
+                      ? '正在读取发酵路线与概念股...'
+                      : '点击题材查看发酵路线与概念股。'}
                 </p>
                 {hotspotDetail?.canonicalTopic && hotspotDetail.canonicalTopic !== selectedHotspotTopic ? (
                   <p className="mt-1 text-[11px] text-secondary-text">标准题材：{hotspotDetail.canonicalTopic}</p>
                 ) : null}
               </div>
               <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  isLoading={searchingHotspotNews}
+                  loadingText="搜索中..."
+                  disabled={loadingHotspotDetail || searchingHotspotNews}
+                  onClick={() => void loadHotspotDetail(selectedHotspotTopic, { includeSearch: true })}
+                >
+                  <Search className="h-3.5 w-3.5" />
+                  搜索最新消息
+                </Button>
+                {loadingHotspotDetail ? (
+                  <span className="w-fit rounded-full bg-cyan/10 px-3 py-1 text-xs font-semibold text-cyan">
+                    正在补充详情
+                  </span>
+                ) : null}
                 {hotspotDetail?.qualityStatus ? (
                   <span className="w-fit rounded-full bg-warning/10 px-3 py-1 text-xs font-semibold text-warning">
-                    质量 {hotspotDetail.qualityStatus}
+                    质量 {getHotspotQualityLabel(hotspotDetail.qualityStatus)}
                   </span>
                 ) : null}
                 {hotspotDetail?.fallbackUsed || hotspotDetail?.stale ? (
@@ -1137,14 +1389,14 @@ const StockScreeningPage: React.FC = () => {
               </p>
             ) : null}
 
-            {hotspotDetail && ((hotspotDetail.missingFields || []).length > 0 || (hotspotDetail.sourceErrors || []).length > 0) ? (
+            {hotspotDetail && hasHotspotDetailDegradation(hotspotDetail) ? (
               <details className="mb-3 rounded-xl border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
                 <summary className="cursor-pointer font-semibold">详情数据已降级，展开查看原因</summary>
                 <div className="mt-2 space-y-1 leading-5">
                   {(hotspotDetail.missingFields || []).length > 0 ? (
-                    <p>缺失字段：{(hotspotDetail.missingFields || []).join('、')}</p>
+                    <p>暂缺：{getHotspotMissingFieldLabels(hotspotDetail.missingFields).join('、')}</p>
                   ) : null}
-                  {(hotspotDetail.sourceErrors || []).slice(0, 4).map((message, index) => (
+                  {getHotspotDiagnosticMessages(hotspotDetail.sourceErrors).map((message, index) => (
                     <p key={`${message}-${index}`}>{message}</p>
                   ))}
                 </div>
@@ -1164,9 +1416,18 @@ const StockScreeningPage: React.FC = () => {
                         <span className="absolute -left-4 top-1 h-2.5 w-2.5 rounded-full border border-orange-400 bg-card" />
                         <div className="rounded-lg border border-border/70 bg-card/80 p-3">
                           <p className="text-[11px] font-semibold text-orange-500">{getRouteTimeLabel(item)}</p>
-                          <p className="mt-1 text-xs font-semibold text-foreground">{item.title}</p>
-                          <p className="mt-1 text-xs leading-5 text-secondary-text">{item.description}</p>
-                          {item.source ? <p className="mt-2 text-[11px] text-secondary-text">来源 {item.source}</p> : null}
+                          <p className="mt-1 text-xs font-semibold text-foreground">{formatHotspotRouteTitle(item.title)}</p>
+                          <p className="mt-1 text-xs leading-5 text-secondary-text">{formatHotspotRouteDescription(item.description)}</p>
+                          {item.url ? (
+                            <a
+                              className="mt-2 inline-flex text-[11px] font-semibold text-cyan hover:text-foreground"
+                              href={item.url}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              查看消息
+                            </a>
+                          ) : null}
                         </div>
                       </div>
                     ))}
@@ -1184,7 +1445,7 @@ const StockScreeningPage: React.FC = () => {
                           </div>
                           <div className="flex shrink-0 items-center gap-1">
                             <span className="rounded-full bg-cyan/10 px-2 py-1 text-[11px] font-semibold text-cyan">
-                              {stock.role || '概念股'}
+                              {getHotspotRoleLabel(stock.role)}
                             </span>
                             {stock.code ? (
                               <button
@@ -1202,13 +1463,6 @@ const StockScreeningPage: React.FC = () => {
                         <p className="mt-2 text-[11px] text-secondary-text">
                           涨跌幅 {formatStockChangeText(stock.changePct)} · 热度 {formatNumber(stock.hotStockScore, 0)}
                         </p>
-                        {stock.source || stock.sourceConfidence != null || stock.fallbackUsed ? (
-                          <p className="mt-1 text-[11px] text-secondary-text">
-                            来源 {stock.source || '-'}
-                            {stock.sourceConfidence != null ? ` · 置信 ${formatPercent(stock.sourceConfidence)}` : ''}
-                            {stock.fallbackUsed ? ' · 回退' : ''}
-                          </p>
-                        ) : null}
                       </div>
                     ))}
                   </div>
@@ -1221,12 +1475,9 @@ const StockScreeningPage: React.FC = () => {
 
       <section className="rounded-2xl border border-cyan/35 bg-card/95 p-4 shadow-soft-card">
         <div className="mb-4 flex items-start justify-between gap-3">
-          <div>
-            <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
-              <SlidersHorizontal className="h-4 w-4 text-cyan" />
-              运行选股
-            </div>
-            <p className="mt-1 text-xs text-secondary-text">选择市场和内建策略，结果会在质量接近的候选中做每日稳定轮换。</p>
+          <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
+            <SlidersHorizontal className="h-4 w-4 text-cyan" />
+            运行选股
           </div>
           <span className="rounded-full border border-cyan/30 bg-cyan/10 px-3 py-1 text-xs font-semibold text-cyan">
             {selectedStrategyTag}
@@ -1250,24 +1501,41 @@ const StockScreeningPage: React.FC = () => {
             </select>
           </label>
 
-          <label className="space-y-2 text-xs font-medium text-secondary-text">
-            策略
-            <input
-              aria-label="策略"
-              list="screening-strategy-options"
-              className="h-11 w-full rounded-xl border border-border bg-surface px-3 text-sm text-foreground outline-none transition-colors focus:border-cyan"
-              value={strategy}
+          <div className="space-y-2 text-xs font-medium text-secondary-text">
+            <label htmlFor="screening-strategy">策略</label>
+            <Select
+              id="screening-strategy"
+              value={selectedStrategy ? strategy : CUSTOM_STRATEGY_OPTION_VALUE}
               disabled={loading || loadingStrategies}
-              onChange={(event) => handleStrategyChange(event.target.value)}
+              placeholder=""
+              options={[
+                ...strategies.map((item) => ({
+                  value: item.id,
+                  label: item.name || item.title || item.id,
+                })),
+                { value: CUSTOM_STRATEGY_OPTION_VALUE, label: '自定义策略…' },
+              ]}
+              onChange={(value) =>
+                handleStrategyChange(
+                  value === CUSTOM_STRATEGY_OPTION_VALUE ? '' : value,
+                )
+              }
             />
-            <datalist id="screening-strategy-options">
-              {strategies.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.name || item.title || item.id}
-                </option>
-              ))}
-            </datalist>
-          </label>
+          </div>
+
+          {!selectedStrategy && !loadingStrategies ? (
+            <label className="space-y-2 text-xs font-medium text-secondary-text lg:col-start-2">
+              自定义策略 ID
+              <input
+                aria-label="自定义策略 ID"
+                className="h-11 w-full rounded-xl border border-border bg-surface px-3 text-sm text-foreground outline-none transition-colors focus:border-cyan"
+                value={strategy}
+                disabled={loading}
+                placeholder="输入策略 ID"
+                onChange={(event) => handleStrategyChange(event.target.value)}
+              />
+            </label>
+          ) : null}
 
           <label className="space-y-2 text-xs font-medium text-secondary-text">
             返回数量
@@ -1286,7 +1554,7 @@ const StockScreeningPage: React.FC = () => {
             className="h-11 min-w-40"
             isLoading={loading}
             loadingText="筛选中..."
-            disabled={!isScreeningEnabled || loading}
+            disabled={!isScreeningEnabled || loading || !strategy.trim()}
             onClick={() => void handleSubmit()}
           >
             <Play className="h-4 w-4" />
@@ -1301,52 +1569,52 @@ const StockScreeningPage: React.FC = () => {
         </div>
       </section>
 
-      <section className="rounded-2xl border border-border bg-card/95 p-4 shadow-soft-card">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+      {loading || screenMeta ? (
+        <section className="rounded-2xl border border-border bg-card/95 p-4 shadow-soft-card">
           <div className="flex items-center gap-3">
-            <span
-              className={`grid h-7 w-7 place-items-center rounded-full ${
-                candidates.length > 0 ? 'text-success' : isScreeningEnabled ? 'text-cyan' : 'text-warning'
-              }`}
-            >
-              {candidates.length > 0 ? <CheckCircle2 className="h-5 w-5" /> : <CircleAlert className="h-5 w-5" />}
-            </span>
-            <div>
-              <h2 className="text-sm font-semibold text-foreground">
-                {loading ? '选股运行中' : candidates.length > 0 ? '选股完成' : isScreeningEnabled ? '等待运行' : '等待开启'}
-              </h2>
-              <p className="mt-1 text-xs text-secondary-text">
-                {loading
-                  ? `${taskMessage || '正在执行选股'} · ${taskProgress}%`
-                  : `当前策略：${displayedStrategy} · ${MARKETS.find((item) => item.id === market)?.label}`}
-              </p>
+            <div className="flex items-center gap-3">
+              <span className={`grid h-7 w-7 place-items-center rounded-full ${loading ? 'text-cyan' : 'text-success'}`}>
+                {loading ? <CircleAlert className="h-5 w-5" /> : <CheckCircle2 className="h-5 w-5" />}
+              </span>
+              <div>
+                <h2 className="text-sm font-semibold text-foreground">{loading ? '选股运行中' : '选股完成'}</h2>
+                <p className="mt-1 text-xs text-secondary-text">
+                  {loading
+                    ? `${taskMessage || '正在执行选股'} · ${taskProgress}%`
+                    : `${displayedStrategy} · ${MARKETS.find((item) => item.id === market)?.label}`}
+                </p>
+              </div>
             </div>
           </div>
-          <div className="grid gap-1 text-xs text-secondary-text sm:text-right">
-            <span>任务：{activeTaskId ? activeTaskId.slice(0, 12) : '-'}</span>
-            <span>Run ID：{screenMeta?.runId || '-'}</span>
-            <span>
-              快照 {screenMeta?.snapshotCount ?? '-'} · 过滤后 {screenMeta?.afterFilterCount ?? '-'} · 候选 {screenMeta?.candidateCount ?? candidates.length}
-            </span>
-            <span>
-              排序：{screenMeta?.llmRanked ? '智能重排' : screenMeta ? '确定性因子' : '-'}
-              {screenMeta?.llmModelUsed ? ` · ${screenMeta.llmModelUsed}` : ''}
-              {screenMeta?.llmCoverage != null ? ` · 覆盖 ${formatPercent(screenMeta.llmCoverage)}` : ''}
-            </span>
-            {screenMeta?.resultVariantPoolSize ? (
+
+          <details className="mt-3 border-t border-border/70 pt-3 text-xs text-secondary-text">
+            <summary className="w-fit cursor-pointer font-medium text-secondary-text">运行详情</summary>
+            <div className="mt-2 grid gap-1">
+              <span>任务：{activeTaskId ? activeTaskId.slice(0, 12) : '-'}</span>
+              <span>Run ID：{screenMeta?.runId || '-'}</span>
               <span>
-                候选差异：近分池 {screenMeta.resultVariantPoolSize} ·{' '}
-                {screenMeta.resultVariantApplied
-                  ? `本次替换 ${screenMeta.resultVariantRotatedSlots ?? 0} 位`
-                  : '本次保持基准'}
+                快照 {screenMeta?.snapshotCount ?? '-'} · 过滤后 {screenMeta?.afterFilterCount ?? '-'} · 候选 {screenMeta?.candidateCount ?? candidates.length}
               </span>
-            ) : null}
-            <span>
-              DSA增强：{screenMeta?.dsaEnrichment?.enrichedCount ?? '-'} / {screenMeta?.dsaEnrichment?.requestedCount ?? '-'}
-            </span>
-          </div>
-        </div>
-      </section>
+              <span>
+                排序：{screenMeta?.llmRanked ? '智能重排' : screenMeta ? '确定性因子' : '-'}
+                {screenMeta?.llmModelUsed ? ` · ${screenMeta.llmModelUsed}` : ''}
+                {screenMeta?.llmCoverage != null ? ` · 覆盖 ${formatPercent(screenMeta.llmCoverage)}` : ''}
+              </span>
+              {screenMeta?.resultVariantPoolSize ? (
+                <span>
+                  候选差异：近分池 {screenMeta.resultVariantPoolSize} ·{' '}
+                  {screenMeta.resultVariantApplied
+                    ? `本次替换 ${screenMeta.resultVariantRotatedSlots ?? 0} 位`
+                    : '本次保持基准'}
+                </span>
+              ) : null}
+              <span>
+                深度补充：{screenMeta?.dsaEnrichment?.enrichedCount ?? '-'} / {screenMeta?.dsaEnrichment?.requestedCount ?? '-'}
+              </span>
+            </div>
+          </details>
+        </section>
+      ) : null}
 
       {screenMeta && alertMessages.length > 0 ? (
         <InlineAlert
@@ -1356,24 +1624,19 @@ const StockScreeningPage: React.FC = () => {
         />
       ) : null}
 
-      <section className="rounded-2xl border border-border bg-card/95 p-4 shadow-soft-card">
-        <div className="mb-5 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-          <div>
+      {screenMeta ? (
+        <section className="rounded-2xl border border-border bg-card/95 p-4 shadow-soft-card">
+          <div className="mb-5 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
             <h2 className="text-base font-semibold text-foreground">选股结果</h2>
-            <p className="mt-2 max-w-3xl text-sm leading-6 text-secondary-text">
-              内建引擎返回候选后，DSA 会对前几名补充行情、基本面、新闻和辅助摘要。
-            </p>
-          </div>
           <div className="flex items-center gap-2 rounded-full border border-border bg-surface px-3 py-2 text-xs text-secondary-text">
             <Search className="h-4 w-4 text-cyan" />
             {candidates.length} 条候选
           </div>
-        </div>
+          </div>
 
         {candidates.length === 0 ? (
           <div className="rounded-xl border border-dashed border-border bg-surface/70 px-5 py-10 text-center">
-            <p className="text-sm font-medium text-foreground">暂无结果</p>
-            <p className="mt-2 text-sm text-secondary-text">开启内建选股后点击“运行选股”生成候选列表。</p>
+            <p className="text-sm font-medium text-foreground">暂无符合条件的候选</p>
           </div>
         ) : (
           <div className="overflow-hidden rounded-xl border border-border">
@@ -1443,13 +1706,15 @@ const StockScreeningPage: React.FC = () => {
                                     type="button"
                                     onClick={() => handleAnalyzeCandidate(item)}
                                   >
-                                    用 DSA 深度分析
+                                    进一步深度分析
                                   </button>
                                 </div>
                                 {item.dsaAnalysisSummary ? (
                                   <div>
-                                    <p className="text-xs font-semibold text-secondary-text">DSA 增强摘要</p>
-                                    <p className="mt-1 text-sm leading-6 text-foreground">{item.dsaAnalysisSummary}</p>
+                                    <p className="text-xs font-semibold text-secondary-text">增强摘要</p>
+                                    <p className="mt-1 text-sm leading-6 text-foreground">
+                                      {formatEnrichmentSummary(item.dsaAnalysisSummary)}
+                                    </p>
                                   </div>
                                 ) : null}
                                 {llmInsightAvailable ? (
@@ -1477,7 +1742,7 @@ const StockScreeningPage: React.FC = () => {
                                     {factors.length > 0 ? (
                                       factors.map(([key, value]) => (
                                         <div key={key} className="rounded-lg border border-border bg-card px-3 py-2">
-                                          <span className="block text-xs text-secondary-text">{key}</span>
+                                          <span className="block text-xs text-secondary-text">{FACTOR_LABELS[key] || key}</span>
                                           <span className="text-sm font-semibold text-foreground">{formatNumber(value)}</span>
                                         </div>
                                       ))
@@ -1503,7 +1768,7 @@ const StockScreeningPage: React.FC = () => {
                                   </div>
                                 ) : null}
                                 <div>
-                                  <p className="text-xs font-semibold text-secondary-text">DSA 新闻</p>
+                                  <p className="text-xs font-semibold text-secondary-text">相关新闻</p>
                                   {dsaNews.length > 0 ? (
                                     <ul className="mt-1 space-y-1 text-sm text-foreground">
                                       {dsaNews.slice(0, 3).map((newsItem, newsIndex) => (
@@ -1517,7 +1782,7 @@ const StockScreeningPage: React.FC = () => {
                                   )}
                                 </div>
                                 <div>
-                                  <p className="text-xs font-semibold text-secondary-text">DSA 公告与事件</p>
+                                  <p className="text-xs font-semibold text-secondary-text">公告与事件</p>
                                   {dsaEvents.length > 0 ? (
                                     <ul className="mt-1 space-y-1 text-sm text-foreground">
                                       {dsaEvents.slice(0, 3).map((eventItem, eventIndex) => (
@@ -1532,7 +1797,7 @@ const StockScreeningPage: React.FC = () => {
                                 </div>
                                 {dsaWarnings.length > 0 ? (
                                   <div>
-                                    <p className="text-xs font-semibold text-secondary-text">DSA 增强提示</p>
+                                    <p className="text-xs font-semibold text-secondary-text">数据补充提示</p>
                                     <p className="mt-1 text-sm text-secondary-text">{dsaWarnings.join('，')}</p>
                                   </div>
                                 ) : null}
@@ -1548,7 +1813,8 @@ const StockScreeningPage: React.FC = () => {
             </table>
           </div>
         )}
-      </section>
+        </section>
+      ) : null}
     </AppPage>
   );
 };

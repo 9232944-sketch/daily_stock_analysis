@@ -110,6 +110,17 @@ screening:
     assert [item.name for item in strategies] == ["custom_demo"]
 
 
+def test_screening_config_reads_snapshot_cache_ttl() -> None:
+    with patch.dict(
+        os.environ,
+        {"SCREENING_SNAPSHOT_CACHE_TTL_SEC": "120"},
+        clear=False,
+    ):
+        config = ScreeningRuntimeConfig.from_env()
+
+    assert config.snapshot_cache_ttl_seconds == 120.0
+
+
 def test_pipeline_passes_daily_history_cache_settings_to_enrichment(monkeypatch) -> None:
     snapshot_df = pd.DataFrame(
         [
@@ -421,3 +432,32 @@ def test_em_datacenter_timeout_falls_back_to_last_good_snapshot(tmp_path, monkey
     assert result.attrs["fallback_used"] is True
     assert result.attrs["snapshot_source"] == "last_good_cache"
     assert result.loc[0, "code"] == "000001"
+
+
+def test_fresh_snapshot_cache_skips_live_sources(tmp_path, monkeypatch) -> None:
+    cached = pd.DataFrame(
+        [{"code": "000001", "name": "Ping An", "price": 10.0, "volume_ratio": 1.5}]
+    )
+    cached.attrs["snapshot_source"] = "sina"
+    cache_path = tmp_path / "snapshot-cache.json"
+    screening_snapshot._write_last_good_snapshot(cache_path, cached)
+    live_fetch = patch.object(
+        screening_snapshot,
+        "fetch_cn_snapshot",
+        side_effect=AssertionError("fresh cache should avoid live snapshot calls"),
+    )
+
+    with live_fetch as fetch_mock:
+        result = screening_snapshot.fetch_snapshot_with_fallback(
+            ["sina"],
+            required_columns=["volume_ratio"],
+            fallback_snapshot_path=cache_path,
+            cache_ttl_seconds=300,
+        )
+
+    fetch_mock.assert_not_called()
+    assert result.attrs["snapshot_source"] == "last_good_cache"
+    assert result.attrs["cache_used"] is True
+    assert result.attrs["fallback_used"] is False
+    assert result.attrs["stale"] is False
+    assert result.attrs["last_good_snapshot_source"] == "sina"

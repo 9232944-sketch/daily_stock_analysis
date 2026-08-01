@@ -68,6 +68,7 @@ def fetch_snapshot_with_fallback(
     required_columns: list[str] | None = None,
     fallback_snapshot_path: str | Path | None = None,
     fallback_max_age_hours: float | None = None,
+    cache_ttl_seconds: float = 0.0,
     market: str = "cn",
 ) -> pd.DataFrame:
     """Try live sources, optionally falling back to the last-good snapshot."""
@@ -76,6 +77,17 @@ def fetch_snapshot_with_fallback(
 
     errors = []
     required = required_columns or []
+    if cache_ttl_seconds > 0:
+        cached = _read_last_good_snapshot(
+            fallback_snapshot_path,
+            required_columns=required,
+            source_errors=[],
+            max_age_hours=cache_ttl_seconds / 3600.0,
+            fresh=True,
+        )
+        if cached is not None:
+            return cached
+
     for source in sources:
         disabled_reason = _source_disabled_reason(source)
         if disabled_reason:
@@ -260,6 +272,7 @@ def _read_last_good_snapshot(
     required_columns: list[str],
     source_errors: list[str],
     max_age_hours: float | None = None,
+    fresh: bool = False,
 ) -> pd.DataFrame | None:
     if path_like is None:
         return None
@@ -299,8 +312,9 @@ def _read_last_good_snapshot(
         return None
 
     cached.attrs["snapshot_source"] = "last_good_cache"
-    cached.attrs["fallback_used"] = True
-    cached.attrs["stale"] = True
+    cached.attrs["fallback_used"] = not fresh
+    cached.attrs["cache_used"] = True
+    cached.attrs["stale"] = not fresh
     cached.attrs["stale_age_hours"] = stale_age_hours
     cached.attrs["source_errors"] = list(source_errors)
     metadata = payload.get("metadata")
@@ -309,11 +323,19 @@ def _read_last_good_snapshot(
             metadata.get("snapshot_source", "")
         )
         cached.attrs["last_good_created_at"] = str(payload.get("created_at", ""))
-    logger.warning(
-        "Using last-good snapshot cache %s after live source failures: %s",
-        path,
-        "; ".join(source_errors),
-    )
+    if fresh:
+        logger.info(
+            "Using fresh snapshot cache %s: age_hours=%s rows=%d",
+            path,
+            stale_age_hours,
+            len(cached),
+        )
+    else:
+        logger.warning(
+            "Using last-good snapshot cache %s after live source failures: %s",
+            path,
+            "; ".join(source_errors),
+        )
     return cached
 
 
@@ -365,7 +387,9 @@ def _fetch_sina() -> pd.DataFrame:
     """
     url = "https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/Market_Center.getHQNodeData"
     page = 1
-    page_size = 80
+    # Sina caps this endpoint at 100 rows. Use the cap to reduce full-market
+    # pagination round trips without changing the response contract.
+    page_size = 100
     all_items = []
     while True:
         resp = requests.get(

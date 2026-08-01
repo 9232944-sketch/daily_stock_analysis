@@ -1,4 +1,4 @@
-# 内建选股引擎
+# 选股引擎
 
 DSA 将选股能力作为主项目的一部分维护。实现参考 [AlphaSift](https://github.com/ZhuLinsen/alphasift) 提交 [`9f522747caafd3c0b1ddb7e14d5cf44c8580b6cf`](https://github.com/ZhuLinsen/alphasift/commit/9f522747caafd3c0b1ddb7e14d5cf44c8580b6cf)，并按 Apache License 2.0 修改和分发。衍生文件保留来源头，许可证位于 `src/services/screening/LICENSE`，第三方声明见根目录 `THIRD_PARTY_NOTICES.md`。
 
@@ -26,31 +26,34 @@ SCREENING_ENABLED=false
 
 ```dotenv
 SCREENING_DATA_DIR=data/screening
+SCREENING_SNAPSHOT_CACHE_TTL_SEC=300
 SCREENING_SOURCE_CALL_TIMEOUT_SEC=
+SCREENING_HOTSPOT_CALL_TIMEOUT_SEC=8
+SCREENING_HOTSPOT_SEARCH_TIMEOUT_SEC=12
 SCREENING_SNAPSHOT_CALL_TIMEOUT_SEC=60
 SCREENING_DAILY_CALL_TIMEOUT_SEC=20
 SCREENING_EASTMONEY_MIN_INTERVAL_SEC=1.0
 SCREENING_EASTMONEY_JITTER_SEC=0.3
 ```
 
-路径、超时和限流项只影响内建选股链路。完整示例以 `.env.example` 为准。
+路径、缓存、超时和限流项只影响选股链路。`SCREENING_SNAPSHOT_CACHE_TTL_SEC` 默认 300 秒，设为 `0` 可关闭新鲜快照复用。完整示例以 `.env.example` 为准。
 
 ## API 契约
 
 | 路径 | 方法 | 行为 |
 | --- | --- | --- |
 | `/api/v1/screening/status` | GET | 返回开关、引擎状态、契约版本、参考项目和数据源健康信息 |
-| `/api/v1/screening/strategies` | GET | 返回内建策略 |
+| `/api/v1/screening/strategies` | GET | 返回选股策略 |
 | `/api/v1/screening/hotspots` | GET | 读取缓存或显式刷新热点题材 |
-| `/api/v1/screening/hotspots/{topic}` | GET | 返回题材路线、成分股与核心股 |
-| `/api/v1/screening/screen` | POST | 同步执行选股；可传匿名 `variant_seed` 生成稳定的近分候选轮换 |
+| `/api/v1/screening/hotspots/{topic}` | GET | 返回题材路线、成分股与核心股；`include_search=true` 时按需搜索近期消息 |
+| `/api/v1/screening/screen` | POST | 同步执行选股；可传匿名 `variant_seed` 在每次运行中生成有界的近分候选组合 |
 | `/api/v1/screening/screen/tasks` | POST | 提交后台选股任务；请求字段与同步接口一致 |
 | `/api/v1/screening/screen/tasks/{task_id}` | GET | 查询任务进度、错误或最终结果 |
 | `/api/v1/screening/history` | GET | 按策略、市场查询最近完成的选股运行摘要 |
 | `/api/v1/screening/history/{run_id}` | GET | 读取一条持久化的完整选股结果 |
 | `/api/v1/screening/source-history` | GET | 汇总历史运行中的快照源命中、错误和降级次数 |
 
-后台任务使用 `report_type=screening_screen`，Web 会保存活动任务 ID，并在页面恢复时继续轮询。任务队列仍负责运行态进度；完成后的结果同时写入 DSA 数据库，因此服务重启后仍可按 `run_id` 查询。
+后台任务使用 `report_type=screening_screen`，Web 会保存活动任务 ID，并在页面恢复时继续轮询。任务状态会分别提示全市场快照、候选上下文、LLM 重排、最终评分和新闻事件增强等阶段；完成后的结果同时写入 DSA 数据库，因此服务重启后仍可按 `run_id` 查询。
 
 ## 核心流程
 
@@ -67,24 +70,27 @@ SCREENING_EASTMONEY_JITTER_SEC=0.3
   -> 用户按需进入 DSA 单股深度分析
 ```
 
-- 全市场快照按配置的数据源优先级尝试；单一数据源失败后继续降级，并记录 source health 与 last-good 缓存。
+- 全市场快照在短 TTL 内优先复用最近成功结果；缓存过期后再按配置的数据源优先级尝试，单一数据源失败后继续降级，并记录 source health 与 last-good 缓存。当前 Sina、Efinance、AkShare/东财和 Tushare 快照接口均不提供增量游标或变更序列，因此 TTL 内可以零请求复用，TTL 到期后仍需重新读取全表；本地比较前后差异不能减少上游传输量，不作为“增量拉取”宣传。
 - 有 `TUSHARE_TOKEN` 时默认优先 Tushare，否则默认从 Sina 开始；显式 `SNAPSHOT_SOURCE_PRIORITY` 始终优先。
 - 日 K 优先复用 DSA 历史行情链路，无结果时再走筛选引擎的数据源降级。
 - LLM 重排前只补充有限候选上下文，最终候选再补行情、基本面、新闻和摘要，控制请求量。
 - 模型、渠道、base URL、额外 headers、fallback、timeout 和 token 上限在单次调用范围内注入，不改写用户配置；主模型即使 HTTP 调用成功，但返回空内容、非 JSON 或覆盖率不足，也会继续尝试已配置的备用模型。最终 JSON 必须在 `content` 块或 `output` 块中；`reasoning_content`（链式思考）被视为内部辅助，不作为最终结果。
+- 热点榜单刷新与选股长流程可并行执行；列表默认不批量预取详情，用户选中具体题材时才加载该题材详情。
+- 热点成分股并行尝试东方财富与同花顺，任一源先返回即可继续，并在短暂合并窗口内吸收另一源结果；单源卡住不会再阻止后备源和本地核心股回退。
+- “搜索最新消息”复用 DSA 原生搜索服务的 provider 优先级、SearXNG 公共实例能力、结果缓存与请求合并，只补充有链接的事件/催化，不从网页内容推断板块成分股。搜索由用户主动触发，摘要在本地确定性压缩，不调用 LLM；默认详情请求不增加搜索等待。
 - 热点实时请求失败时优先使用 last-good cache；无缓存时返回稳定空态与明确错误。
 
 ## 结果轮换
 
-Web 会在浏览器本地生成一个不含用户信息的匿名种子，并随同步或后台选股请求传入 `variant_seed`。服务端将“匿名种子 + UTC 日期 + 市场 + 策略”作为稳定扰动输入：同一浏览器在同一天使用同一策略时结果稳定，不同浏览器可能在质量接近的候选中看到不同股票。
+Web 会在浏览器本地生成一个不含用户信息的匿名种子，并随同步或后台选股请求传入 `variant_seed`。服务端将匿名种子与本次运行 ID、市场和策略共同作为扰动输入：不同浏览器以及同一浏览器的不同运行，都可能在质量接近的候选中看到不同股票。
 
-轮换不是随机改分，也不会绕过策略：硬过滤、风险否决、因子/LLM 得分和组合集中度惩罚全部先执行；最高排名区保持不变，只允许 Top-N 尾部位置从不低于原截止分 1.5 分的近分池中替换。种子不写入选股结果或运行历史。未传 `variant_seed` 的 API 调用继续返回严格 Top-N，保持脚本与旧客户端兼容。
+扰动不是随机改分，也不会绕过策略：硬过滤、风险否决、因子/LLM 得分、最终评分和组合集中度惩罚全部先执行。明显高于原 Top-N 截止分的候选继续受保护；其余名额从不低于原截止分 1.5 分的近分池中抽取，入选后仍按真实最终分排序。种子不写入选股结果或运行历史。未传 `variant_seed` 的 API 调用继续返回严格 Top-N，保持脚本与旧客户端兼容。
 
 ## 缓存与持久化
 
 | 数据 | 位置 | 有效期/行为 |
 | --- | --- | --- |
-| 全市场快照 | `data/screening/snapshot.last_good.json` | 实时源全部失败时使用；受最大陈旧时间约束并标记 stale/fallback |
+| 全市场快照 | `data/screening/snapshot.last_good.json` | 默认 5 分钟内直接复用且不标记 fallback；过期后请求实时源，实时源全部失败时仍可按最大陈旧时间约束回退并标记 stale/fallback |
 | 个股日 K | `data/screening/daily_history/` | 按代码、来源和回看窗口分键，默认 TTL 24 小时；实时源全部失败时可使用过期缓存并标记 stale |
 | 行业/概念映射 | `data/screening/industry_provider_cache/` | 默认 TTL 24 小时，并保存板块热度历史用于趋势计算 |
 | 热点列表与历史 | `data/screening/hotspots.json`、`hotspot.history.jsonl` | 显式刷新写入；实时失败时回退最近可用快照 |
@@ -105,7 +111,7 @@ DSA 中存在两类用途不同的策略文件：
 | `src/services/screening/strategies/*.yaml` | 从全市场筛出哪些候选 | `src/services/screening/strategy.py` | 快照过滤、因子评分、风险和排序 |
 | `strategies/*.yaml` | 对单只股票如何分析和形成结论 | `src/agent/skills/base.py` | DSA Agent/报告分析 |
 
-即使 `shrink_pullback`、`volume_breakout` 同名，两者也使用不同目录、Schema 和 loader，不会相互覆盖。筛选策略可通过 `analysis_skills` 声明下一阶段建议使用的 DSA 分析 skill；Web 的“用 DSA 深度分析”会显式携带这些 skill。未声明映射的筛选策略继续使用用户当前选择或 DSA 默认分析策略，不做含义不可靠的强行映射。
+即使 `shrink_pullback`、`volume_breakout` 同名，两者也使用不同目录、Schema 和 loader，不会相互覆盖。筛选策略可通过 `analysis_skills` 声明下一阶段建议使用的分析 skill；Web 的“进一步深度分析”会显式携带这些 skill。未声明映射的筛选策略继续使用用户当前选择或默认分析策略，不做含义不可靠的强行映射。
 
 ## DSA 原生能力复用
 
@@ -154,5 +160,5 @@ AlphaSift 是参考来源，不是自动同步源。更新时应：
 ## 回滚
 
 - 业务回滚：设置 `SCREENING_ENABLED=false` 并重启；普通个股分析、报告、通知和问股不受影响。
-- 代码回滚：revert 引入内建引擎的提交并重建后端、Docker 与桌面产物。
+- 代码回滚：revert 引入选股引擎的提交并重建后端、Docker 与桌面产物。
 - 数据回滚：如需保留选股缓存和运行历史，先备份 `data/screening/` 与 DSA 数据库；代码回滚不会主动删除 `screening_runs` 用户数据。

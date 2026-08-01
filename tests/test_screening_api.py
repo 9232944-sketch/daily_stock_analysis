@@ -30,6 +30,7 @@ from api.v1.endpoints import screening as screening_endpoint
 from src.config import Config
 from src.services import screening_service
 from src.services.screening import REFERENCE_REVISION
+from src.services.screening.config import Config as ScreeningPipelineConfig
 from src.services.task_queue import TaskInfo, TaskStatus as QueueTaskStatus
 
 
@@ -862,6 +863,58 @@ class ScreeningOpportunitiesApiTestCase(unittest.TestCase):
         self.assertEqual(cache_payload["payload"]["details"]["Copper"]["summary"], "Copper summary")
         self.assertEqual(detail_mock.call_count, 2)
 
+    def test_hotspot_refresh_can_run_while_screening_pipeline_is_busy(self) -> None:
+        config = self._config(enabled=True)
+        pipeline_started = threading.Event()
+        release_pipeline = threading.Event()
+        errors: list[BaseException] = []
+
+        def screen_impl(_strategy: str, **_kwargs: Any) -> Dict[str, Any]:
+            pipeline_started.set()
+            release_pipeline.wait(timeout=2)
+            return {"candidates": []}
+
+        def run_screen() -> None:
+            try:
+                screening_service._call_screening_screen(
+                    "dual_low",
+                    "cn",
+                    5,
+                    config,
+                )
+            except BaseException as exc:  # noqa: BLE001 - surfaced in the test thread.
+                errors.append(exc)
+
+        rows = [{"topic": "AI", "heat_score": 90.0, "change_pct": 3.0}]
+        fake_core = _make_screening_core(screen=MagicMock(side_effect=screen_impl))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with (
+                patch.dict(os.environ, {"SCREENING_DATA_DIR": str(Path(tmpdir) / "screening")}, clear=False),
+                patch("src.services.screening_service._get_screening_status_snapshot", return_value=({}, True, {})),
+                patch("src.services.screening_service._resolve_hotspot_provider", return_value=("akshare", "akshare")),
+                patch(
+                    "src.services.screening_service.screening_hotspot",
+                    new=SimpleNamespace(discover_hotspots=MagicMock(return_value=rows)),
+                ),
+                _patch_screening_core(fake_core),
+            ):
+                worker = threading.Thread(target=run_screen)
+                worker.start()
+                self.assertTrue(pipeline_started.wait(timeout=1))
+                try:
+                    payload = screening_service.ScreeningService(config=config).hotspots(
+                        provider="akshare",
+                        top=1,
+                        refresh=True,
+                    )
+                finally:
+                    release_pipeline.set()
+                    worker.join(timeout=2)
+
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(errors, [])
+        self.assertEqual(payload["hotspots"][0]["topic"], "AI")
+
     def test_hotspots_refresh_does_not_replace_richer_cache_with_narrower_request(self) -> None:
         config = self._config(enabled=True)
 
@@ -1193,7 +1246,7 @@ class ScreeningOpportunitiesApiTestCase(unittest.TestCase):
             "source_errors": [],
         })
         search_service = MagicMock()
-        search_service.search_stock_news.return_value = SimpleNamespace(
+        search_service.search_topic_news.return_value = SimpleNamespace(
             success=True,
             provider="Bocha",
             results=[
@@ -1217,37 +1270,26 @@ class ScreeningOpportunitiesApiTestCase(unittest.TestCase):
                 patch("src.services.screening_service._get_screening_status_snapshot", return_value=({}, True, {})),
                 patch("src.services.screening_service._resolve_hotspot_provider", return_value=("akshare", provider)),
                 patch("src.services.screening_service.screening_hotspot", new=SimpleNamespace()),
-                patch("src.search_service.SearchService", return_value=search_service),
+                patch("src.services.screening_service._get_dsa_search_service", return_value=search_service),
             ):
-                payload = self._hotspot_detail(config=config, provider="akshare", topic="钼")
+                payload = self._hotspot_detail(
+                    config=config,
+                    provider="akshare",
+                    topic="钼",
+                    include_search=True,
+                )
 
         self.assertEqual(payload["route"][0]["source"], "ExampleNews")
-        self.assertEqual(payload["route"][0]["title"], "消息催化")
+        self.assertEqual(payload["route"][0]["title"], "以钼代钨带动小金属行情")
         self.assertEqual(payload["route"][0]["date"], "2026-06-12")
         self.assertEqual(payload["route"][0]["url"], "https://example.com/news")
+        self.assertEqual(payload["news_search_status"], "available")
         self.assertLessEqual(len(payload["route"][0]["description"]), 93)
         self.assertNotIn("完整产业链背景", payload["route"][0]["description"])
-        search_service.search_stock_news.assert_called_once()
+        search_service.search_topic_news.assert_called_once()
 
-    def test_hotspot_detail_reuses_screening_litellm_routes_and_temperature_compatibility(self) -> None:
-        config = Config(
-            screening_enabled=True,
-            litellm_model="openai/gpt-5-mini",
-            openai_api_keys=["dsa-openai-key"],
-            openai_base_url="https://openai-compatible.example/v1",
-            llm_model_list=[
-                {
-                    "model_name": "openai/gpt-5-mini",
-                    "litellm_params": {
-                        "model": "openai/gpt-5-mini",
-                        "api_key": "dsa-openai-key",
-                        "api_base": "https://openai-compatible.example/v1",
-                        "extra_headers": {"x-tenant": "dsa"},
-                    },
-                },
-            ],
-            bocha_api_keys=["test-key"],
-        )
+    def test_hotspot_search_summary_does_not_call_llm(self) -> None:
+        config = Config(screening_enabled=True, litellm_model="openai/gpt-5-mini")
         provider = screening_service.DsaEastMoneyHotspotProvider()
         provider.hotspot_detail = MagicMock(return_value={
             "topic": "钼",
@@ -1258,7 +1300,7 @@ class ScreeningOpportunitiesApiTestCase(unittest.TestCase):
             "source_errors": [],
         })
         search_service = MagicMock()
-        search_service.search_stock_news.return_value = SimpleNamespace(
+        search_service.search_topic_news.return_value = SimpleNamespace(
             success=True,
             provider="Bocha",
             results=[
@@ -1271,66 +1313,26 @@ class ScreeningOpportunitiesApiTestCase(unittest.TestCase):
                 )
             ],
         )
-        completion_calls: List[Dict[str, Any]] = []
-        env_snapshots: List[Dict[str, Any]] = []
-
-        def completion_impl(**kwargs: Any) -> Any:
-            completion_calls.append(dict(kwargs))
-            env_snapshots.append(
-                {
-                    "LITELLM_MODEL": screening_service.os.environ.get("LITELLM_MODEL"),
-                    "OPENAI_API_KEY": screening_service.os.environ.get("OPENAI_API_KEY"),
-                    "OPENAI_BASE_URL": screening_service.os.environ.get("OPENAI_BASE_URL"),
-                }
-            )
-            return SimpleNamespace(
-                choices=[
-                    SimpleNamespace(
-                        message=SimpleNamespace(content="钼价上行带动小金属与相关产业链发酵。")
-                    )
-                ]
-            )
-
-        fake_litellm = SimpleNamespace(completion=completion_impl)
+        completion = MagicMock(side_effect=AssertionError("hotspot search must not call LLM"))
 
         with tempfile.TemporaryDirectory() as tmpdir:
             with (
-                patch.dict(
-                    os.environ,
-                    {
-                        "SCREENING_DATA_DIR": str(Path(tmpdir) / "screening"),
-                        "LITELLM_MODEL": "outer/model",
-                        "OPENAI_API_KEY": "outer-openai-key",
-                        "OPENAI_BASE_URL": "https://outer-openai.example/v1",
-                    },
-                    clear=False,
-                ),
-                patch.dict(sys.modules, {"litellm": fake_litellm}, clear=False),
+                patch.dict(os.environ, {"SCREENING_DATA_DIR": str(Path(tmpdir) / "screening")}, clear=False),
+                patch.dict(sys.modules, {"litellm": SimpleNamespace(completion=completion)}, clear=False),
                 patch("src.services.screening_service._get_screening_status_snapshot", return_value=({}, True, {})),
                 patch("src.services.screening_service._resolve_hotspot_provider", return_value=("akshare", provider)),
                 patch("src.services.screening_service.screening_hotspot", new=SimpleNamespace()),
-                patch("src.search_service.SearchService", return_value=search_service),
+                patch("src.services.screening_service._get_dsa_search_service", return_value=search_service),
             ):
-                payload = self._hotspot_detail(config=config, provider="akshare", topic="钼")
-                self.assertEqual(os.environ.get("LITELLM_MODEL"), "outer/model")
-                self.assertEqual(os.environ.get("OPENAI_API_KEY"), "outer-openai-key")
-                self.assertEqual(os.environ.get("OPENAI_BASE_URL"), "https://outer-openai.example/v1")
+                payload = self._hotspot_detail(
+                    config=config,
+                    provider="akshare",
+                    topic="钼",
+                    include_search=True,
+                )
 
-        self.assertEqual(payload["route"][0]["description"], "钼价上行带动小金属与相关产业链发酵。")
-        self.assertEqual(completion_calls[0]["model"], "openai/gpt-5-mini")
-        self.assertEqual(completion_calls[0]["api_key"], "dsa-openai-key")
-        self.assertEqual(
-            completion_calls[0]["api_base"],
-            "https://openai-compatible.example/v1",
-        )
-        self.assertEqual(completion_calls[0]["extra_headers"], {"x-tenant": "dsa"})
-        self.assertNotIn("temperature", completion_calls[0])
-        self.assertEqual(env_snapshots[0]["LITELLM_MODEL"], "openai/gpt-5-mini")
-        self.assertEqual(env_snapshots[0]["OPENAI_API_KEY"], "dsa-openai-key")
-        self.assertEqual(
-            env_snapshots[0]["OPENAI_BASE_URL"],
-            "https://openai-compatible.example/v1",
-        )
+        self.assertIn("小金属", payload["route"][0]["description"])
+        completion.assert_not_called()
 
     def test_hotspot_detail_prefers_timeline_when_engine_route_is_empty(self) -> None:
         config = self._config(enabled=True)
@@ -1494,7 +1496,12 @@ class ScreeningOpportunitiesApiTestCase(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["topic"], "DRG/DIP")
-        service.hotspot_detail.assert_called_once_with(topic="DRG/DIP", provider="akshare", refresh=False)
+        service.hotspot_detail.assert_called_once_with(
+            topic="DRG/DIP",
+            provider="akshare",
+            refresh=False,
+            include_search=False,
+        )
 
     def test_hotspot_detail_falls_back_when_ths_constituents_fail(self) -> None:
         import pandas as pd
@@ -1565,6 +1572,51 @@ class ScreeningOpportunitiesApiTestCase(unittest.TestCase):
 
         self.assertEqual(list(frame["code"]), ["000001", "000002", "000003"])
         self.assertEqual(provider.stock_board_concept_cons_em("金融").shape[0], 3)
+
+    def test_hotspot_provider_does_not_let_stalled_source_block_ths_constituents(self) -> None:
+        import pandas as pd
+
+        stalled = threading.Event()
+
+        class FakeProvider(screening_service.DsaEastMoneyHotspotProvider):
+            _CONSTITUENT_SOURCE_BUDGET_SECONDS = 0.1
+            _CONSTITUENT_SECONDARY_GRACE_SECONDS = 0.02
+
+            def _fetch_eastmoney_constituents(self, topic: str, *, source: str) -> Any:
+                stalled.wait(1)
+                return pd.DataFrame()
+
+            def _fetch_ths_constituents(self, topic: str) -> Any:
+                return pd.DataFrame([{"code": "000003", "name": "国农科技"}])
+
+            def _fallback_constituents(self, topic: str) -> Any:
+                return pd.DataFrame()
+
+            def _related_hotspot_constituents(self, topic: str) -> Any:
+                return pd.DataFrame()
+
+        started = time.monotonic()
+        frame = FakeProvider().stock_board_concept_cons_em("金融")
+
+        self.assertLess(time.monotonic() - started, 0.3)
+        self.assertEqual(list(frame["code"]), ["000003"])
+        stalled.set()
+
+    def test_hotspot_provider_maps_cross_source_topic_alias_to_ths_concept(self) -> None:
+        provider = screening_service.DsaEastMoneyHotspotProvider()
+        concept_names = pd.DataFrame([
+            {"name": "文化传媒概念", "code": "300806"},
+            {"name": "其他概念", "code": "301000"},
+        ])
+
+        with patch.dict(
+            sys.modules,
+            {"akshare": SimpleNamespace(stock_board_concept_name_ths=lambda: concept_names)},
+            clear=False,
+        ):
+            code = provider._resolve_ths_concept_code("文字媒体")
+
+        self.assertEqual(code, "300806")
 
     def test_hotspot_provider_adds_related_metal_leaders_for_narrow_topic(self) -> None:
         import pandas as pd
@@ -1869,12 +1921,19 @@ class ScreeningOpportunitiesApiTestCase(unittest.TestCase):
             market="cn",
             max_results=3,
             selection_seed="",
+            progress_callback=ANY,
         )
+        screen_mock.call_args.kwargs["progress_callback"](66, "正在执行 LLM 候选重排")
         self.assertEqual(result["candidate_count"], 0)
         fake_queue.update_task_progress.assert_any_call(
             "screen-task-1",
             20,
             "正在执行内建选股，外部数据源较慢时会持续后台运行",
+        )
+        fake_queue.update_task_progress.assert_any_call(
+            "screen-task-1",
+            66,
+            "正在执行 LLM 候选重排",
         )
 
     def test_screen_task_status_returns_screening_result(self) -> None:
@@ -1980,6 +2039,8 @@ class ScreeningOpportunitiesApiTestCase(unittest.TestCase):
             use_llm=True,
             context=ANY,
             selection_seed="browser-a",
+            config=ANY,
+            progress_callback=None,
         )
         self.assertEqual(fake_module.screen.call_args.kwargs["context"]["llm"]["model"], "")
         self.assertEqual(payload["run_id"], "run123")
@@ -2349,27 +2410,7 @@ class ScreeningOpportunitiesApiTestCase(unittest.TestCase):
         captured: dict[str, object] = {}
 
         def screen_impl(_strategy: str, **kwargs):
-            captured["env"] = {
-                "LITELLM_MODEL": screening_service.os.environ.get("LITELLM_MODEL"),
-                "LITELLM_FALLBACK_MODELS": screening_service.os.environ.get("LITELLM_FALLBACK_MODELS"),
-                "LLM_CHANNELS": screening_service.os.environ.get("LLM_CHANNELS"),
-                "LLM_GEMINI_PROTOCOL": screening_service.os.environ.get("LLM_GEMINI_PROTOCOL"),
-                "LLM_GEMINI_API_KEYS": screening_service.os.environ.get("LLM_GEMINI_API_KEYS"),
-                "LLM_GEMINI_EXTRA_HEADERS": screening_service.os.environ.get("LLM_GEMINI_EXTRA_HEADERS"),
-                "GEMINI_API_KEY": screening_service.os.environ.get("GEMINI_API_KEY"),
-                "LLM_CANDIDATE_CONTEXT_ENABLED": screening_service.os.environ.get("LLM_CANDIDATE_CONTEXT_ENABLED"),
-                "LLM_CANDIDATE_CONTEXT_PROVIDERS": screening_service.os.environ.get("LLM_CANDIDATE_CONTEXT_PROVIDERS"),
-                "LLM_CANDIDATE_MULTIPLIER": screening_service.os.environ.get("LLM_CANDIDATE_MULTIPLIER"),
-                "LLM_MAX_CANDIDATES": screening_service.os.environ.get("LLM_MAX_CANDIDATES"),
-                "DAILY_SOURCE": screening_service.os.environ.get("DAILY_SOURCE"),
-                "DAILY_FETCH_RETRIES": screening_service.os.environ.get("DAILY_FETCH_RETRIES"),
-                "DAILY_FETCH_MAX_WORKERS": screening_service.os.environ.get("DAILY_FETCH_MAX_WORKERS"),
-                "SNAPSHOT_SOURCE_PRIORITY": screening_service.os.environ.get("SNAPSHOT_SOURCE_PRIORITY"),
-                "SCREENING_DATA_DIR": screening_service.os.environ.get("SCREENING_DATA_DIR"),
-                "SCREENING_FALLBACK_SNAPSHOT_PATH": screening_service.os.environ.get("SCREENING_FALLBACK_SNAPSHOT_PATH"),
-                "SCREENING_DAILY_HISTORY_CACHE_DIR": screening_service.os.environ.get("SCREENING_DAILY_HISTORY_CACHE_DIR"),
-                "SCREENING_INDUSTRY_PROVIDER_CACHE_DIR": screening_service.os.environ.get("SCREENING_INDUSTRY_PROVIDER_CACHE_DIR"),
-            }
+            captured["config"] = kwargs.get("config")
             captured["context"] = kwargs.get("context")
             return {"candidates": []}
 
@@ -2395,35 +2436,35 @@ class ScreeningOpportunitiesApiTestCase(unittest.TestCase):
             payload = self._screen(config, market="cn", strategy="dual_low", max_results=5)
             self.assertEqual(screening_service.os.environ.get("GEMINI_API_KEY"), "outer-key")
 
-        runtime_env = captured["env"]
-        self.assertIsInstance(runtime_env, dict)
-        self.assertEqual(runtime_env["LITELLM_MODEL"], "gemini/gemini-2.5-flash")
-        self.assertEqual(runtime_env["LITELLM_FALLBACK_MODELS"], "deepseek/deepseek-chat")
-        self.assertEqual(runtime_env["LLM_CHANNELS"], "gemini")
-        self.assertEqual(runtime_env["LLM_GEMINI_PROTOCOL"], "gemini")
-        self.assertEqual(runtime_env["LLM_GEMINI_API_KEYS"], "dsa-gemini-key")
-        self.assertEqual(runtime_env["LLM_GEMINI_EXTRA_HEADERS"], '{"x-tenant": "dsa"}')
-        self.assertEqual(runtime_env["GEMINI_API_KEY"], "dsa-gemini-key")
-        self.assertEqual(runtime_env["LLM_CANDIDATE_CONTEXT_ENABLED"], "false")
-        self.assertEqual(runtime_env["LLM_CANDIDATE_CONTEXT_PROVIDERS"], "news,fund_flow,announcement,quote")
-        self.assertEqual(runtime_env["LLM_CANDIDATE_MULTIPLIER"], "2")
-        self.assertEqual(runtime_env["LLM_MAX_CANDIDATES"], "10")
-        self.assertEqual(runtime_env["DAILY_SOURCE"], "auto")
-        self.assertEqual(runtime_env["DAILY_FETCH_RETRIES"], "3")
-        self.assertEqual(runtime_env["DAILY_FETCH_MAX_WORKERS"], "1")
-        self.assertEqual(runtime_env["SNAPSHOT_SOURCE_PRIORITY"], "sina,efinance,akshare_em,em_datacenter")
-        self.assertEqual(runtime_env["SCREENING_DATA_DIR"], str(screening_service.DSA_SCREENING_DATA_DIR))
+        pipeline_config = captured["config"]
+        self.assertIsInstance(pipeline_config, ScreeningPipelineConfig)
+        self.assertEqual(pipeline_config.llm_model, "gemini/gemini-2.5-flash")
+        self.assertEqual(pipeline_config.llm_fallback_models, ["deepseek/deepseek-chat"])
+        self.assertEqual(pipeline_config.llm_channels[0]["name"], "gemini")
+        self.assertEqual(pipeline_config.llm_channels[0]["protocol"], "gemini")
+        self.assertEqual(pipeline_config.llm_channels[0]["api_keys"], ["dsa-gemini-key"])
+        self.assertFalse(pipeline_config.llm_candidate_context_enabled)
+        self.assertEqual(pipeline_config.llm_candidate_multiplier, 2)
+        self.assertEqual(pipeline_config.llm_max_candidates, 10)
+        self.assertEqual(pipeline_config.daily_source, "auto")
+        self.assertEqual(pipeline_config.daily_fetch_retries, 3)
+        self.assertEqual(pipeline_config.daily_fetch_max_workers, 1)
         self.assertEqual(
-            runtime_env["SCREENING_FALLBACK_SNAPSHOT_PATH"],
-            str(screening_service.DSA_SCREENING_DATA_DIR / "snapshot.last_good.json"),
+            pipeline_config.snapshot_source_priority,
+            ["sina", "efinance", "akshare_em", "em_datacenter"],
+        )
+        self.assertEqual(pipeline_config.data_dir, screening_service.DSA_SCREENING_DATA_DIR)
+        self.assertEqual(
+            pipeline_config.fallback_snapshot_path,
+            screening_service.DSA_SCREENING_DATA_DIR / "snapshot.last_good.json",
         )
         self.assertEqual(
-            runtime_env["SCREENING_DAILY_HISTORY_CACHE_DIR"],
-            str(screening_service.DSA_SCREENING_DATA_DIR / "daily_history"),
+            pipeline_config.daily_history_cache_dir,
+            screening_service.DSA_SCREENING_DATA_DIR / "daily_history",
         )
         self.assertEqual(
-            runtime_env["SCREENING_INDUSTRY_PROVIDER_CACHE_DIR"],
-            str(screening_service.DSA_SCREENING_DATA_DIR / "industry_provider_cache"),
+            pipeline_config.industry_provider_cache_dir,
+            screening_service.DSA_SCREENING_DATA_DIR / "industry_provider_cache",
         )
         context = captured["context"]
         self.assertIsInstance(context, dict)
@@ -2497,12 +2538,7 @@ class ScreeningOpportunitiesApiTestCase(unittest.TestCase):
         captured: dict[str, object] = {}
 
         def screen_impl(_strategy: str, **kwargs):
-            captured["env"] = {
-                "OPENAI_API_KEY": screening_service.os.environ.get("OPENAI_API_KEY"),
-                "OPENAI_API_KEYS": screening_service.os.environ.get("OPENAI_API_KEYS"),
-                "OPENAI_BASE_URL": screening_service.os.environ.get("OPENAI_BASE_URL"),
-                "LITELLM_MODEL": screening_service.os.environ.get("LITELLM_MODEL"),
-            }
+            captured["config"] = kwargs.get("config")
             captured["context"] = kwargs.get("context")
             return {"candidates": []}
 
@@ -2523,12 +2559,11 @@ class ScreeningOpportunitiesApiTestCase(unittest.TestCase):
             self.assertEqual(screening_service.os.environ.get("OPENAI_API_KEY"), "outer-openai-key")
             self.assertEqual(screening_service.os.environ.get("OPENAI_BASE_URL"), "https://outer-openai.example/v1")
 
-        runtime_env = captured["env"]
-        self.assertIsInstance(runtime_env, dict)
-        self.assertEqual(runtime_env["OPENAI_API_KEY"], "dsa-openai-key")
-        self.assertEqual(runtime_env["OPENAI_API_KEYS"], "dsa-openai-key")
-        self.assertEqual(runtime_env["OPENAI_BASE_URL"], "https://openai-compatible.example/v1")
-        self.assertEqual(runtime_env["LITELLM_MODEL"], "openai/gpt-4o-mini")
+        pipeline_config = captured["config"]
+        self.assertIsInstance(pipeline_config, ScreeningPipelineConfig)
+        self.assertEqual(pipeline_config.llm_api_key, "dsa-openai-key")
+        self.assertEqual(pipeline_config.llm_base_url, "https://openai-compatible.example/v1")
+        self.assertEqual(pipeline_config.llm_model, "openai/gpt-4o-mini")
 
         context = captured["context"]
         self.assertIsInstance(context, dict)
@@ -2617,14 +2652,7 @@ class ScreeningOpportunitiesApiTestCase(unittest.TestCase):
         captured: dict[str, object] = {}
 
         def screen_impl(_strategy: str, **kwargs: Dict[str, Any]) -> dict[str, object]:
-            captured["env"] = {
-                "OPENAI_BASE_URL": screening_service.os.environ.get("OPENAI_BASE_URL"),
-                "OPENAI_API_KEY": screening_service.os.environ.get("OPENAI_API_KEY"),
-                "OPENAI_API_KEYS": screening_service.os.environ.get("OPENAI_API_KEYS"),
-                "LLM_CHANNELS": screening_service.os.environ.get("LLM_CHANNELS"),
-                "LLM_OPENAI_BASE_URL": screening_service.os.environ.get("LLM_OPENAI_BASE_URL"),
-                "LLM_OPENAI_API_KEYS": screening_service.os.environ.get("LLM_OPENAI_API_KEYS"),
-            }
+            captured["config"] = kwargs.get("config")
             captured["context"] = kwargs.get("context")
             fake_litellm.completion(
                 model="openai/gpt-4o-mini",
@@ -2650,12 +2678,13 @@ class ScreeningOpportunitiesApiTestCase(unittest.TestCase):
 
         self.assertEqual(payload["candidate_count"], 0)
         self.assertEqual(len(completion_calls), 2)
-        self.assertEqual(captured["env"]["OPENAI_BASE_URL"], "https://primary-openai.example/v1")
-        self.assertEqual(captured["env"]["OPENAI_API_KEYS"], "dsa-openai-primary")
-        self.assertEqual(captured["env"]["OPENAI_API_KEY"], "dsa-openai-primary")
-        self.assertEqual(captured["env"]["LLM_CHANNELS"], "openai")
-        self.assertEqual(captured["env"]["LLM_OPENAI_BASE_URL"], "https://primary-openai.example/v1")
-        self.assertEqual(captured["env"]["LLM_OPENAI_API_KEYS"], "dsa-openai-primary")
+        pipeline_config = captured["config"]
+        self.assertIsInstance(pipeline_config, ScreeningPipelineConfig)
+        self.assertEqual(pipeline_config.llm_base_url, "https://primary-openai.example/v1")
+        self.assertEqual(pipeline_config.llm_api_key, "dsa-openai-primary")
+        self.assertEqual(pipeline_config.llm_channels[0]["name"], "openai")
+        self.assertEqual(pipeline_config.llm_channels[0]["base_url"], "https://primary-openai.example/v1")
+        self.assertEqual(pipeline_config.llm_channels[0]["api_keys"], ["dsa-openai-primary"])
         self.assertEqual(completion_calls[0]["extra_headers"], {"x-route": "primary", "x-tenant": "dsa"})
         self.assertEqual(completion_calls[1]["extra_headers"], {"x-route": "primary", "x-tenant": "dsa"})
         context = captured["context"]
@@ -3148,11 +3177,7 @@ class ScreeningOpportunitiesApiTestCase(unittest.TestCase):
         captured: dict[str, object] = {}
 
         def screen_impl(_strategy: str, **kwargs):
-            captured["env"] = {
-                "LITELLM_MODEL": screening_service.os.environ.get("LITELLM_MODEL"),
-                "LITELLM_FALLBACK_MODELS": screening_service.os.environ.get("LITELLM_FALLBACK_MODELS"),
-                "LLM_CHANNELS": screening_service.os.environ.get("LLM_CHANNELS"),
-            }
+            captured["config"] = kwargs.get("config")
             captured["context"] = kwargs.get("context")
             return {"candidates": []}
 
@@ -3161,11 +3186,14 @@ class ScreeningOpportunitiesApiTestCase(unittest.TestCase):
         with _patch_screening_core(fake_module):
             payload = self._screen(config, market="cn", strategy="dual_low", max_results=5)
 
-        runtime_env = captured["env"]
-        self.assertIsInstance(runtime_env, dict)
-        self.assertEqual(runtime_env["LITELLM_MODEL"], "gemini/gemini-3-flash-preview")
-        self.assertEqual(runtime_env["LITELLM_FALLBACK_MODELS"], "deepseek/deepseek-chat")
-        self.assertEqual(runtime_env["LLM_CHANNELS"], "gemini,deepseek")
+        pipeline_config = captured["config"]
+        self.assertIsInstance(pipeline_config, ScreeningPipelineConfig)
+        self.assertEqual(pipeline_config.llm_model, "gemini/gemini-3-flash-preview")
+        self.assertEqual(pipeline_config.llm_fallback_models, ["deepseek/deepseek-chat"])
+        self.assertEqual(
+            [channel["name"] for channel in pipeline_config.llm_channels],
+            ["gemini", "deepseek"],
+        )
         context = captured["context"]
         self.assertIsInstance(context, dict)
         self.assertEqual(context["llm"]["fallback_models"], ["deepseek/deepseek-chat"])
@@ -3232,6 +3260,8 @@ class ScreeningOpportunitiesApiTestCase(unittest.TestCase):
             use_llm=True,
             context=ANY,
             selection_seed="",
+            config=ANY,
+            progress_callback=None,
         )
         self.assertEqual(payload["candidates"], [])
         self.assertEqual(payload["candidate_count"], 0)

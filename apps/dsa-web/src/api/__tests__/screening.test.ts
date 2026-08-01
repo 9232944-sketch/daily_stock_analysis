@@ -85,7 +85,7 @@ describe('screeningApi', () => {
       },
     });
 
-    await expect(screeningApi.enable()).rejects.toThrow('DSA 内建选股引擎不可用');
+    await expect(screeningApi.enable()).rejects.toThrow('选股功能不可用');
 
     expect(updateConfig).toHaveBeenNthCalledWith(1, {
       configVersion: 'v1',
@@ -160,7 +160,7 @@ describe('screeningApi', () => {
     const result = await screeningApi.getHotspots({ provider: 'akshare', top: 12, refresh: true });
 
     expect(get).toHaveBeenCalledWith('/api/v1/screening/hotspots', {
-      params: { provider: 'akshare', top: 12, refresh: true, include_details: true },
+      params: { provider: 'akshare', top: 12, refresh: true, include_details: false },
       timeout: 300000,
     });
     expect(result.providerUsed).toBe('akshare');
@@ -190,8 +190,17 @@ describe('screeningApi', () => {
       },
     });
 
-    const result = await screeningApi.getHotspots({ provider: 'akshare', top: 12, refresh: false });
+    const result = await screeningApi.getHotspots({
+      provider: 'akshare',
+      top: 12,
+      refresh: false,
+      includeDetails: true,
+    });
 
+    expect(get).toHaveBeenCalledWith('/api/v1/screening/hotspots', {
+      params: { provider: 'akshare', top: 12, refresh: false, include_details: true },
+      timeout: 300000,
+    });
     expect(result.details?.['Moly Theme']?.stockCount).toBe(0);
   });
 
@@ -212,13 +221,37 @@ describe('screeningApi', () => {
     const result = await screeningApi.getHotspotDetail({ topic: '玻璃基板', provider: 'akshare' });
 
     expect(get).toHaveBeenCalledWith('/api/v1/screening/hotspots/%E7%8E%BB%E7%92%83%E5%9F%BA%E6%9D%BF', {
-      params: { provider: 'akshare', refresh: false },
+      params: { provider: 'akshare', refresh: false, include_search: false },
       timeout: 300000,
     });
     expect(result.topic).toBe('玻璃基板');
     expect(result.stockCount).toBe(1);
     expect(result.stocks[0].name).toBe('戈碧迦');
     expect(result.leaderStocks?.[0].name).toBe('戈碧迦');
+  });
+
+  it('can explicitly enrich hotspot detail with native news search', async () => {
+    get.mockResolvedValueOnce({
+      data: {
+        enabled: true,
+        provider: 'akshare',
+        topic: '玻璃基板',
+        route: [],
+        stocks: [],
+        stock_count: 0,
+        news_search_requested: true,
+        news_search_status: 'available',
+      },
+    });
+
+    const result = await screeningApi.getHotspotDetail({ topic: '玻璃基板', includeSearch: true });
+
+    expect(get).toHaveBeenCalledWith('/api/v1/screening/hotspots/%E7%8E%BB%E7%92%83%E5%9F%BA%E6%9D%BF', {
+      params: { provider: 'akshare', refresh: false, include_search: true },
+      timeout: 300000,
+    });
+    expect(result.newsSearchRequested).toBe(true);
+    expect(result.newsSearchStatus).toBe('available');
   });
 
   it('uses a long timeout for LLM-backed screening', async () => {
