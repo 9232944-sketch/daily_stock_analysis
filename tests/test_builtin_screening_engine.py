@@ -256,6 +256,58 @@ def test_dsa_post_analyzer_records_attempted_and_capped_statuses(monkeypatch) ->
     assert degradation == ["one failure"]
 
 
+def test_scorecard_reranks_before_capped_dsa_analyzer(monkeypatch) -> None:
+    picks = [
+        Pick(
+            rank=index,
+            code=f"00000{index}",
+            name=f"Stock {index}",
+            final_score=91.0 - index,
+            screen_score=91.0 - index,
+            factor_scores={"value": 50.0, "stability": 50.0},
+        )
+        for index in range(1, 5)
+    ]
+    # The original fourth candidate crosses the remote Top-3 cutoff after the
+    # full-pool scorecard applies its value/quality bonus.
+    picks[3].factor_scores = {"value": 100.0, "stability": 100.0}
+    config = ScreeningRuntimeConfig(
+        strategies_dir=SCREENING_ROOT / "strategies",
+        dsa_api_url="https://dsa.example",
+    )
+    attempted_codes: list[str] = []
+
+    def fake_analyze(candidates, *, max_picks, **_kwargs):
+        attempted = candidates[:max_picks]
+        attempted_codes.extend(pick.code for pick in attempted)
+        for pick in attempted:
+            pick.deep_analysis_status = "completed"
+        return candidates, []
+
+    monkeypatch.setattr(screening_post_analysis, "analyze_picks_with_dsa", fake_analyze)
+    monkeypatch.setattr(screening_post_analysis, "apply_dsa_overlay", lambda candidates: candidates)
+
+    analyzed, degradation = screening_post_analysis.run_post_analyzers(
+        picks,
+        analyzer_names=["scorecard", "dsa"],
+        run_id="run-1",
+        config=config,
+        max_picks=3,
+    )
+
+    assert attempted_codes == ["000001", "000004", "000002"]
+    assert {
+        pick.code: pick.post_analysis_status.get("dsa")
+        for pick in analyzed
+    } == {
+        "000004": "completed",
+        "000001": "completed",
+        "000002": "completed",
+        "000003": "skipped",
+    }
+    assert degradation == []
+
+
 def test_external_post_analyzer_rejects_results_beyond_remote_cap(monkeypatch) -> None:
     picks = [
         Pick(

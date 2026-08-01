@@ -121,10 +121,13 @@ def run_post_analyzers(
         else:
             messages = [f"Unknown post analyzer skipped: {analyzer}"]
         degradation.extend(messages)
-
-    result.sort(key=lambda item: item.final_score, reverse=True)
-    for i, pick in enumerate(result, start=1):
-        pick.rank = i
+        # Every analyzer consumes the output of the previous one. Re-rank here,
+        # rather than only after the whole chain, so a later capped remote
+        # analyzer receives the candidates promoted by an earlier full-pool
+        # scorecard. Python's stable sort preserves the prior order on ties.
+        result.sort(key=lambda item: item.final_score, reverse=True)
+        for i, pick in enumerate(result, start=1):
+            pick.rank = i
     return result, degradation
 
 
