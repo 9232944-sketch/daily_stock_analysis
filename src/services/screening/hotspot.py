@@ -33,7 +33,7 @@ HOTSPOT_STAGES = (
     "降温退潮",
 )
 
-_HOTSPOT_CALL_TIMEOUT_SECONDS = 20.0
+_HOTSPOT_CALL_TIMEOUT_SECONDS = 8.0
 
 
 @dataclass
@@ -1411,15 +1411,15 @@ def _build_summary_route_item(
 ) -> HotspotRouteItem:
     leaders = summary.leaders or [stock.name for stock in stocks[:3] if stock.name]
     parts = [
-        f"{summary.topic or summary.name} heat {summary.heat_score:.1f}",
-        f"stage {summary.stage}" if summary.stage else "",
-        "leaders " + ", ".join(leaders[:3]) if leaders else "",
+        f"{summary.topic or summary.name}热度 {summary.heat_score:.1f}",
+        f"阶段 {summary.stage}" if summary.stage else "",
+        "核心股 " + "、".join(leaders[:3]) if leaders else "",
     ]
     source = summary.provider_used or summary.source or "screening_hotspot"
     return HotspotRouteItem(
         date=_event_day(datetime.now(timezone.utc).isoformat()),
-        title="Current fermentation",
-        description=_compact_text("; ".join(_dedupe_texts(parts)), max_description_chars),
+        title="当前发酵",
+        description=_compact_text("，".join(_dedupe_texts(parts)), max_description_chars),
         source=source,
         event_type="summary",
         impact_score=round(_safe_float(summary.heat_score) or 0.0, 4),
@@ -1431,7 +1431,7 @@ def _route_title(event: TimelineEvent) -> str:
     event_type = _safe_text(event.event_type).lower()
     if event_type in {"announcement", "notice", "order", "policy", "fund_flow"}:
         return event.title[:60]
-    return "News catalyst"
+    return "消息催化"
 
 
 def _event_day(value: str) -> str:
@@ -1611,7 +1611,7 @@ def _hotspot_sort_key(item: HotspotSummary) -> tuple[float, float, float, float,
 
 def _hotspot_call_timeout_seconds() -> float | None:
     return parse_source_timeout_seconds(
-        "SCREENING_SOURCE_CALL_TIMEOUT_SEC",
+        "SCREENING_HOTSPOT_CALL_TIMEOUT_SEC",
         default=_HOTSPOT_CALL_TIMEOUT_SECONDS,
     )
 

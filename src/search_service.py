@@ -3659,6 +3659,115 @@ class SearchService:
             record_count=record_count,
         )
 
+    def search_topic_news(
+        self,
+        topic: str,
+        max_results: int = 5,
+        focus_keywords: Optional[List[str]] = None,
+    ) -> SearchResponse:
+        """Search recent topic/sector news without applying single-stock identity filters."""
+        topic_text = (topic or "").strip()
+        if not topic_text or not self.is_available:
+            return SearchResponse(
+                query=topic_text,
+                results=[],
+                provider="None",
+                success=False,
+                error_message="未配置搜索能力或题材为空",
+            )
+
+        search_days = self._effective_news_window_days()
+        provider_max_results = self._provider_request_size(max_results)
+        query_terms = [str(item).strip() for item in (focus_keywords or []) if str(item).strip()]
+        query = " ".join(query_terms) if query_terms else f'"{topic_text}" A股 最新消息 催化'
+        prefer_chinese = self._contains_chinese_text(query)
+        cache_key = self._cache_key(f"topic_news:{topic_text}:{query}", max_results, search_days)
+        cached, cache_owner, cache_event = self._get_cached_or_reserve(cache_key)
+        if cached is not None:
+            return cached
+        if not cache_owner and cache_event is not None:
+            cached = self._wait_for_cached(cache_key, cache_event)
+            if cached is not None:
+                return cached
+            cached, cache_owner, cache_event = self._get_cached_or_reserve(cache_key)
+            if cached is not None:
+                return cached
+
+        had_provider_success = False
+        try:
+            for provider in self._providers:
+                if not provider.is_available:
+                    continue
+                search_kwargs: Dict[str, Any] = {}
+                if isinstance(provider, TavilySearchProvider):
+                    search_kwargs["topic"] = "news"
+                elif isinstance(provider, BraveSearchProvider):
+                    search_kwargs.update(self._brave_search_locale("", prefer_chinese=prefer_chinese))
+
+                started_at = time.monotonic()
+                try:
+                    record_provider_run_started(
+                        data_type="news_search",
+                        provider=provider.name,
+                        operation="search_topic_news",
+                    )
+                    response = provider.search(query, provider_max_results, days=search_days, **search_kwargs)
+                except Exception as exc:
+                    self._record_news_search_run(
+                        provider=provider.name,
+                        operation="search_topic_news",
+                        success=False,
+                        latency_ms=self._elapsed_ms(started_at),
+                        error_type=type(exc).__name__,
+                        error_message=exc,
+                    )
+                    logger.warning("%s 题材搜索失败: %s，尝试下一个引擎", provider.name, exc)
+                    continue
+
+                had_provider_success = had_provider_success or bool(response.success)
+                filtered = self._filter_news_response(
+                    response,
+                    search_days=search_days,
+                    max_results=provider_max_results,
+                    log_scope=f"{topic_text}:{provider.name}:topic_news",
+                )
+                if filtered.success and filtered.results:
+                    prioritized, _preferred_count = self._prioritize_news_language(
+                        filtered,
+                        prefer_chinese=prefer_chinese,
+                    )
+                    limited = self._limit_search_response(prioritized, max_results=max_results)
+                    self._record_news_search_run(
+                        provider=provider.name,
+                        operation="search_topic_news",
+                        success=True,
+                        latency_ms=self._elapsed_ms(started_at),
+                        record_count=len(limited.results or []),
+                    )
+                    self._put_cache(cache_key, limited)
+                    return limited
+
+                self._record_news_search_run(
+                    provider=provider.name,
+                    operation="search_topic_news",
+                    success=False,
+                    latency_ms=self._elapsed_ms(started_at),
+                    record_count=0,
+                    error_type="NoUsableNews",
+                    error_message=response.error_message or "过滤后无有效题材新闻",
+                )
+
+            return SearchResponse(
+                query=query,
+                results=[],
+                provider="Filtered" if had_provider_success else "None",
+                success=had_provider_success,
+                error_message=None if had_provider_success else "所有搜索引擎都不可用或搜索失败",
+            )
+        finally:
+            if cache_owner and cache_event is not None:
+                self._release_cache_fill(cache_key, cache_event)
+
     def search_stock_news(
         self,
         stock_code: str,
