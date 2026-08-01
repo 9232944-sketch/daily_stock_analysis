@@ -27,6 +27,7 @@ def apply_seeded_selection_variant(
     period: str,
     max_score_gap: float = 1.5,
     rotation_ratio: float = 0.34,
+    analyzer_names: list[str] | None = None,
 ) -> SelectionVariant:
     """Rotate only the tail of Top-N among candidates with comparable scores.
 
@@ -51,10 +52,30 @@ def apply_seeded_selection_variant(
     protected = ordered[:protected_count]
     cutoff_score = float(ordered[output_count - 1].final_score)
     minimum_score = cutoff_score - max(float(max_score_gap), 0.0)
+    def _was_post_analyzed(pick: Pick) -> bool:
+        # If analyzers were configured for this run, a pick must have explicit
+        # non-skipped post-analysis results for all configured analyzers to be
+        # eligible for near-cutoff rotation. This prevents promoting candidates
+        # that never received the same L3 treatment as protected top picks.
+        status_map = pick.post_analysis_status or {}
+        if not analyzer_names:
+            # No analyzers configured — fall back to legacy behavior: only
+            # exclude picks explicitly marked as 'skipped'.
+            return not any(status == "skipped" for status in status_map.values())
+
+        # If analyzers were configured, require each configured analyzer to have
+        # a non-skipped status recorded for this pick. Missing entries count as
+        # not-analyzed (treated like 'skipped').
+        for analyzer in analyzer_names:
+            s = status_map.get(analyzer)
+            if s is None or s == "skipped":
+                return False
+        return True
+
     pool = [
         pick
         for pick in ordered[protected_count:]
-        if float(pick.final_score) >= minimum_score
+        if float(pick.final_score) >= minimum_score and _was_post_analyzed(pick)
     ]
     if len(pool) <= rotation_slots:
         return SelectionVariant(

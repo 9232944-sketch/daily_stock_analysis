@@ -89,3 +89,28 @@ def test_selection_variant_keeps_scores_and_risk_metadata_unchanged() -> None:
     assert result.pool_size >= result.rotated_slots
     for pick in result.picks:
         assert (pick.final_score, pick.risk_flags) == original[pick.code]
+
+
+def test_selection_variant_never_promotes_skipped_post_analysis() -> None:
+    """Regression: rotation must not promote picks whose post_analysis status is 'skipped'."""
+    picks = _picks()
+    # Simulate post-analysis: first 3 completed, ranks 4-5 skipped
+    for i, pick in enumerate(picks, start=1):
+        if i <= 3:
+            pick.post_analysis_status = {"scorecard": "completed"}
+        elif i in (4, 5):
+            pick.post_analysis_status = {"scorecard": "skipped"}
+        else:
+            pick.post_analysis_status = {}
+
+    result = apply_seeded_selection_variant(
+        picks,
+        max_output=3,
+        seed="browser-variation",
+        period="2026-08-01",
+        analyzer_names=["scorecard"],
+    )
+
+    # Ensure none of the final picks have 'skipped' for scorecard
+    for pick in result.picks:
+        assert pick.post_analysis_status.get("scorecard") != "skipped"

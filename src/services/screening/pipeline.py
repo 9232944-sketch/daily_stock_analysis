@@ -459,12 +459,27 @@ def screen(
 
     # 11. Optional L3 post-analysis, DSA is only one possible analyzer.
     if analyzer_names:
+        # Ensure post-analyzers run on at least the final output_count picks so
+        # that any candidate eligible for near-cutoff rotation has a recorded
+        # post-analysis status. This prevents promoting candidates that never
+        # received the same L3 treatment as protected top picks (see PR review).
+        post_max_picks = (
+            analyzer_max_picks
+            if analyzer_max_picks is not None
+            else config.post_analysis_max_picks
+        )
+        # Always analyze at least as many picks as the page will return.
+        try:
+            post_max_picks = max(int(post_max_picks), int(output_count))
+        except Exception:
+            post_max_picks = int(output_count)
+
         picks, post_degradation = run_post_analyzers(
             picks,
             analyzer_names=analyzer_names,
             run_id=run_id,
             config=config,
-            max_picks=analyzer_max_picks,
+            max_picks=post_max_picks,
             scorecard_profile=screening.scorecard_profile,
         )
         degradation.extend(post_degradation)
@@ -479,6 +494,7 @@ def screen(
             f"{datetime.now(timezone.utc).date().isoformat()}"
             f":{market}:{strategy}"
         ),
+        analyzer_names=analyzer_names,
     )
     picks = selection_variant.picks
 
