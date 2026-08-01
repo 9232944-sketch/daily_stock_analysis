@@ -78,12 +78,14 @@ def fetch_snapshot_with_fallback(
     errors = []
     required = required_columns or []
     if cache_ttl_seconds > 0:
+        fresh_cache_sources = {sources[0]} if sources else None
         cached = _read_last_good_snapshot(
             fallback_snapshot_path,
             required_columns=required,
             source_errors=[],
             max_age_hours=cache_ttl_seconds / 3600.0,
             fresh=True,
+            allowed_snapshot_sources=fresh_cache_sources,
         )
         if cached is not None:
             return cached
@@ -273,6 +275,7 @@ def _read_last_good_snapshot(
     source_errors: list[str],
     max_age_hours: float | None = None,
     fresh: bool = False,
+    allowed_snapshot_sources: set[str] | None = None,
 ) -> pd.DataFrame | None:
     if path_like is None:
         return None
@@ -286,6 +289,20 @@ def _read_last_good_snapshot(
         payload = json.loads(path.read_text(encoding="utf-8"))
         if payload.get("version") != _SNAPSHOT_CACHE_VERSION:
             raise ValueError("unsupported cache version")
+        metadata = payload.get("metadata")
+        if not isinstance(metadata, dict):
+            raise ValueError("missing cache metadata")
+        cached_snapshot_source = str(metadata.get("snapshot_source", "")).strip()
+        if (
+            fresh
+            and allowed_snapshot_sources is not None
+            and cached_snapshot_source not in allowed_snapshot_sources
+        ):
+            raise ValueError(
+                "cached snapshot source "
+                f"{cached_snapshot_source or '<missing>'} not in requested sources "
+                f"{','.join(sorted(allowed_snapshot_sources))}"
+            )
         frame = payload.get("frame")
         if not isinstance(frame, dict):
             raise ValueError("missing cached frame")
@@ -317,11 +334,10 @@ def _read_last_good_snapshot(
     cached.attrs["stale"] = not fresh
     cached.attrs["stale_age_hours"] = stale_age_hours
     cached.attrs["source_errors"] = list(source_errors)
-    metadata = payload.get("metadata")
+    cached.attrs["last_good_snapshot_source"] = str(
+        metadata.get("snapshot_source", "")
+    )
     if isinstance(metadata, dict):
-        cached.attrs["last_good_snapshot_source"] = str(
-            metadata.get("snapshot_source", "")
-        )
         cached.attrs["last_good_created_at"] = str(payload.get("created_at", ""))
     if fresh:
         logger.info(

@@ -701,3 +701,71 @@ def test_fresh_snapshot_cache_skips_live_sources(tmp_path, monkeypatch) -> None:
     assert result.attrs["fallback_used"] is False
     assert result.attrs["stale"] is False
     assert result.attrs["last_good_snapshot_source"] == "sina"
+
+
+def test_fresh_snapshot_cache_ignores_mismatched_source(tmp_path, monkeypatch) -> None:
+    cached = pd.DataFrame(
+        [{"code": "000001", "name": "Ping An", "price": 10.0, "volume_ratio": 1.5}]
+    )
+    cached.attrs["snapshot_source"] = "sina"
+    cache_path = tmp_path / "snapshot-cache.json"
+    screening_snapshot._write_last_good_snapshot(cache_path, cached)
+
+    live = pd.DataFrame(
+        [{"code": "000002", "name": "Vanke", "price": 11.0, "volume_ratio": 2.0}]
+    )
+    live.attrs["snapshot_source"] = "tushare"
+    live_fetch = patch.object(
+        screening_snapshot,
+        "fetch_cn_snapshot",
+        autospec=True,
+        return_value=live,
+    )
+
+    with live_fetch as fetch_mock:
+        result = screening_snapshot.fetch_snapshot_with_fallback(
+            ["tushare"],
+            required_columns=["volume_ratio"],
+            fallback_snapshot_path=cache_path,
+            cache_ttl_seconds=300,
+        )
+
+    fetch_mock.assert_called_once_with("tushare")
+    assert result.loc[0, "code"] == "000002"
+    assert result.attrs["snapshot_source"] == "tushare"
+    assert result.attrs["fallback_used"] is False
+    assert result.attrs["stale"] is False
+
+
+def test_fresh_snapshot_cache_ignores_non_primary_source(tmp_path, monkeypatch) -> None:
+    cached = pd.DataFrame(
+        [{"code": "000001", "name": "Ping An", "price": 10.0, "volume_ratio": 1.5}]
+    )
+    cached.attrs["snapshot_source"] = "sina"
+    cache_path = tmp_path / "snapshot-cache.json"
+    screening_snapshot._write_last_good_snapshot(cache_path, cached)
+
+    live = pd.DataFrame(
+        [{"code": "000002", "name": "Vanke", "price": 11.0, "volume_ratio": 2.0}]
+    )
+    live.attrs["snapshot_source"] = "tushare"
+    live_fetch = patch.object(
+        screening_snapshot,
+        "fetch_cn_snapshot",
+        autospec=True,
+        return_value=live,
+    )
+
+    with live_fetch as fetch_mock:
+        result = screening_snapshot.fetch_snapshot_with_fallback(
+            ["tushare", "sina"],
+            required_columns=["volume_ratio"],
+            fallback_snapshot_path=cache_path,
+            cache_ttl_seconds=300,
+        )
+
+    fetch_mock.assert_called_once_with("tushare")
+    assert result.loc[0, "code"] == "000002"
+    assert result.attrs["snapshot_source"] == "tushare"
+    assert result.attrs["fallback_used"] is False
+    assert result.attrs["stale"] is False
