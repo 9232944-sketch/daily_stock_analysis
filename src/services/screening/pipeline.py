@@ -6,6 +6,7 @@
 import copy
 import logging
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -35,6 +36,7 @@ from src.services.screening.post_analysis import normalize_post_analyzers, run_p
 from src.services.screening.ranker import rank_candidates_with_metadata
 from src.services.screening.risk import apply_portfolio_overlay, apply_risk_overlay
 from src.services.screening.scorer import compute_screen_scores, factor_score_columns
+from src.services.screening.selection_variant import apply_seeded_selection_variant
 from src.services.screening.snapshot import fetch_snapshot_with_fallback
 from src.services.screening.strategy import load_all_strategies
 
@@ -62,6 +64,7 @@ def screen(
     explain_filters: bool = False,
     deep_analysis: bool = False,
     deep_analysis_max_picks: int | None = None,
+    selection_seed: str = "",
     context: dict[str, object] | None = None,
     config: Config | None = None,
 ) -> ScreenResult:
@@ -87,6 +90,8 @@ def screen(
         explain_filters: Whether to include sequential hard-filter waterfall diagnostics.
         deep_analysis: Backward-compatible alias for post_analyzers=["dsa"].
         deep_analysis_max_picks: Backward-compatible max-picks alias for DSA.
+        selection_seed: Optional opaque client seed used to rotate only
+            near-cutoff candidates. The seed is never persisted in results.
         context: Optional host runtime context. DSA may provide LLM settings and
             callable data providers under context["dsa"].
         config: Runtime config. Defaults to Config.from_env().
@@ -326,6 +331,9 @@ def screen(
     llm_portfolio_risk = ""
     llm_coverage: float | None = None
     llm_parse_errors: list[str] = []
+    llm_model_used = ""
+    llm_attempted_models: list[str] = []
+    llm_failure_reason = ""
     if use_llm and config.has_llm_config():
         candidate_context_rows: list[dict[str, object]] = []
         event_source_weights = _event_source_weights(screening.event_profile)
@@ -408,6 +416,9 @@ def screen(
         llm_portfolio_risk = llm_result.portfolio_risk
         llm_coverage = llm_result.coverage
         llm_parse_errors = llm_result.errors
+        llm_model_used = getattr(llm_result, "model_used", "")
+        llm_attempted_models = list(getattr(llm_result, "attempted_models", None) or [])
+        llm_failure_reason = getattr(llm_result, "failure_reason", "")
         llm_ranked = llm_result.ranked
         if not llm_ranked:
             picks = llm_fallback_picks
@@ -443,8 +454,18 @@ def screen(
             profile=screening.portfolio_profile,
         )
 
-    # 10. Trim to max_output
-    picks = picks[:output_count]
+    # 10. Keep the leading candidates stable and rotate only near-cutoff tail
+    # slots for clients that provide an opaque variant seed.
+    selection_variant = apply_seeded_selection_variant(
+        picks,
+        max_output=output_count,
+        seed=selection_seed,
+        period=(
+            f"{datetime.now(timezone.utc).date().isoformat()}"
+            f":{market}:{strategy}"
+        ),
+    )
+    picks = selection_variant.picks
 
     # 11. Optional L3 post-analysis, DSA is only one possible analyzer.
     if analyzer_names:
@@ -473,6 +494,10 @@ def screen(
         llm_portfolio_risk=llm_portfolio_risk,
         llm_coverage=llm_coverage,
         llm_parse_errors=llm_parse_errors,
+        llm_model_used=llm_model_used,
+        llm_attempted_models=llm_attempted_models,
+        llm_failure_reason=llm_failure_reason,
+        ranking_mode="llm" if llm_ranked else "factor",
         degradation=degradation,
         snapshot_source=snapshot_source,
         source_errors=source_errors,
@@ -483,6 +508,9 @@ def screen(
         risk_enabled=config.risk_enabled,
         portfolio_diversity_enabled=config.portfolio_diversity_enabled,
         portfolio_concentration_notes=portfolio_concentration_notes,
+        result_variant_applied=selection_variant.applied,
+        result_variant_pool_size=selection_variant.pool_size,
+        result_variant_rotated_slots=selection_variant.rotated_slots,
     )
 
 

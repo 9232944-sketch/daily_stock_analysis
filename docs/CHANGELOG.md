@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - [新功能] 内建选股结果按 `run_id` 持久化到 DSA 数据库，新增运行历史和数据源历史 API，接入 DSA 公告事件上下文及其搜索缓存，并支持将候选连同筛选策略映射的 skill 交给 DSA 单股深度分析。
 - [修复] Outcome 候选按上次尝试时间公平调度，避免持续新增的缺失 key 使旧 `pending` outcome 永久得不到重试。
 - [新功能] 新增按 skill、horizon 与 outcome engine version 独立聚合的只读 Skill Opinion 表现统计；少于 30 条 evaluated 样本时仅返回观察性计数，不输出表现指标或调整运行时权重。
+- [修复] 内建选股的主模型返回空内容、非 JSON 或低覆盖结构时继续尝试备用模型，并兼容 `reasoning_content` 与分段内容响应；全部失败时明确展示确定性因子排序状态。
+- [改进] Web 选股使用浏览器匿名种子在近分尾部候选中进行每日稳定轮换，并收敛策略与参数区域、补充因子摘要和排序诊断；硬过滤、风险否决、得分及头部候选保持不变。
 - [修复] 统一等价股票代码的本地日线候选与同源窗口解析；冲突沪深交易所代码不再降级匹配裸码，回测仅接受快照或交易日历确认的起点，并在同一起点中优先完整的单一代码窗口。
 - [新功能] 新增按 individual SkillAgent 自身 signal、版本化 engine 与本地已存同源日线窗口计算并持久化 `skill_opinion_outcomes` 的核心服务。
 - [修复] #1970 关闭认证属于高风险操作，即使携带有效 session cookie 也强制要求再次输入当前管理员密码二次确认；后端 `auth_update_settings` 的 disable 分支统一走 currentPassword 校验，命中 rate limit 时与 enable 路径一致返回 429，前端 `AuthSettingsCard` 在关闭认证时如有缺失当前密码将阻止提交并给出内联提示。

@@ -1864,7 +1864,12 @@ class ScreeningOpportunitiesApiTestCase(unittest.TestCase):
         self.assertEqual(payload.max_results, 3)
         fake_queue.submit_background_task.assert_called_once()
         self.assertEqual(fake_queue.submit_background_task.call_args.kwargs["report_type"], "screening_screen")
-        screen_mock.assert_called_once_with(strategy="dual_low", market="cn", max_results=3)
+        screen_mock.assert_called_once_with(
+            strategy="dual_low",
+            market="cn",
+            max_results=3,
+            selection_seed="",
+        )
         self.assertEqual(result["candidate_count"], 0)
         fake_queue.update_task_progress.assert_any_call(
             "screen-task-1",
@@ -1923,6 +1928,10 @@ class ScreeningOpportunitiesApiTestCase(unittest.TestCase):
                     "after_filter_count": 5,
                     "llm_ranked": True,
                     "llm_coverage": 1.0,
+                    "llm_model_used": "openai/gpt-4.1",
+                    "llm_attempted_models": ["deepseek/deepseek-chat", "openai/gpt-4.1"],
+                    "llm_failure_reason": "",
+                    "ranking_mode": "llm",
                     "warnings": "fallback",
                     "degradation": ["Snapshot source fallback: em_datacenter: retry from cache"],
                     "source_errors": "sina timeout",
@@ -1934,6 +1943,9 @@ class ScreeningOpportunitiesApiTestCase(unittest.TestCase):
                     "risk_enabled": True,
                     "portfolio_diversity_enabled": True,
                     "portfolio_concentration_notes": ["sector concentration adjusted"],
+                    "result_variant_applied": True,
+                    "result_variant_pool_size": 4,
+                    "result_variant_rotated_slots": 1,
                     "candidates": [
                         {
                             "code": "600519",
@@ -1953,7 +1965,13 @@ class ScreeningOpportunitiesApiTestCase(unittest.TestCase):
         )
 
         with _patch_screening_core(fake_module):
-            payload = self._screen(config, market="cn", strategy="dual_low", max_results=5)
+            payload = self._screen(
+                config,
+                market="cn",
+                strategy="dual_low",
+                max_results=5,
+                variant_seed="browser-a",
+            )
 
         fake_module.screen.assert_called_once_with(
             "dual_low",
@@ -1961,6 +1979,7 @@ class ScreeningOpportunitiesApiTestCase(unittest.TestCase):
             max_output=5,
             use_llm=True,
             context=ANY,
+            selection_seed="browser-a",
         )
         self.assertEqual(fake_module.screen.call_args.kwargs["context"]["llm"]["model"], "")
         self.assertEqual(payload["run_id"], "run123")
@@ -1969,6 +1988,12 @@ class ScreeningOpportunitiesApiTestCase(unittest.TestCase):
         self.assertEqual(payload["after_filter_count"], 5)
         self.assertEqual(payload["llm_ranked"], True)
         self.assertEqual(payload["llm_coverage"], 1.0)
+        self.assertEqual(payload["llm_model_used"], "openai/gpt-4.1")
+        self.assertEqual(
+            payload["llm_attempted_models"],
+            ["deepseek/deepseek-chat", "openai/gpt-4.1"],
+        )
+        self.assertEqual(payload["ranking_mode"], "llm")
         self.assertEqual(
             payload["warnings"],
             ["fallback", "Snapshot source fallback: em_datacenter: retry from cache"],
@@ -1984,6 +2009,9 @@ class ScreeningOpportunitiesApiTestCase(unittest.TestCase):
         self.assertEqual(payload["daily_enriched"], True)
         self.assertEqual(payload["daily_enrich_count"], 12)
         self.assertEqual(payload["portfolio_concentration_notes"], ["sector concentration adjusted"])
+        self.assertEqual(payload["result_variant_applied"], True)
+        self.assertEqual(payload["result_variant_pool_size"], 4)
+        self.assertEqual(payload["result_variant_rotated_slots"], 1)
         self.assertEqual(payload["candidates"][0]["code"], "600519")
         self.assertEqual(payload["candidates"][0]["llm_score"], 90.0)
         self.assertEqual(payload["candidates"][0]["llm_thesis"], "LLM likes the setup")
@@ -3203,6 +3231,7 @@ class ScreeningOpportunitiesApiTestCase(unittest.TestCase):
             max_output=5,
             use_llm=True,
             context=ANY,
+            selection_seed="",
         )
         self.assertEqual(payload["candidates"], [])
         self.assertEqual(payload["candidate_count"], 0)

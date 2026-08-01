@@ -24,6 +24,7 @@ class ScreeningScreenRequest(BaseModel):
     market: str = Field("cn", min_length=1, max_length=16)
     strategy: str = Field("dual_low", min_length=1, max_length=64)
     max_results: int = Field(20, ge=1, le=100)
+    variant_seed: str = Field("", max_length=128)
 
 
 class ScreeningStrategyResponse(BaseModel):
@@ -138,6 +139,7 @@ def screening_start_screen_task(
             strategy=request.strategy,
             market=request.market,
             max_results=request.max_results,
+            selection_seed=request.variant_seed,
         )
         task_queue.update_task_progress(
             task_id,
@@ -195,6 +197,7 @@ def screening_screen(
         strategy=request.strategy,
         market=request.market,
         max_results=request.max_results,
+        selection_seed=request.variant_seed,
     )
 
 

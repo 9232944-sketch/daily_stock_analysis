@@ -702,7 +702,7 @@ describe('StockScreeningPage', () => {
     render(<StockScreeningPage />);
 
     expect(await screen.findByText('选股已开启')).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText('策略参数'), {
+    fireEvent.change(screen.getByLabelText('策略'), {
       target: { value: 'custom_strategy_alpha' },
     });
 
@@ -742,13 +742,8 @@ describe('StockScreeningPage', () => {
     const marketSelect = screen.getByLabelText('市场') as HTMLSelectElement;
     expect(Array.from(marketSelect.options).map((option) => option.value)).toEqual(['cn']);
 
-    [
-      ['平衡选股', 'balanced_alpha'],
-      ['资金热度', 'capital_heat'],
-      ['超跌', 'oversold_reversal'],
-      ['缩量回踩', 'shrink_pullback'],
-    ].forEach(([label, id]) => {
-      fireEvent.click(screen.getByRole('button', { name: new RegExp(label) }));
+    ['balanced_alpha', 'capital_heat', 'oversold_reversal', 'shrink_pullback'].forEach((id) => {
+      fireEvent.change(screen.getByLabelText('策略'), { target: { value: id } });
       expect(screen.getByDisplayValue(id)).toBeInTheDocument();
     });
 
@@ -797,7 +792,7 @@ describe('StockScreeningPage', () => {
     expect(await screen.findByText('旧策略股票')).toBeInTheDocument();
     expect(screen.getByText('选股完成')).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: /资金热度/ }));
+    fireEvent.change(screen.getByLabelText('策略'), { target: { value: 'capital_heat' } });
 
     expect(screen.queryByText('旧策略股票')).not.toBeInTheDocument();
     expect(screen.getByText('等待运行')).toBeInTheDocument();
@@ -976,6 +971,9 @@ describe('StockScreeningPage', () => {
       snapshotCount: 5193,
       afterFilterCount: 20,
       llmRanked: false,
+      rankingMode: 'factor',
+      llmFailureReason: 'invalid_response',
+      llmParseErrors: ['no_json_found'],
       warnings: ['LLM ranking failed, falling back to screen_score: Missing gemini_api_key'],
     });
 
@@ -984,13 +982,13 @@ describe('StockScreeningPage', () => {
     expect(await screen.findByText('选股已开启')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /运行选股/ }));
 
-    expect(await screen.findByText('LLM 已降级')).toBeInTheDocument();
+    expect(await screen.findByText('当前使用因子排序')).toBeInTheDocument();
     expect(screen.getByText(/缺少可用 LLM API Key/)).toBeInTheDocument();
     expect(screen.queryByText(/Missing gemini_api_key/)).not.toBeInTheDocument();
-    expect(screen.getByText('未重排')).toBeInTheDocument();
-    expect(screen.getByText('本次 LLM 重排失败或未返回判断，当前展示的是本地因子评分结果。')).toBeInTheDocument();
-    expect(screen.getByText('LLM 元数据未返回')).toBeInTheDocument();
-    expect(screen.getAllByText('未返回（LLM 已降级）')).toHaveLength(2);
+    expect(screen.getByText(/排序：确定性因子/)).toBeInTheDocument();
+    expect(screen.getByText('因子排序')).toBeInTheDocument();
+    expect(screen.getByText(/主要优势：流动性 93、估值 87/)).toBeInTheDocument();
+    expect(screen.queryByText(/LLM 已降级/)).not.toBeInTheDocument();
   });
 
   it('deduplicates Screening snapshot fallback warnings and source errors', async () => {

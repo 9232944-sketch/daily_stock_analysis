@@ -1430,7 +1430,7 @@ For this feature, the product behavior is:
 | `/api/v1/analysis/tasks` | GET | Query task list |
 | `/api/v1/analysis/tasks/stream` | GET (SSE) | Subscribe to realtime task updates |
 | `/api/v1/analysis/status/{task_id}` | GET | Query task status |
-| `/api/v1/screening/screen/tasks` | POST | Submit a built-in screening task (`SCREENING_ENABLED` must be enabled first) |
+| `/api/v1/screening/screen/tasks` | POST | Submit a built-in screening task (`SCREENING_ENABLED` must be enabled first); an optional anonymous `variant_seed` rotates only near-score tail picks while preserving filters, risk controls, and scores |
 | `/api/v1/screening/screen/tasks/{task_id}` | GET | Query built-in screening task status and completed result |
 | `/api/v1/history` | GET | Query analysis history |
 | `/api/v1/history/{record_id}/diagnostics` | GET | Query a historical report run diagnostic summary and sanitized copy text |

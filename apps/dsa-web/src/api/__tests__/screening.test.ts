@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { screeningApi } from '../screening';
+import { getScreeningVariantSeed, screeningApi } from '../screening';
 
 const { get, post, getConfig, updateConfig } = vi.hoisted(() => ({
   get: vi.fn(),
@@ -28,6 +28,8 @@ describe('screeningApi', () => {
     post.mockReset();
     getConfig.mockReset();
     updateConfig.mockReset();
+    window.localStorage.clear();
+    window.localStorage.setItem('dsa.screening.variantSeed.v1', 'browser-seed');
   });
 
   it('enables the config and checks built-in screening availability', async () => {
@@ -233,7 +235,7 @@ describe('screeningApi', () => {
 
     expect(post).toHaveBeenCalledWith(
       '/api/v1/screening/screen',
-      { market: 'cn', strategy: 'dual_low', max_results: 3 },
+      { market: 'cn', strategy: 'dual_low', max_results: 3, variant_seed: 'browser-seed' },
       { timeout: 180000 }
     );
   });
@@ -255,10 +257,21 @@ describe('screeningApi', () => {
 
     expect(post).toHaveBeenCalledWith(
       '/api/v1/screening/screen/tasks',
-      { market: 'cn', strategy: 'dual_low', max_results: 3 }
+      { market: 'cn', strategy: 'dual_low', max_results: 3, variant_seed: 'browser-seed' }
     );
     expect(result.taskId).toBe('screen-task-1');
     expect(result.maxResults).toBe(3);
+  });
+
+  it('keeps one opaque screening variant seed per browser', () => {
+    window.localStorage.removeItem('dsa.screening.variantSeed.v1');
+
+    const first = getScreeningVariantSeed();
+    const second = getScreeningVariantSeed();
+
+    expect(first).not.toBe('');
+    expect(second).toBe(first);
+    expect(window.localStorage.getItem('dsa.screening.variantSeed.v1')).toBe(first);
   });
 
   it('loads async screening task status', async () => {

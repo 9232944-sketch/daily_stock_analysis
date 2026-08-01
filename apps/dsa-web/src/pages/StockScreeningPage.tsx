@@ -140,7 +140,48 @@ const formatPercent = (value: unknown) => {
   return `${(Number(value) * 100).toFixed(0)}%`;
 };
 
+const FACTOR_LABELS: Record<string, string> = {
+  value: '估值',
+  liquidity: '流动性',
+  momentum: '动量',
+  reversal: '反转',
+  activity: '活跃度',
+  stability: '稳定性',
+  size: '规模',
+  theme_heat: '题材热度',
+  topic_alignment: '题材匹配',
+};
+
+const POST_TAG_LABELS: Record<string, string> = {
+  value_quality: '价值质量',
+  controlled_reversal: '受控反转',
+  momentum: '趋势动量',
+  liquidity: '流动性',
+};
+
+const getLocalFactorReason = (item: ScreeningCandidate) => {
+  const factors = Object.entries(item.factorScores || {})
+    .filter(([, value]) => typeof value === 'number')
+    .sort((a, b) => Number(b[1]) - Number(a[1]))
+    .slice(0, 3)
+    .map(([key, value]) => `${FACTOR_LABELS[key] || key} ${Number(value).toFixed(0)}`);
+  const tags = (item.postAnalysisTags || [])
+    .slice(0, 2)
+    .map((tag) => POST_TAG_LABELS[tag] || tag);
+  if (factors.length > 0) {
+    return `主要优势：${factors.join('、')}${tags.length > 0 ? `；标签：${tags.join('、')}` : ''}`;
+  }
+  return '';
+};
+
 const getCandidateReason = (item: ScreeningCandidate) => {
+  if (item.llmThesis || item.llmScore != null) {
+    return item.reason || item.llmThesis || 'LLM 已完成相对排序。';
+  }
+  const localReason = getLocalFactorReason(item);
+  if (localReason) {
+    return localReason;
+  }
   if (item.reason) {
     return item.reason;
   }
@@ -178,6 +219,12 @@ const truncateMessageDetail = (value: string, maxLength = MAX_MESSAGE_DETAIL_LEN
 };
 
 const summarizeScreeningDiagnostic = (detail: string) => {
+  if (/no_json_found|invalid_response|coverage below threshold/i.test(detail)) {
+    return '模型未返回可用的结构化排序结果';
+  }
+  if (/call_failed/i.test(detail)) {
+    return '模型调用失败';
+  }
   if (/trade_cal returned no open trading days/i.test(detail)) {
     return '交易日历暂无可用开市日';
   }
@@ -228,7 +275,10 @@ const formatScreenMessage = (value: string) => {
     return '';
   }
   if (/^LLM ranking failed/i.test(value)) {
-    return `LLM 重排失败：${summarizeScreeningDiagnostic(value)}，已回退到本地因子评分。`;
+    return `未完成智能重排：${summarizeScreeningDiagnostic(value)}；当前结果继续使用确定性因子评分。`;
+  }
+  if (/no_json_found|invalid_response|coverage below threshold|call_failed/i.test(value)) {
+    return `未完成智能重排：${summarizeScreeningDiagnostic(value)}；当前结果继续使用确定性因子评分。`;
   }
 
   const snapshotFallback = value.match(/^Snapshot source fallback:\s*(.+)$/i);
@@ -321,6 +371,26 @@ const hasLlmInsight = (item: ScreeningCandidate) =>
       item.llmWatchItems?.length ||
       item.llmCatalysts?.length,
   );
+
+const getRiskClassName = (riskLevel: string | undefined) => {
+  if (riskLevel === 'high') {
+    return 'bg-danger/10 text-danger';
+  }
+  if (riskLevel === 'medium') {
+    return 'bg-warning/10 text-warning';
+  }
+  if (riskLevel === 'low') {
+    return 'bg-success/10 text-success';
+  }
+  return 'bg-surface text-secondary-text';
+};
+
+const getRiskLabel = (riskLevel: string | undefined) => {
+  if (riskLevel === 'high') return '高';
+  if (riskLevel === 'medium') return '中';
+  if (riskLevel === 'low') return '低';
+  return '待评估';
+};
 
 const getRouteTimeLabel = (item: ScreeningHotspotDetail['route'][number]) => {
   const rawTime = item.publishedAt || item.date || item.time || '';
@@ -481,11 +551,12 @@ const StockScreeningPage: React.FC = () => {
   const selectedStrategyTag = selectedStrategy?.category || selectedStrategy?.tag || selectedStrategy?.tags?.[0] || '自定义';
   const displayedStrategy = selectedStrategy ? selectedStrategyTitle : `自定义策略 (${strategy})`;
   const screenMessages = useMemo(() => getScreenMessages(screenMeta), [screenMeta]);
-  const llmDegraded = screenMeta?.llmRanked === false;
-  const alertMessages = llmDegraded
+  const factorRanking = Boolean(screenMeta && (screenMeta.rankingMode === 'factor' || screenMeta.llmRanked === false));
+  const llmFailed = Boolean(factorRanking && screenMeta?.llmFailureReason);
+  const alertMessages = llmFailed
     ? screenMessages.length > 0
       ? screenMessages
-      : ['LLM 重排未完成或未返回判断，当前候选来自内建因子评分。']
+      : ['智能重排未完成，当前候选继续使用确定性因子评分。']
     : screenMessages;
   const isScreeningEnabled = enabled && available;
   const statusText = isScreeningEnabled ? '选股已开启' : '选股未开启';
@@ -1149,56 +1220,17 @@ const StockScreeningPage: React.FC = () => {
       </section>
 
       <section className="rounded-2xl border border-cyan/35 bg-card/95 p-4 shadow-soft-card">
-        <div className="mb-4 flex items-center justify-between gap-3">
+        <div className="mb-4 flex items-start justify-between gap-3">
           <div>
-            <h2 className="text-sm font-semibold text-foreground">选择策略</h2>
-            <p className="mt-1 text-xs text-secondary-text">DSA 会为内建策略候选补充行情、基本面和新闻上下文。</p>
+            <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
+              <SlidersHorizontal className="h-4 w-4 text-cyan" />
+              运行选股
+            </div>
+            <p className="mt-1 text-xs text-secondary-text">选择市场和内建策略，结果会在质量接近的候选中做每日稳定轮换。</p>
           </div>
           <span className="rounded-full border border-cyan/30 bg-cyan/10 px-3 py-1 text-xs font-semibold text-cyan">
             {selectedStrategyTag}
           </span>
-        </div>
-
-        <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
-          {loadingStrategies ? (
-            <div className="rounded-xl border border-dashed border-border bg-surface/70 p-4 text-sm text-secondary-text">
-              正在读取可用策略...
-            </div>
-          ) : strategies.length === 0 ? (
-            <div className="rounded-xl border border-dashed border-border bg-surface/70 p-4 text-sm text-secondary-text">
-              {strategyLoadError || '内建策略列表暂未载入，可在下方手动输入策略参数。'}
-            </div>
-          ) : (
-            strategies.map((item) => {
-              const selected = item.id === strategy;
-              return (
-                <button
-                  key={item.id}
-                  className={`min-h-28 rounded-xl border p-4 text-left transition-all ${
-                    selected
-                      ? 'border-cyan bg-cyan/10 shadow-[0_0_0_1px_hsl(var(--primary)/0.15),0_16px_36px_hsl(var(--primary)/0.12)]'
-                      : 'border-border/80 bg-surface/70 hover:border-cyan/45 hover:bg-hover/70'
-                  }`}
-                  type="button"
-                  disabled={loading}
-                  onClick={() => handleStrategyChange(item.id)}
-                >
-                  <span className="text-base font-semibold text-foreground">{item.name || item.title || item.id}</span>
-                  <span className="mt-2 block text-sm leading-6 text-secondary-text">{item.description || item.id}</span>
-                  <span className="mt-3 inline-flex text-xs font-semibold text-cyan">
-                    {item.category || item.tag || item.tags?.[0] || item.id}
-                  </span>
-                </button>
-              );
-            })
-          )}
-        </div>
-      </section>
-
-      <section className="rounded-2xl border border-border bg-card/95 p-4 shadow-soft-card">
-        <div className="mb-4 flex items-center gap-2 text-sm font-semibold text-foreground">
-          <SlidersHorizontal className="h-4 w-4 text-cyan" />
-          参数设置
         </div>
 
         <div className="grid gap-4 lg:grid-cols-[1fr_1.2fr_180px_auto] lg:items-end">
@@ -1219,13 +1251,22 @@ const StockScreeningPage: React.FC = () => {
           </label>
 
           <label className="space-y-2 text-xs font-medium text-secondary-text">
-            策略参数
+            策略
             <input
+              aria-label="策略"
+              list="screening-strategy-options"
               className="h-11 w-full rounded-xl border border-border bg-surface px-3 text-sm text-foreground outline-none transition-colors focus:border-cyan"
               value={strategy}
-              disabled={loading}
+              disabled={loading || loadingStrategies}
               onChange={(event) => handleStrategyChange(event.target.value)}
             />
+            <datalist id="screening-strategy-options">
+              {strategies.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.name || item.title || item.id}
+                </option>
+              ))}
+            </datalist>
           </label>
 
           <label className="space-y-2 text-xs font-medium text-secondary-text">
@@ -1251,6 +1292,12 @@ const StockScreeningPage: React.FC = () => {
             <Play className="h-4 w-4" />
             运行选股
           </Button>
+        </div>
+
+        <div className="mt-3 rounded-xl border border-border/75 bg-surface/55 px-3 py-2 text-xs leading-5 text-secondary-text">
+          {strategyLoadError
+            ? strategyLoadError
+            : selectedStrategy?.description || '策略会先执行硬过滤和因子评分，再进行风险与组合约束。'}
         </div>
       </section>
 
@@ -1282,9 +1329,18 @@ const StockScreeningPage: React.FC = () => {
               快照 {screenMeta?.snapshotCount ?? '-'} · 过滤后 {screenMeta?.afterFilterCount ?? '-'} · 候选 {screenMeta?.candidateCount ?? candidates.length}
             </span>
             <span>
-              LLM：{screenMeta?.llmRanked ? '已重排' : screenMeta ? '未重排' : '-'}
+              排序：{screenMeta?.llmRanked ? '智能重排' : screenMeta ? '确定性因子' : '-'}
+              {screenMeta?.llmModelUsed ? ` · ${screenMeta.llmModelUsed}` : ''}
               {screenMeta?.llmCoverage != null ? ` · 覆盖 ${formatPercent(screenMeta.llmCoverage)}` : ''}
             </span>
+            {screenMeta?.resultVariantPoolSize ? (
+              <span>
+                候选差异：近分池 {screenMeta.resultVariantPoolSize} ·{' '}
+                {screenMeta.resultVariantApplied
+                  ? `本次替换 ${screenMeta.resultVariantRotatedSlots ?? 0} 位`
+                  : '本次保持基准'}
+              </span>
+            ) : null}
             <span>
               DSA增强：{screenMeta?.dsaEnrichment?.enrichedCount ?? '-'} / {screenMeta?.dsaEnrichment?.requestedCount ?? '-'}
             </span>
@@ -1294,8 +1350,8 @@ const StockScreeningPage: React.FC = () => {
 
       {screenMeta && alertMessages.length > 0 ? (
         <InlineAlert
-          variant={llmDegraded ? 'warning' : 'info'}
-          title={llmDegraded ? 'LLM 已降级' : '选股提示'}
+          variant={llmFailed ? 'warning' : 'info'}
+          title={llmFailed ? '当前使用因子排序' : '选股提示'}
           message={<ScreenAlertMessage messages={alertMessages} />}
         />
       ) : null}
@@ -1331,7 +1387,7 @@ const StockScreeningPage: React.FC = () => {
                   <th className="px-4 py-3 font-semibold">价格</th>
                   <th className="px-4 py-3 font-semibold">涨跌幅</th>
                   <th className="px-4 py-3 font-semibold">评分</th>
-                  <th className="px-4 py-3 font-semibold">LLM</th>
+                  <th className="px-4 py-3 font-semibold">排序依据</th>
                   <th className="px-4 py-3 font-semibold">风险</th>
                   <th className="px-4 py-3 font-semibold">详情</th>
                 </tr>
@@ -1341,10 +1397,6 @@ const StockScreeningPage: React.FC = () => {
                   const expanded = expandedCode === item.code;
                   const factors = getFactorEntries(item);
                   const llmInsightAvailable = hasLlmInsight(item);
-                  const llmFallbackText =
-                    llmDegraded && !llmInsightAvailable
-                      ? '本次 LLM 重排失败或未返回判断，当前展示的是本地因子评分结果。'
-                      : '暂无 LLM 判断';
                   const dsaWarnings = item.dsaContext?.warnings || [];
                   const dsaNews = item.dsaNews || [];
                   const dsaEvents = item.dsaEvents || [];
@@ -1358,10 +1410,10 @@ const StockScreeningPage: React.FC = () => {
                         <td className="px-4 py-3 text-secondary-text">{formatNumber(item.price)}</td>
                         <td className="px-4 py-3 text-secondary-text">{formatNumber(item.changePct)}%</td>
                         <td className="px-4 py-3 font-bold text-cyan">{formatScore(item.score)}</td>
-                        <td className="px-4 py-3 text-secondary-text">{llmDegraded ? '未重排' : formatScore(item.llmScore)}</td>
+                        <td className="px-4 py-3 text-secondary-text">{factorRanking ? '因子排序' : formatScore(item.llmScore)}</td>
                         <td className="px-4 py-3">
-                          <span className="rounded-lg bg-success/10 px-2.5 py-1 text-xs font-semibold text-success">
-                            {item.riskLevel || 'unknown'}
+                          <span className={`rounded-lg px-2.5 py-1 text-xs font-semibold ${getRiskClassName(item.riskLevel)}`}>
+                            {getRiskLabel(item.riskLevel)}
                           </span>
                         </td>
                         <td className="px-4 py-3">
@@ -1400,19 +1452,15 @@ const StockScreeningPage: React.FC = () => {
                                     <p className="mt-1 text-sm leading-6 text-foreground">{item.dsaAnalysisSummary}</p>
                                   </div>
                                 ) : null}
-                                <div>
-                                  <p className="text-xs font-semibold text-secondary-text">LLM 判断</p>
-                                  <p className="mt-1 text-sm leading-6 text-foreground">
-                                    {item.llmThesis || llmFallbackText}
-                                  </p>
-                                  {llmInsightAvailable ? (
+                                {llmInsightAvailable ? (
+                                  <div>
+                                    <p className="text-xs font-semibold text-secondary-text">智能判断</p>
+                                    <p className="mt-1 text-sm leading-6 text-foreground">{item.llmThesis || item.reason}</p>
                                     <p className="mt-1 text-xs text-secondary-text">
                                       板块 {item.llmSector || '-'} · 主题 {item.llmTheme || '-'} · 置信度 {formatPercent(item.llmConfidence)}
                                     </p>
-                                  ) : (
-                                    <p className="mt-1 text-xs text-secondary-text">LLM 元数据未返回</p>
-                                  )}
-                                </div>
+                                  </div>
+                                ) : null}
                                 <div>
                                   <p className="text-xs font-semibold text-secondary-text">风险标签</p>
                                   <p className="mt-1 text-sm text-foreground">
@@ -1442,18 +1490,18 @@ const StockScreeningPage: React.FC = () => {
                                   <p className="text-xs font-semibold text-secondary-text">成交额</p>
                                   <p className="mt-1 text-sm text-foreground">{formatAmount(item.amount)}</p>
                                 </div>
-                                <div>
-                                  <p className="text-xs font-semibold text-secondary-text">LLM 关注项</p>
-                                  <p className="mt-1 text-sm text-foreground">
-                                    {item.llmWatchItems?.length ? item.llmWatchItems.join('，') : llmDegraded ? '未返回（LLM 已降级）' : '无'}
-                                  </p>
-                                </div>
-                                <div>
-                                  <p className="text-xs font-semibold text-secondary-text">催化因素</p>
-                                  <p className="mt-1 text-sm text-foreground">
-                                    {item.llmCatalysts?.length ? item.llmCatalysts.join('，') : llmDegraded ? '未返回（LLM 已降级）' : '无'}
-                                  </p>
-                                </div>
+                                {item.llmWatchItems?.length ? (
+                                  <div>
+                                    <p className="text-xs font-semibold text-secondary-text">智能关注项</p>
+                                    <p className="mt-1 text-sm text-foreground">{item.llmWatchItems.join('，')}</p>
+                                  </div>
+                                ) : null}
+                                {item.llmCatalysts?.length ? (
+                                  <div>
+                                    <p className="text-xs font-semibold text-secondary-text">催化因素</p>
+                                    <p className="mt-1 text-sm text-foreground">{item.llmCatalysts.join('，')}</p>
+                                  </div>
+                                ) : null}
                                 <div>
                                   <p className="text-xs font-semibold text-secondary-text">DSA 新闻</p>
                                   {dsaNews.length > 0 ? (

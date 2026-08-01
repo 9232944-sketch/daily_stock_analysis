@@ -43,8 +43,8 @@ SCREENING_EASTMONEY_JITTER_SEC=0.3
 | `/api/v1/screening/strategies` | GET | 返回内建策略 |
 | `/api/v1/screening/hotspots` | GET | 读取缓存或显式刷新热点题材 |
 | `/api/v1/screening/hotspots/{topic}` | GET | 返回题材路线、成分股与核心股 |
-| `/api/v1/screening/screen` | POST | 同步执行选股 |
-| `/api/v1/screening/screen/tasks` | POST | 提交后台选股任务 |
+| `/api/v1/screening/screen` | POST | 同步执行选股；可传匿名 `variant_seed` 生成稳定的近分候选轮换 |
+| `/api/v1/screening/screen/tasks` | POST | 提交后台选股任务；请求字段与同步接口一致 |
 | `/api/v1/screening/screen/tasks/{task_id}` | GET | 查询任务进度、错误或最终结果 |
 | `/api/v1/screening/history` | GET | 按策略、市场查询最近完成的选股运行摘要 |
 | `/api/v1/screening/history/{run_id}` | GET | 读取一条持久化的完整选股结果 |
@@ -61,6 +61,7 @@ SCREENING_EASTMONEY_JITTER_SEC=0.3
   -> 因子评分与风险调整
   -> 候选上下文补充
   -> LLM 重排（可降级）
+  -> 风险/组合约束与近分候选轮换
   -> Top 候选 DSA 行情/基本面/新闻增强
   -> API 归一化响应与 DSA 数据库持久化
   -> 用户按需进入 DSA 单股深度分析
@@ -70,8 +71,14 @@ SCREENING_EASTMONEY_JITTER_SEC=0.3
 - 有 `TUSHARE_TOKEN` 时默认优先 Tushare，否则默认从 Sina 开始；显式 `SNAPSHOT_SOURCE_PRIORITY` 始终优先。
 - 日 K 优先复用 DSA 历史行情链路，无结果时再走筛选引擎的数据源降级。
 - LLM 重排前只补充有限候选上下文，最终候选再补行情、基本面、新闻和摘要，控制请求量。
-- 模型、渠道、base URL、额外 headers、fallback、timeout 和 token 上限在单次调用范围内注入，不改写用户配置。
+- 模型、渠道、base URL、额外 headers、fallback、timeout 和 token 上限在单次调用范围内注入，不改写用户配置；主模型即使 HTTP 调用成功，但返回空内容、非 JSON 或覆盖率不足，也会继续尝试已配置的备用模型。兼容网关把最终 JSON 放在 `reasoning_content` 或分段 `content` 的响应。
 - 热点实时请求失败时优先使用 last-good cache；无缓存时返回稳定空态与明确错误。
+
+## 结果轮换
+
+Web 会在浏览器本地生成一个不含用户信息的匿名种子，并随同步或后台选股请求传入 `variant_seed`。服务端将“匿名种子 + UTC 日期 + 市场 + 策略”作为稳定扰动输入：同一浏览器在同一天使用同一策略时结果稳定，不同浏览器可能在质量接近的候选中看到不同股票。
+
+轮换不是随机改分，也不会绕过策略：硬过滤、风险否决、因子/LLM 得分和组合集中度惩罚全部先执行；最高排名区保持不变，只允许 Top-N 尾部位置从不低于原截止分 1.5 分的近分池中替换。种子不写入选股结果或运行历史。未传 `variant_seed` 的 API 调用继续返回严格 Top-N，保持脚本与旧客户端兼容。
 
 ## 缓存与持久化
 
@@ -125,7 +132,8 @@ DSA 中存在两类用途不同的策略文件：
 | 主仓库维护面扩大 | 数据源或策略问题由 DSA 直接承担 | 模块边界、契约测试和 CI 打包探针共同约束 |
 | 与参考项目逐渐分叉 | 上游修复不能直接覆盖 | 固定参考 revision，逐模块比较并选择性移植 |
 | 数据源限流或字段变化 | 快照、热点或日 K 降级 | timeout、retry、source health 与 last-good cache |
-| LLM 超时或格式异常 | 重排不可用或解释字段缺失 | 保留因子排序，记录 parse error 和 warning |
+| LLM 超时或格式异常 | 重排不可用或解释字段缺失 | 非结构化响应继续尝试备用模型；全部失败时保留因子排序，并返回尝试模型与失败原因 |
+| 结果轮换扩大候选差异 | 临界候选可能因浏览器不同而变化 | 仅轮换近分尾部位，保持硬过滤、风险否决、分值和头部候选不变；无种子时关闭 |
 | 缓存目录变化 | 升级后旧缓存不会自动复用 | 新目录独立为 `data/screening`；升级前按需备份 |
 | 运行历史增长 | 完整候选结果会增加数据库体积 | 历史接口默认只读摘要，运维可按现有数据库备份/保留策略管理 |
 | 配置与 API 更名 | 旧自动化需同步调整 | 在发布说明明确 `SCREENING_ENABLED` 与 `/api/v1/screening` |

@@ -4,6 +4,7 @@ import { toCamelCase } from './utils';
 
 const SCREENING_SCREEN_TIMEOUT_MS = 180000;
 const SCREENING_REQUEST_TIMEOUT_MS = 300000;
+const SCREENING_VARIANT_SEED_KEY = 'dsa.screening.variantSeed.v1';
 export const SCREENING_CONFIG_CHANGED_EVENT = 'screening-config-changed';
 export const SYSTEM_CONFIG_CHANGED_EVENT = 'dsa-system-config-changed';
 
@@ -209,6 +210,10 @@ export type ScreeningScreenResponse = {
   llmPortfolioRisk?: string;
   llmCoverage?: number | null;
   llmParseErrors?: string[];
+  llmModelUsed?: string;
+  llmAttemptedModels?: string[];
+  llmFailureReason?: 'invalid_response' | 'timeout' | 'call_failed' | 'no_model_configured' | string;
+  rankingMode?: 'llm' | 'factor' | string;
   warnings?: string[];
   sourceErrors?: string[];
   dsaEnrichment?: {
@@ -225,6 +230,9 @@ export type ScreeningScreenResponse = {
   riskEnabled?: boolean | null;
   portfolioDiversityEnabled?: boolean | null;
   portfolioConcentrationNotes?: string[];
+  resultVariantApplied?: boolean;
+  resultVariantPoolSize?: number;
+  resultVariantRotatedSlots?: number;
 };
 
 export type ScreeningScreenAccepted = {
@@ -294,6 +302,25 @@ export function notifySystemConfigChanged(): void {
   window.dispatchEvent(new Event(SYSTEM_CONFIG_CHANGED_EVENT));
 }
 
+export function getScreeningVariantSeed(): string {
+  if (typeof window === 'undefined') {
+    return '';
+  }
+  try {
+    const existing = window.localStorage.getItem(SCREENING_VARIANT_SEED_KEY)?.trim();
+    if (existing) {
+      return existing;
+    }
+    const generated = typeof window.crypto?.randomUUID === 'function'
+      ? window.crypto.randomUUID()
+      : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+    window.localStorage.setItem(SCREENING_VARIANT_SEED_KEY, generated);
+    return generated;
+  } catch {
+    return '';
+  }
+}
+
 async function setScreeningEnabled(value: 'true' | 'false'): Promise<void> {
   const config = await systemConfigApi.getConfig(false);
   await systemConfigApi.update({
@@ -316,6 +343,7 @@ export const screeningApi = {
       market: payload.market,
       strategy: payload.strategy,
       max_results: payload.maxResults,
+      variant_seed: getScreeningVariantSeed(),
     }, { timeout: SCREENING_SCREEN_TIMEOUT_MS });
     return toCamelCase<ScreeningScreenResponse>(response.data);
   },
@@ -325,6 +353,7 @@ export const screeningApi = {
       market: payload.market,
       strategy: payload.strategy,
       max_results: payload.maxResults,
+      variant_seed: getScreeningVariantSeed(),
     });
     return toCamelCase<ScreeningScreenAccepted>(response.data);
   },

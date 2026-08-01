@@ -1265,14 +1265,27 @@ class ScreeningService:
         _write_screening_hotspot_detail_cache(provider=provider_name, topic=topic_text, payload=cleaned)
         return cleaned
 
-    def screen(self, *, strategy: str, market: str, max_results: int) -> Dict[str, Any]:
+    def screen(
+        self,
+        *,
+        strategy: str,
+        market: str,
+        max_results: int,
+        selection_seed: str = "",
+    ) -> Dict[str, Any]:
         _ensure_screening_enabled(self.config)
         _ensure_screening_available_for_use()
         _ensure_supported_market(market)
         _ensure_supported_strategy(strategy)
 
         try:
-            raw = _call_screening_screen(strategy, market, max_results, self.config)
+            raw = _call_screening_screen(
+                strategy,
+                market,
+                max_results,
+                self.config,
+                selection_seed=selection_seed,
+            )
         except ValueError as exc:
             raise HTTPException(
                 status_code=400,
@@ -1316,6 +1329,12 @@ class ScreeningService:
             "llm_portfolio_risk": raw_data.get("llm_portfolio_risk") or "",
             "llm_coverage": raw_data.get("llm_coverage"),
             "llm_parse_errors": _list_text_values(raw_data.get("llm_parse_errors")),
+            "llm_model_used": raw_data.get("llm_model_used") or "",
+            "llm_attempted_models": _list_text_values(raw_data.get("llm_attempted_models")),
+            "llm_failure_reason": raw_data.get("llm_failure_reason") or "",
+            "ranking_mode": raw_data.get("ranking_mode") or (
+                "llm" if raw_data.get("llm_ranked") else "factor"
+            ),
             "degradation": _list_text_values(raw_data.get("degradation")),
             "warnings": warnings,
             "source_errors": _list_text_values(raw_data.get("source_errors")),
@@ -1327,6 +1346,9 @@ class ScreeningService:
             "risk_enabled": raw_data.get("risk_enabled"),
             "portfolio_diversity_enabled": raw_data.get("portfolio_diversity_enabled"),
             "portfolio_concentration_notes": raw_data.get("portfolio_concentration_notes") or [],
+            "result_variant_applied": bool(raw_data.get("result_variant_applied")),
+            "result_variant_pool_size": raw_data.get("result_variant_pool_size") or 0,
+            "result_variant_rotated_slots": raw_data.get("result_variant_rotated_slots") or 0,
         }
         if self.db_manager is not None:
             self.db_manager.save_screening_run(response)
@@ -1744,7 +1766,14 @@ def _ensure_supported_strategy(strategy: str) -> None:
     # 策略参数由内建引擎执行最终校验，这里保持透传以支持自定义策略。
 
 
-def _call_screening_screen(strategy: str, market: str, max_results: int, config: Config) -> Any:
+def _call_screening_screen(
+    strategy: str,
+    market: str,
+    max_results: int,
+    config: Config,
+    *,
+    selection_seed: str = "",
+) -> Any:
     with (
         _screening_runtime_env(config, max_results=max_results),
         _screening_dsa_daily_history_provider(),
@@ -1755,6 +1784,7 @@ def _call_screening_screen(strategy: str, market: str, max_results: int, config:
             market=market,
             max_output=max_results,
             use_llm=True,
+            selection_seed=selection_seed,
             context=_build_screening_context(config, max_results=max_results),
         )
 
