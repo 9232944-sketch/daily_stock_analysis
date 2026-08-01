@@ -1288,6 +1288,69 @@ class ScreeningOpportunitiesApiTestCase(unittest.TestCase):
         self.assertNotIn("完整产业链背景", payload["route"][0]["description"])
         search_service.search_topic_news.assert_called_once()
 
+    def test_hotspot_search_does_not_pollute_or_refresh_shared_detail_cache(self) -> None:
+        config = Config(screening_enabled=True, bocha_api_keys=["test-key"])
+        provider = screening_service.DsaEastMoneyHotspotProvider()
+        provider.hotspot_detail = MagicMock(return_value={
+            "topic": "钼",
+            "summary": "钼 当前涨跌幅 10.00%。",
+            "route": [{"title": "当日发酵", "description": "钼板块异动。", "source": "eastmoney_board_change"}],
+            "stocks": [{"code": "601958", "name": "金钼股份"}],
+            "stock_count": 1,
+            "source_errors": [],
+        })
+        search_service = MagicMock()
+        search_service.search_topic_news.return_value = SimpleNamespace(
+            success=True,
+            provider="Bocha",
+            results=[
+                SimpleNamespace(
+                    title="钼价上涨带动板块活跃",
+                    snippet="供需偏紧带动钼价上涨，板块关注度提升。",
+                    url="https://example.com/molybdenum",
+                    source="ExampleNews",
+                    published_date="2026-08-01",
+                )
+            ],
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with (
+                patch.dict(os.environ, {"SCREENING_DATA_DIR": str(Path(tmpdir) / "screening")}, clear=False),
+                patch("src.services.screening_service._get_screening_status_snapshot", return_value=({}, True, {})),
+                patch("src.services.screening_service._resolve_hotspot_provider", return_value=("akshare", provider)),
+                patch("src.services.screening_service.screening_hotspot", new=SimpleNamespace()),
+                patch("src.services.screening_service._get_dsa_search_service", return_value=search_service),
+                patch(
+                    "src.services.screening_service._write_screening_hotspot_detail_cache",
+                    wraps=screening_service._write_screening_hotspot_detail_cache,
+                ) as cache_write,
+            ):
+                searched = self._hotspot_detail(
+                    config=config,
+                    provider="akshare",
+                    topic="钼",
+                    include_search=True,
+                )
+                searched_again = self._hotspot_detail(
+                    config=config,
+                    provider="akshare",
+                    topic="钼",
+                    include_search=True,
+                )
+                plain = self._hotspot_detail(config=config, provider="akshare", topic="钼")
+
+        self.assertTrue(searched["route"][0]["search_result"])
+        self.assertTrue(searched_again["route"][0]["search_result"])
+        self.assertEqual(plain["route"][0]["source"], "eastmoney_board_change")
+        self.assertFalse(any(item.get("search_result") for item in plain["route"]))
+        self.assertNotIn("news_search_requested", plain)
+        self.assertNotIn("news_search_status", plain)
+        self.assertTrue(plain["cache_used"])
+        self.assertEqual(cache_write.call_count, 1)
+        provider.hotspot_detail.assert_called_once_with("钼")
+        self.assertEqual(search_service.search_topic_news.call_count, 2)
+
     def test_hotspot_search_summary_does_not_call_llm(self) -> None:
         config = Config(screening_enabled=True, litellm_model="openai/gpt-5-mini")
         provider = screening_service.DsaEastMoneyHotspotProvider()

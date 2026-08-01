@@ -145,6 +145,22 @@ def _parse_cache_datetime(value: Any) -> Optional[datetime]:
     return parsed.astimezone(timezone.utc)
 
 
+def _strip_hotspot_search_augmentation(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Return the cacheable hotspot detail without request-scoped search data."""
+    base = dict(payload)
+    for key in ("route", "timeline"):
+        rows = base.get(key)
+        if isinstance(rows, list):
+            base[key] = [
+                item
+                for item in rows
+                if not (isinstance(item, dict) and bool(item.get("search_result")))
+            ]
+    base.pop("news_search_requested", None)
+    base.pop("news_search_status", None)
+    return base
+
+
 def _load_screening_hotspot_detail_cache(
     *,
     provider: str,
@@ -172,7 +188,9 @@ def _load_screening_hotspot_detail_cache(
     if stale and not allow_stale:
         return None
 
-    cached = _ensure_hotspot_detail_compat_fields(dict(payload))
+    cached = _ensure_hotspot_detail_compat_fields(
+        _strip_hotspot_search_augmentation(payload)
+    )
     cached.update({
         "enabled": True,
         "provider": provider or cached.get("provider") or "akshare",
@@ -190,7 +208,11 @@ def _write_screening_hotspot_detail_cache(*, provider: str, topic: str, payload:
     cache_path = _screening_hotspot_detail_cache_path(provider=provider, topic=topic)
     try:
         cache_path.parent.mkdir(parents=True, exist_ok=True)
-        cleaned = _remove_non_finite_json_values(_ensure_hotspot_detail_compat_fields(dict(payload)))
+        cleaned = _remove_non_finite_json_values(
+            _ensure_hotspot_detail_compat_fields(
+                _strip_hotspot_search_augmentation(payload)
+            )
+        )
         cached_at = _utc_now_iso()
         cache_path.write_text(
             json.dumps(
@@ -360,6 +382,21 @@ def _build_hotspot_event_routes_from_search(topic: str) -> List[Dict[str, Any]]:
             "search_result": True,
         })
     return routes
+
+
+def _with_hotspot_search_augmentation(payload: Dict[str, Any], *, topic: str) -> Dict[str, Any]:
+    """Attach opt-in search results to one response without changing its base detail."""
+    augmented = _strip_hotspot_search_augmentation(payload)
+    search_routes = _build_hotspot_event_routes_from_search(topic)
+    if search_routes:
+        route = augmented.get("route")
+        existing_routes = route if isinstance(route, list) else []
+        combined_routes = [*search_routes, *existing_routes]
+        augmented["route"] = combined_routes
+        augmented["timeline"] = list(combined_routes)
+    augmented["news_search_requested"] = True
+    augmented["news_search_status"] = "available" if search_routes else "no_results"
+    return _remove_non_finite_json_values(augmented)
 
 
 def _summarize_hotspot_news_event(*, topic: str, title: str, snippet: str) -> str:
@@ -1045,22 +1082,7 @@ class ScreeningService:
         if cached is not None:
             if not include_search:
                 return cached
-            normalized_cached = dict(cached)
-            search_routes = _build_hotspot_event_routes_from_search(topic_text)
-            if search_routes:
-                route = normalized_cached.get("route")
-                existing_routes = [
-                    item
-                    for item in (route if isinstance(route, list) else [])
-                    if not (isinstance(item, dict) and bool(item.get("search_result")))
-                ]
-                normalized_cached["route"] = search_routes + existing_routes
-                normalized_cached["timeline"] = list(normalized_cached["route"])
-            normalized_cached["news_search_requested"] = True
-            normalized_cached["news_search_status"] = "available" if search_routes else "no_results"
-            cleaned_cached = _remove_non_finite_json_values(normalized_cached)
-            _write_screening_hotspot_detail_cache(provider=provider_name, topic=topic_text, payload=cleaned_cached)
-            return cleaned_cached
+            return _with_hotspot_search_augmentation(cached, topic=topic_text)
         normalized: Dict[str, Any] = {}
         hotspot_helper_error: str = ""
         try:
@@ -1110,6 +1132,8 @@ class ScreeningService:
                 source_errors.append(f"screening_hotspot_detail_stale_cache: {exc}")
                 stale_cached["source_errors"] = source_errors
                 stale_cached["fallback_used"] = True
+                if include_search:
+                    return _with_hotspot_search_augmentation(stale_cached, topic=topic_text)
                 return stale_cached
             raise HTTPException(
                 status_code=424,
@@ -1121,24 +1145,20 @@ class ScreeningService:
             normalized["source_errors"] = source_errors
             normalized["fallback_used"] = True
             normalized["provider"] = provider_name
-        if include_search:
-            search_routes = _build_hotspot_event_routes_from_search(topic_text)
-            if search_routes:
-                route = normalized.get("route")
-                existing_routes = [
-                    item
-                    for item in (route if isinstance(route, list) else [])
-                    if not (isinstance(item, dict) and bool(item.get("search_result")))
-                ]
-                normalized["route"] = search_routes + existing_routes
-            normalized["news_search_requested"] = True
-            normalized["news_search_status"] = "available" if search_routes else "no_results"
         normalized = _ensure_hotspot_detail_compat_fields(normalized)
         normalized["enabled"] = True
         normalized["provider"] = provider_name
-        cleaned = _remove_non_finite_json_values(normalized)
-        _write_screening_hotspot_detail_cache(provider=provider_name, topic=topic_text, payload=cleaned)
-        return cleaned
+        base_detail = _remove_non_finite_json_values(
+            _strip_hotspot_search_augmentation(normalized)
+        )
+        _write_screening_hotspot_detail_cache(
+            provider=provider_name,
+            topic=topic_text,
+            payload=base_detail,
+        )
+        if include_search:
+            return _with_hotspot_search_augmentation(base_detail, topic=topic_text)
+        return base_detail
 
     def screen(
         self,

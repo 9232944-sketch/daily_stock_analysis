@@ -77,7 +77,7 @@ SCREENING_EASTMONEY_JITTER_SEC=0.3
 - 模型、渠道、base URL、额外 headers、fallback、timeout 和 token 上限在单次调用范围内注入，不改写用户配置；主模型即使 HTTP 调用成功，但返回空内容、非 JSON 或覆盖率不足，也会继续尝试已配置的备用模型。最终 JSON 必须在 `content` 块或 `output` 块中；`reasoning_content`（链式思考）被视为内部辅助，不作为最终结果。
 - 热点榜单刷新与选股长流程可并行执行；列表默认不批量预取详情，用户选中具体题材时才加载该题材详情。
 - 热点成分股并行尝试东方财富与同花顺，任一源先返回即可继续，并在短暂合并窗口内吸收另一源结果；单源卡住不会再阻止后备源和本地核心股回退。
-- “搜索最新消息”复用 DSA 原生搜索服务的 provider 优先级、SearXNG 公共实例能力、结果缓存与请求合并，只补充有链接的事件/催化，不从网页内容推断板块成分股。搜索由用户主动触发，摘要在本地确定性压缩，不调用 LLM；默认详情请求不增加搜索等待。
+- “搜索最新消息”复用 DSA 原生搜索服务的 provider 优先级、SearXNG 公共实例能力、结果缓存与请求合并，只补充有链接的事件/催化，不从网页内容推断板块成分股。搜索由用户主动触发，摘要在本地确定性压缩，不调用 LLM；搜索增强仅存在于本次响应，不写入或续期共享热点详情缓存，默认详情请求不会看到搜索状态或增加搜索等待。
 - 热点实时请求失败时优先使用 last-good cache；无缓存时返回稳定空态与明确错误。
 
 ## 结果轮换
@@ -94,7 +94,7 @@ Web 会在浏览器本地生成一个不含用户信息的匿名种子，并随�
 | 个股日 K | `data/screening/daily_history/` | 按代码、来源和回看窗口分键，默认 TTL 24 小时；实时源全部失败时可使用过期缓存并标记 stale |
 | 行业/概念映射 | `data/screening/industry_provider_cache/` | 默认 TTL 24 小时，并保存板块热度历史用于趋势计算 |
 | 热点列表与历史 | `data/screening/hotspots.json`、`hotspot.history.jsonl` | 显式刷新写入；实时失败时回退最近可用快照 |
-| 热点详情 | `data/screening/hotspot_details/` | 默认 TTL 30 分钟；实时失败时可回退过期详情并返回陈旧时长 |
+| 热点详情 | `data/screening/hotspot_details/` | 默认 TTL 30 分钟；只缓存结构化基础详情，显式消息搜索不写入或续期该缓存；实时失败时可回退过期详情并返回陈旧时长 |
 | DSA 实时行情 | `DataFetcherManager` 的行情缓存 | 默认 TTL 10 分钟，沿用 `REALTIME_CACHE_TTL` |
 | DSA 基本面/资金流 | `DataFetcherManager` 的基本面缓存 | 默认 TTL 120 秒，沿用 `FUNDAMENTAL_CACHE_TTL_SECONDS` |
 | DSA 新闻/公告事件 | `SearchService` 内存缓存 | 成功结果默认 TTL 10 分钟；服务重启后重新查询 |
