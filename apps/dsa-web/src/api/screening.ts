@@ -5,6 +5,7 @@ import { toCamelCase } from './utils';
 const SCREENING_SCREEN_TIMEOUT_MS = 180000;
 const SCREENING_REQUEST_TIMEOUT_MS = 300000;
 const SCREENING_VARIANT_SEED_KEY = 'dsa.screening.variantSeed.v1';
+let screeningVariantSessionSeed = '';
 export const SCREENING_CONFIG_CHANGED_EVENT = 'screening-config-changed';
 export const SYSTEM_CONFIG_CHANGED_EVENT = 'dsa-system-config-changed';
 
@@ -315,20 +316,25 @@ export function getScreeningVariantSeed(): string {
   try {
     const existing = window.localStorage.getItem(SCREENING_VARIANT_SEED_KEY)?.trim();
     if (existing) {
+      screeningVariantSessionSeed = existing;
       return existing;
     }
   } catch {
-    // Storage may be disabled by browser privacy settings. An ephemeral seed
-    // still enables bounded result variation for the current request.
+    // Storage may be disabled by browser privacy settings. Fall through to the
+    // module-level session seed so all screening entry points stay consistent.
+  }
+  if (screeningVariantSessionSeed) {
+    return screeningVariantSessionSeed;
   }
   const generated = typeof window.crypto?.randomUUID === 'function'
     ? window.crypto.randomUUID()
     : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  screeningVariantSessionSeed = generated;
   try {
     window.localStorage.setItem(SCREENING_VARIANT_SEED_KEY, generated);
   } catch {
-    // Best-effort persistence only; do not disable variation when storage is
-    // unavailable.
+    // Best-effort persistence only. The module-level value remains stable for
+    // the current page session when Web Storage is unavailable.
   }
   return generated;
 }

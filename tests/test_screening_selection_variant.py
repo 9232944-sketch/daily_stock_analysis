@@ -97,9 +97,9 @@ def test_selection_variant_produces_multiple_bounded_client_variants() -> None:
     assert any("000003" not in codes for codes in variants)
 
 
-def test_selection_variant_keeps_highest_scoring_pick_when_top_scores_are_close() -> None:
+def test_selection_variant_keeps_leading_picks_when_top_scores_are_close() -> None:
     close_picks = _picks()
-    close_scores = [84.2, 84.1, 84.0, 83.9, 83.8, 82.0, 80.0]
+    close_scores = [84.5, 84.4, 84.3, 84.2, 84.1, 80.0, 79.0]
     for pick, score in zip(close_picks, close_scores):
         pick.final_score = score
         pick.screen_score = score
@@ -113,12 +113,25 @@ def test_selection_variant_keeps_highest_scoring_pick_when_top_scores_are_close(
         for index in range(30)
     ]
 
-    assert all("000001" in {pick.code for pick in result.picks} for result in variants)
-    assert any("000002" not in {pick.code for pick in result.picks} for result in variants)
+    assert all([pick.code for pick in result.picks][:2] == ["000001", "000002"] for result in variants)
+    assert len({tuple(pick.code for pick in result.picks) for result in variants}) >= 2
     assert all(
-        all(pick.final_score >= 82.5 for pick in result.picks)
+        all(pick.final_score >= 82.8 for pick in result.picks)
         for result in variants
     )
+
+
+def test_selection_variant_zero_rotation_ratio_disables_rotation() -> None:
+    result = apply_seeded_selection_variant(
+        _picks(),
+        max_output=3,
+        seed="browser-a",
+        period="2026-08-01",
+        rotation_ratio=0.0,
+    )
+
+    assert [pick.code for pick in result.picks] == ["000001", "000002", "000003"]
+    assert result.applied is False
 
 
 def test_selection_variant_protects_materially_superior_candidates() -> None:

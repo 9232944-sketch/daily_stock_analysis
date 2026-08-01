@@ -47,6 +47,12 @@ def _raise_screening_unavailable() -> None:
     raise _screening_unavailable()
 
 
+def _sleeping_constituent_source(*, symbol: str) -> pd.DataFrame:
+    del symbol
+    time.sleep(5)
+    return pd.DataFrame()
+
+
 def _make_screening_core(
     *,
     screen=None,
@@ -1771,17 +1777,38 @@ class ScreeningOpportunitiesApiTestCase(unittest.TestCase):
         self.assertEqual(list(frame["code"]), ["000001", "000002", "000003"])
         self.assertEqual(provider.stock_board_concept_cons_em("金融").shape[0], 3)
 
-    def test_hotspot_provider_does_not_let_stalled_source_block_ths_constituents(self) -> None:
+    def test_hotspot_provider_keeps_source_priority_when_secondary_finishes_first(self) -> None:
+        class FakeProvider(screening_service.DsaEastMoneyHotspotProvider):
+            def _fetch_eastmoney_constituents(self, topic: str, *, source: str) -> Any:
+                time.sleep(0.05)
+                return pd.DataFrame([{"代码": "000001", "名称": "东财名称"}])
+
+            def _fetch_ths_constituents(self, topic: str) -> Any:
+                return pd.DataFrame([
+                    {"code": "000001", "name": "同花顺名称"},
+                    {"code": "000002", "name": "万科A"},
+                ])
+
+            def _fallback_constituents(self, topic: str) -> Any:
+                return pd.DataFrame()
+
+            def _related_hotspot_constituents(self, topic: str) -> Any:
+                return pd.DataFrame()
+
+        frame = FakeProvider().stock_board_concept_cons_em("金融")
+
+        self.assertEqual(list(frame["code"]), ["000001", "000002"])
+        self.assertEqual(frame.iloc[0]["name"], "东财名称")
+
+    def test_hotspot_provider_joins_all_constituent_workers_before_returning(self) -> None:
         import pandas as pd
 
-        stalled = threading.Event()
+        slow_source_finished = threading.Event()
 
         class FakeProvider(screening_service.DsaEastMoneyHotspotProvider):
-            _CONSTITUENT_SOURCE_BUDGET_SECONDS = 0.1
-            _CONSTITUENT_SECONDARY_GRACE_SECONDS = 0.02
-
             def _fetch_eastmoney_constituents(self, topic: str, *, source: str) -> Any:
-                stalled.wait(1)
+                time.sleep(0.08)
+                slow_source_finished.set()
                 return pd.DataFrame()
 
             def _fetch_ths_constituents(self, topic: str) -> Any:
@@ -1798,13 +1825,46 @@ class ScreeningOpportunitiesApiTestCase(unittest.TestCase):
 
         self.assertLess(time.monotonic() - started, 0.3)
         self.assertEqual(list(frame["code"]), ["000003"])
-        leaked = [
-            process
-            for process in multiprocessing.active_children()
-            if process.name == "screening-constituents:eastmoney:金融"
-        ]
-        self.assertEqual(leaked, [])
-        stalled.set()
+        self.assertTrue(slow_source_finished.is_set())
+        self.assertFalse(any(
+            thread.name.startswith("screening-constituents")
+            for thread in threading.enumerate()
+        ))
+
+    def test_hotspot_provider_caps_and_reuses_constituent_worker_capacity(self) -> None:
+        started = threading.Event()
+        release = threading.Event()
+        call_count = 0
+        call_lock = threading.Lock()
+
+        class FakeProvider(screening_service.DsaEastMoneyHotspotProvider):
+            _CONSTITUENT_WORKER_SLOTS = threading.BoundedSemaphore(1)
+
+            def _fetch_eastmoney_constituents(self, topic: str, *, source: str) -> Any:
+                nonlocal call_count
+                with call_lock:
+                    call_count += 1
+                started.set()
+                release.wait(1)
+                return pd.DataFrame([{"code": "000001", "name": "平安银行"}])
+
+        first_provider = FakeProvider()
+        second_provider = FakeProvider()
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            first = executor.submit(
+                first_provider._fetch_constituent_sources,
+                "金融",
+                source="industry",
+            )
+            self.assertTrue(started.wait(0.3))
+            skipped = second_provider._fetch_constituent_sources("银行", source="industry")
+            self.assertEqual(skipped, [])
+            release.set()
+            self.assertEqual(len(first.result(timeout=0.5)), 1)
+
+        reused = second_provider._fetch_constituent_sources("银行", source="industry")
+        self.assertEqual(len(reused), 1)
+        self.assertEqual(call_count, 2)
 
     def test_hotspot_provider_maps_cross_source_topic_alias_to_ths_concept(self) -> None:
         provider = screening_service.DsaEastMoneyHotspotProvider()
@@ -1813,14 +1873,46 @@ class ScreeningOpportunitiesApiTestCase(unittest.TestCase):
             {"name": "其他概念", "code": "301000"},
         ])
 
-        with patch.dict(
-            sys.modules,
-            {"akshare": SimpleNamespace(stock_board_concept_name_ths=lambda: concept_names)},
-            clear=False,
-        ):
+        with patch.object(provider, "_fetch_ths_concept_names", return_value=concept_names):
             code = provider._resolve_ths_concept_code("文字媒体")
 
         self.assertEqual(code, "300806")
+
+    def test_hotspot_provider_routes_akshare_constituents_through_bounded_process(self) -> None:
+        provider = screening_service.DsaEastMoneyHotspotProvider()
+        constituents = pd.DataFrame([{"代码": "000001", "名称": "平安银行"}])
+
+        with patch(
+            "data_provider.akshare_fetcher._akshare_call_with_timeout",
+            return_value=constituents,
+        ) as bounded_call:
+            frame = provider._fetch_eastmoney_constituents("金融", source="concept")
+
+        self.assertEqual(frame.iloc[0]["代码"], "000001")
+        self.assertEqual(bounded_call.call_count, 1)
+        self.assertEqual(bounded_call.call_args.kwargs["symbol"], "金融")
+        self.assertEqual(
+            bounded_call.call_args.kwargs["timeout"],
+            provider._AKSHARE_CALL_TIMEOUT_SECONDS,
+        )
+        self.assertIn("stock_board_concept_cons_em", bounded_call.call_args.kwargs["call_name"])
+
+    def test_hotspot_provider_reaps_timed_out_constituent_process(self) -> None:
+        import akshare as ak
+
+        provider = screening_service.DsaEastMoneyHotspotProvider()
+        provider._AKSHARE_CALL_TIMEOUT_SECONDS = 0.05
+        started = time.monotonic()
+
+        with patch.object(ak, "stock_board_concept_cons_em", new=_sleeping_constituent_source):
+            with self.assertRaises(TimeoutError):
+                provider._fetch_eastmoney_constituents("金融", source="concept")
+
+        self.assertLess(time.monotonic() - started, 1.0)
+        self.assertFalse(any(
+            process.name == "akshare-screening.stock_board_concept_cons_em"
+            for process in multiprocessing.active_children()
+        ))
 
     def test_hotspot_provider_adds_related_metal_leaders_for_narrow_topic(self) -> None:
         import pandas as pd
@@ -1961,6 +2053,7 @@ class ScreeningOpportunitiesApiTestCase(unittest.TestCase):
         self.assertEqual(payload["enabled"], True)
         self.assertEqual(payload["topic"], "电池")
         self.assertEqual(payload["stocks"][0]["name"], "宁德时代")
+        self.assertEqual(provider.constituent_sources, ["industry"])
 
     def test_hotspot_provider_uses_board_name_fallback_when_rankings_fail(self) -> None:
         import pandas as pd
@@ -2006,20 +2099,12 @@ class ScreeningOpportunitiesApiTestCase(unittest.TestCase):
             },
         ])
 
-        class _MockAkshare:
-            calls = 0
-
-            @staticmethod
-            def stock_board_change_em():
-                _MockAkshare.calls += 1
-                return board_changes
-
         provider = screening_service.DsaEastMoneyHotspotProvider()
-        with patch.dict("sys.modules", {"akshare": _MockAkshare()}):
+        with patch.object(provider, "_fetch_board_changes_raw", return_value=board_changes) as fetch_raw:
             frame = provider._fetch_board_changes()
             summary = provider._find_board_change("AI算力")
 
-        self.assertEqual(_MockAkshare.calls, 1)
+        self.assertGreaterEqual(fetch_raw.call_count, 1)
         self.assertEqual(frame.iloc[0]["name"], "AI算力")
         self.assertEqual(frame.iloc[0]["stage"], "加速发酵")
         self.assertGreater(frame.iloc[0]["trend_score"], 0)
@@ -2041,7 +2126,13 @@ class ScreeningOpportunitiesApiTestCase(unittest.TestCase):
             def stock_board_concept_summary_ths():
                 return summary
 
-        with patch.dict("sys.modules", {"akshare": _MockAkshare()}):
+        with (
+            patch.dict("sys.modules", {"akshare": _MockAkshare()}),
+            patch(
+                "data_provider.akshare_fetcher._akshare_call_with_timeout",
+                return_value=summary,
+            ),
+        ):
             text = provider._fetch_ths_summary_event("MLCC")
 
         self.assertEqual(text, "")

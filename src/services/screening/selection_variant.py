@@ -31,9 +31,10 @@ def apply_seeded_selection_variant(
 ) -> SelectionVariant:
     """Sample output slots among candidates with comparable final scores.
 
-    Candidates that materially outperform the original cutoff remain protected.
-    The opaque client seed only affects the remaining near-score pool; hard
-    filters, risk vetoes, score values, and portfolio penalties are never changed.
+    The leading half of the original Top-N and candidates that materially
+    outperform the cutoff remain protected. The opaque client seed only affects
+    the remaining near-score tail; hard filters, risk vetoes, score values, and
+    portfolio penalties are never changed.
 
     Compatibility note: when the client does not provide a seed (empty string
     or None), preserve the original pick ordering and return a strict Top-N
@@ -60,21 +61,26 @@ def apply_seeded_selection_variant(
     cutoff_score = float(ordered[output_count - 1].final_score)
     score_gap = max(float(max_score_gap), 0.0)
     minimum_score = cutoff_score - score_gap
-    # Only protect candidates whose lead over the original Top-N cutoff is
-    # larger than the full allowed sampling gap. When every Top-N candidate is
-    # within that gap, keep the leading slot fixed and rotate only the tail.
+    # Protect candidates whose lead over the original Top-N cutoff is larger
+    # than the full allowed sampling gap.
     quality_protected = [
         pick
         for pick in ordered[:output_count]
         if float(pick.final_score) > cutoff_score + score_gap
     ]
     remaining_slots = output_count - len(quality_protected)
-    minimum_position_protected = min(1, remaining_slots) if not quality_protected else 0
-    rotation_capacity = max(remaining_slots - minimum_position_protected, 0)
+    requested_ratio = max(float(rotation_ratio), 0.0)
+    if requested_ratio == 0.0:
+        return SelectionVariant(picks=_rerank(ordered[:output_count]))
+    # Rotation is a tail-only operation. Even when callers request ratio=1,
+    # reserve the leading half of the original Top-N by limiting rotatable
+    # positions to floor(N/2). This keeps rank 1 (and rank 2 for Top-3) stable.
+    max_tail_slots = max(1, output_count // 2)
     rotation_slots = min(
-        rotation_capacity,
-        max(1, int(round(output_count * max(float(rotation_ratio), 0.0)))),
-    ) if rotation_capacity > 0 else 0
+        remaining_slots,
+        max_tail_slots,
+        max(1, int(round(output_count * requested_ratio))),
+    )
     def _was_post_analyzed(pick: Pick) -> bool:
         # If analyzers were configured for this run, a pick must have explicit
         # non-skipped post-analysis results for all configured analyzers to be

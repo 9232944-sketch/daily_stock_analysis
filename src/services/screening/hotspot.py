@@ -1638,20 +1638,26 @@ def _call_provider_frame(
     if method is None:
         return None
     try:
-        frame = call_with_timeout(
-            method,
-            timeout_sec=_hotspot_call_timeout_seconds(),
-            label=f"hotspot source {provider_label or type(provider).__name__}.{method_name}",
-            **kwargs,
-        )
-    except TypeError:
-        try:
+        if bool(getattr(provider, "_screening_source_calls_bounded", False)):
+            frame = method(**kwargs)
+        else:
             frame = call_with_timeout(
                 method,
-                kwargs.get("symbol"),
                 timeout_sec=_hotspot_call_timeout_seconds(),
                 label=f"hotspot source {provider_label or type(provider).__name__}.{method_name}",
+                **kwargs,
             )
+    except TypeError:
+        try:
+            if bool(getattr(provider, "_screening_source_calls_bounded", False)):
+                frame = method(kwargs.get("symbol"))
+            else:
+                frame = call_with_timeout(
+                    method,
+                    kwargs.get("symbol"),
+                    timeout_sec=_hotspot_call_timeout_seconds(),
+                    label=f"hotspot source {provider_label or type(provider).__name__}.{method_name}",
+                )
         except Exception as exc:  # noqa: BLE001 - provider runtime instability is degraded.
             _record_provider_error(source_errors, provider_label, method_name, exc)
             return None

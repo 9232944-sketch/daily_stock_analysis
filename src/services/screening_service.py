@@ -12,17 +12,16 @@ import hashlib
 import json
 import logging
 import math
-import multiprocessing
 import os
 import re
 import threading
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextvars import ContextVar
 from contextlib import contextmanager
 from dataclasses import asdict, is_dataclass
 from datetime import datetime, timezone
-from multiprocessing.connection import wait as wait_for_connections
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
 from urllib.parse import urlparse
@@ -86,7 +85,6 @@ _SCREENING_LITELLM_COMPLETION_ROUTES: ContextVar[Optional[Tuple[Dict[str, Any], 
 )
 _SCREENING_LITELLM_COMPLETION_ATTR = "_screening_litellm_completion_bridge"
 _SCREENING_LITELLM_COMPLETION_LOCK = threading.Lock()
-_CONSTITUENT_SOURCE_PROCESS_JOIN_GRACE_SECONDS = 0.5
 
 
 def _safe_float(value: Any) -> Optional[float]:
@@ -103,44 +101,6 @@ def _safe_float(value: Any) -> Optional[float]:
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
-
-
-def _terminate_screening_worker_process(process: Any) -> None:
-    if process is None:
-        return
-    if process.is_alive():
-        process.terminate()
-        process.join(_CONSTITUENT_SOURCE_PROCESS_JOIN_GRACE_SECONDS)
-    if process.is_alive() and hasattr(process, "kill"):
-        process.kill()
-        process.join(_CONSTITUENT_SOURCE_PROCESS_JOIN_GRACE_SECONDS)
-
-
-def _screening_constituent_source_worker(
-    conn: Any,
-    provider_cls: type[Any],
-    method_name: str,
-    topic: str,
-    source: str,
-) -> None:
-    try:
-        provider = provider_cls()
-        method = getattr(provider, method_name)
-        if method_name == "_fetch_eastmoney_constituents":
-            result = method(topic, source=source)
-        else:
-            result = method(topic)
-        conn.send((True, result))
-    except BaseException as exc:
-        try:
-            conn.send((False, exc))
-        except BaseException:
-            try:
-                conn.send((False, RuntimeError(f"{type(exc).__name__}: {exc}")))
-            except BaseException:
-                pass
-    finally:
-        conn.close()
 
 
 def _resolve_screening_data_dir() -> Path:
@@ -1974,10 +1934,11 @@ def _resolve_hotspot_provider(provider: str) -> Tuple[str, Any]:
 class DsaEastMoneyHotspotProvider:
     """Minimal EastMoney board provider for Screening hotspot scoring."""
 
+    _screening_source_calls_bounded = True
     _BASE_URL = "https://push2.eastmoney.com/api/qt/clist/get"
-    _HTTP_TIMEOUT_SECONDS = 8
-    _CONSTITUENT_SOURCE_BUDGET_SECONDS = 5.5
-    _CONSTITUENT_SECONDARY_GRACE_SECONDS = 0.75
+    _AKSHARE_CALL_TIMEOUT_SECONDS = 4.0
+    _CONSTITUENT_HTTP_TIMEOUT = (1.0, 2.0)
+    _CONSTITUENT_WORKER_SLOTS = threading.BoundedSemaphore(4)
     _COMMON_PARAMS = {
         "pn": "1",
         "po": "1",
@@ -2100,6 +2061,7 @@ class DsaEastMoneyHotspotProvider:
                 self._last_request_ts = time.monotonic()
 
     def _eastmoney_get(self, url: str, **kwargs: Any) -> Any:
+        """Retry short-lived EastMoney failures without extending each socket wait."""
         import requests
 
         retryable_errors = (
@@ -2216,85 +2178,59 @@ class DsaEastMoneyHotspotProvider:
         return frame
 
     def _fetch_constituent_sources(self, topic: str, *, source: str) -> List[Any]:
-        """Race independent constituent sources so one stalled API cannot block fallback."""
-        fetchers: List[Tuple[str, str]] = [
-            ("eastmoney", "_fetch_eastmoney_constituents"),
+        """Fetch independent sources in parallel without orphan workers.
+
+        AkShare calls run in DSA's killable timeout subprocess; direct HTTP
+        calls have connect/read timeouts. A process-wide semaphore prevents
+        repeated upstream failures from creating unbounded active tasks, and
+        the executor joins every admitted worker before this method returns.
+        """
+        fetchers: List[Tuple[str, Callable[[], Any]]] = [
+            ("eastmoney", lambda: self._fetch_eastmoney_constituents(topic, source=source)),
         ]
         if source == "concept":
-            fetchers.append(("ths", "_fetch_ths_constituents"))
+            fetchers.append(("ths", lambda: self._fetch_ths_constituents(topic)))
 
-        ctx = multiprocessing.get_context()
-        workers: Dict[str, Tuple[Any, Any]] = {}
-        pending: set[str] = set()
-        for label, method_name in fetchers:
-            parent_conn, child_conn = ctx.Pipe(duplex=False)
-            process = ctx.Process(
-                target=_screening_constituent_source_worker,
-                args=(child_conn, type(self), method_name, topic, source),
-                name=f"screening-constituents:{label}:{topic}",
-                daemon=True,
-            )
+        def run(fetch: Callable[[], Any]) -> Any:
             try:
-                process.start()
-            except Exception as exc:  # noqa: BLE001 - degraded source start is isolated.
-                parent_conn.close()
-                child_conn.close()
-                logger.info("Screening %s constituent source failed to start for %s: %s", label, topic, exc)
-                continue
-            child_conn.close()
-            workers[label] = (process, parent_conn)
-            pending.add(label)
+                return fetch()
+            finally:
+                self._CONSTITUENT_WORKER_SLOTS.release()
 
-        frames: List[Any] = []
-        deadline = time.monotonic() + self._CONSTITUENT_SOURCE_BUDGET_SECONDS
-        secondary_deadline: Optional[float] = None
-        while pending:
-            wait_until = min(deadline, secondary_deadline) if secondary_deadline is not None else deadline
-            remaining = wait_until - time.monotonic()
-            if remaining <= 0:
-                break
-            try:
-                ready = wait_for_connections(
-                    [workers[label][1] for label in pending],
-                    timeout=remaining,
-                )
-            except Exception:
-                ready = []
-            if not ready:
-                break
-            conn_to_label = {workers[label][1]: label for label in pending}
-            for conn in ready:
-                label = conn_to_label[conn]
-                process, parent_conn = workers[label]
-                pending.discard(label)
+        frames_by_source: Dict[str, Any] = {}
+        with ThreadPoolExecutor(
+            max_workers=len(fetchers),
+            thread_name_prefix="screening-constituents",
+        ) as executor:
+            futures = {}
+            for label, fetch in fetchers:
+                if not self._CONSTITUENT_WORKER_SLOTS.acquire(blocking=False):
+                    logger.info(
+                        "Screening %s constituent source skipped for %s: worker capacity exhausted",
+                        label,
+                        topic,
+                    )
+                    continue
                 try:
-                    ok, payload = parent_conn.recv()
-                except EOFError as exc:
-                    ok, payload = False, RuntimeError(f"{label} constituent source exited without a result: {exc}")
-                finally:
-                    parent_conn.close()
-                    process.join(_CONSTITUENT_SOURCE_PROCESS_JOIN_GRACE_SECONDS)
-                    _terminate_screening_worker_process(process)
-                if not ok:
-                    logger.info("Screening %s constituent source failed for %s: %s", label, topic, payload)
+                    futures[executor.submit(run, fetch)] = label
+                except BaseException:  # noqa: BLE001 - release capacity if submission fails.
+                    self._CONSTITUENT_WORKER_SLOTS.release()
+                    raise
+            for future in as_completed(futures):
+                label = futures[future]
+                try:
+                    payload = future.result()
+                except BaseException as exc:  # noqa: BLE001 - external source failures are isolated.
+                    logger.info("Screening %s constituent source failed for %s: %s", label, topic, exc)
                     continue
                 if payload is None or bool(getattr(payload, "empty", False)):
                     continue
-                frames.append(payload)
-                if secondary_deadline is None and pending:
-                    secondary_deadline = time.monotonic() + self._CONSTITUENT_SECONDARY_GRACE_SECONDS
-
-        if pending:
-            logger.info(
-                "Screening constituent sources still pending after bounded wait for %s: %s",
-                topic,
-                ",".join(sorted(pending)),
-            )
-        for label in list(pending):
-            process, parent_conn = workers[label]
-            parent_conn.close()
-            _terminate_screening_worker_process(process)
-        return frames
+                frames_by_source[label] = payload
+        return [
+            frames_by_source[label]
+            for label, _fetch in fetchers
+            if label in frames_by_source
+        ]
 
     def hotspot_detail(self, topic: str) -> Dict[str, Any]:
         try:
@@ -2386,10 +2322,15 @@ class DsaEastMoneyHotspotProvider:
 
     def _fetch_board_changes_raw(self) -> Any:
         import akshare as ak
+        from data_provider.akshare_fetcher import _akshare_call_with_timeout
 
         if self._board_changes_raw_cache is not None:
             return self._board_changes_raw_cache.copy()
-        df = ak.stock_board_change_em()
+        df = _akshare_call_with_timeout(
+            ak.stock_board_change_em,
+            timeout=self._AKSHARE_CALL_TIMEOUT_SECONDS,
+            call_name="screening.stock_board_change_em",
+        )
         self._board_changes_raw_cache = df
         return df.copy() if df is not None else df
 
@@ -2440,7 +2381,7 @@ class DsaEastMoneyHotspotProvider:
         response = self._eastmoney_get(
             self._BASE_URL,
             params=params,
-            timeout=self._HTTP_TIMEOUT_SECONDS,
+            timeout=self._CONSTITUENT_HTTP_TIMEOUT,
             headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json,text/plain,*/*"},
         )
         response.raise_for_status()
@@ -2645,17 +2586,17 @@ class DsaEastMoneyHotspotProvider:
 
     def _fetch_ths_summary_event(self, topic: str) -> str:
         import akshare as ak
+        from data_provider.akshare_fetcher import _akshare_call_with_timeout
 
         try:
-            df = ak.stock_board_concept_summary_ths()
+            df = _akshare_call_with_timeout(
+                ak.stock_board_concept_summary_ths,
+                timeout=self._AKSHARE_CALL_TIMEOUT_SECONDS,
+                call_name="screening.stock_board_concept_summary_ths",
+            )
         except Exception:
             return ""
-        if df is None or df.empty:
-            return ""
-        if "概念名称" not in df.columns:
-            logger.warning(
-                "Screening THS summary missing required column '概念名称'; skip enrichment.",
-            )
+        if df is None or df.empty or "概念名称" not in df.columns:
             return ""
         rows = df[df["概念名称"].astype(str) == topic]
         if rows.empty:
@@ -2669,9 +2610,15 @@ class DsaEastMoneyHotspotProvider:
 
     def _fetch_ths_info(self, topic: str) -> Dict[str, str]:
         import akshare as ak
+        from data_provider.akshare_fetcher import _akshare_call_with_timeout
 
         try:
-            df = ak.stock_board_concept_info_ths(symbol=topic)
+            df = _akshare_call_with_timeout(
+                ak.stock_board_concept_info_ths,
+                symbol=topic,
+                timeout=self._AKSHARE_CALL_TIMEOUT_SECONDS,
+                call_name="screening.stock_board_concept_info_ths",
+            )
         except Exception:
             return {}
         if df is None or df.empty or "项目" not in df.columns or "值" not in df.columns:
@@ -2684,13 +2631,19 @@ class DsaEastMoneyHotspotProvider:
 
     def _fetch_eastmoney_constituents(self, topic: str, *, source: str) -> Any:
         import akshare as ak
+        from data_provider.akshare_fetcher import _akshare_call_with_timeout
 
-        try:
-            if source == "industry":
-                return ak.stock_board_industry_cons_em(symbol=topic)
-            return ak.stock_board_concept_cons_em(symbol=topic)
-        except Exception:
-            return None
+        fetch = (
+            ak.stock_board_industry_cons_em
+            if source == "industry"
+            else ak.stock_board_concept_cons_em
+        )
+        return _akshare_call_with_timeout(
+            fetch,
+            symbol=topic,
+            timeout=self._AKSHARE_CALL_TIMEOUT_SECONDS,
+            call_name=f"screening.{fetch.__name__}",
+        )
 
     def _fetch_ths_constituents(self, topic: str) -> Any:
         import pandas as pd
@@ -2699,11 +2652,10 @@ class DsaEastMoneyHotspotProvider:
         code = self._resolve_ths_concept_code(topic)
         if not code:
             return pd.DataFrame()
-        url = f"http://q.10jqka.com.cn/gn/detail/code/{code}/"
         response = requests.get(
-            url,
-            headers={"User-Agent": "Mozilla/5.0", "Referer": "http://q.10jqka.com.cn/gn/"},
-            timeout=self._HTTP_TIMEOUT_SECONDS,
+            f"https://q.10jqka.com.cn/gn/detail/code/{code}/",
+            headers={"User-Agent": "Mozilla/5.0", "Referer": "https://q.10jqka.com.cn/gn/"},
+            timeout=self._CONSTITUENT_HTTP_TIMEOUT,
         )
         response.raise_for_status()
         html = response.content.decode("gbk", "ignore")
@@ -2721,32 +2673,34 @@ class DsaEastMoneyHotspotProvider:
         return pd.DataFrame(rows)
 
     def _resolve_ths_concept_code(self, topic: str) -> str:
-        import akshare as ak
-
-        try:
-            df = ak.stock_board_concept_name_ths()
-        except Exception:
-            return ""
+        df = self._fetch_ths_concept_names()
         if df is None or df.empty:
             return ""
         names = df["name"].map(_env_text)
         candidates = _dedupe_strings([topic, *self._THS_TOPIC_ALIASES.get(topic, ())])
-        rows = df.iloc[0:0]
         for candidate in candidates:
             rows = df[names == candidate]
             if not rows.empty:
-                break
-        if rows.empty:
-            for candidate in candidates:
-                rows = df[names.str.contains(re.escape(candidate), case=False, na=False)]
-                if not rows.empty:
-                    break
-        if rows.empty and topic.endswith("概念"):
-            base = topic[:-2]
-            rows = df[names.str.contains(re.escape(base), case=False, na=False)]
-        if rows.empty:
-            return ""
-        return _env_text(rows.iloc[0].get("code"))
+                return _env_text(rows.iloc[0].get("code"))
+        for candidate in candidates:
+            rows = df[names.str.contains(re.escape(candidate), case=False, na=False)]
+            if not rows.empty:
+                return _env_text(rows.iloc[0].get("code"))
+        if topic.endswith("概念"):
+            rows = df[names.str.contains(re.escape(topic[:-2]), case=False, na=False)]
+            if not rows.empty:
+                return _env_text(rows.iloc[0].get("code"))
+        return ""
+
+    def _fetch_ths_concept_names(self) -> Any:
+        import akshare as ak
+        from data_provider.akshare_fetcher import _akshare_call_with_timeout
+
+        return _akshare_call_with_timeout(
+            ak.stock_board_concept_name_ths,
+            timeout=self._AKSHARE_CALL_TIMEOUT_SECONDS,
+            call_name="screening.stock_board_concept_name_ths",
+        )
 
     def _fallback_constituents(self, topic: str) -> Any:
         import pandas as pd

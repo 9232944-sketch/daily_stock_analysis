@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { getScreeningVariantSeed, screeningApi } from '../screening';
+import { screeningApi } from '../screening';
 
 const { get, post, getConfig, updateConfig } = vi.hoisted(() => ({
   get: vi.fn(),
@@ -296,26 +296,56 @@ describe('screeningApi', () => {
     expect(result.maxResults).toBe(3);
   });
 
-  it('keeps one opaque screening variant seed per browser', () => {
+  it('keeps one opaque screening variant seed per browser', async () => {
     window.localStorage.removeItem('dsa.screening.variantSeed.v1');
+    vi.resetModules();
+    const isolatedScreening = await import('../screening');
 
-    const first = getScreeningVariantSeed();
-    const second = getScreeningVariantSeed();
+    const first = isolatedScreening.getScreeningVariantSeed();
+    const second = isolatedScreening.getScreeningVariantSeed();
 
     expect(first).not.toBe('');
     expect(second).toBe(first);
     expect(window.localStorage.getItem('dsa.screening.variantSeed.v1')).toBe(first);
   });
 
-  it('keeps result variation enabled when browser storage rejects writes', () => {
+  it('reuses one session seed across sync and async requests when browser storage rejects access', async () => {
     window.localStorage.removeItem('dsa.screening.variantSeed.v1');
+    vi.resetModules();
+    const isolatedScreening = await import('../screening');
+    const getItem = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new DOMException('storage disabled');
+    });
     const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
       throw new DOMException('storage disabled');
     });
+    post
+      .mockResolvedValueOnce({ data: { enabled: true, candidates: [], candidate_count: 0 } })
+      .mockResolvedValueOnce({
+        data: {
+          task_id: 'screen-task-storage-disabled',
+          trace_id: 'screen-task-storage-disabled',
+          status: 'pending',
+          message: '选股任务已提交',
+          strategy: 'dual_low',
+          market: 'cn',
+          max_results: 3,
+        },
+      });
 
     try {
-      expect(getScreeningVariantSeed()).not.toBe('');
+      const first = isolatedScreening.getScreeningVariantSeed();
+      const second = isolatedScreening.getScreeningVariantSeed();
+      expect(first).not.toBe('');
+      expect(second).toBe(first);
+
+      await isolatedScreening.screeningApi.screen({ market: 'cn', strategy: 'dual_low', maxResults: 3 });
+      await isolatedScreening.screeningApi.startScreen({ market: 'cn', strategy: 'dual_low', maxResults: 3 });
+
+      expect(post.mock.calls[0]?.[1]).toMatchObject({ variant_seed: first });
+      expect(post.mock.calls[1]?.[1]).toMatchObject({ variant_seed: first });
     } finally {
+      getItem.mockRestore();
       setItem.mockRestore();
     }
   });
