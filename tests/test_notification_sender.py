@@ -269,6 +269,21 @@ class TestWechatSender(unittest.TestCase):
         result = sender.send_to_wechat("hello")
         self.assertTrue(result)
 
+    @mock.patch("src.notification_sender.wechat_sender.requests.post")
+    def test_send_strips_hidden_market_region_metadata_from_text_payload(self, mock_post):
+        mock_post.return_value = _response(200, {"errcode": 0})
+        cfg = _config(wechat_webhook_url="https://wechat.example/hook", wechat_msg_type="text")
+        sender = WechatSender(cfg)
+
+        result = sender.send_to_wechat("[dsa-market-region]: # (us)\n\n# 🎯 Market Review\n\nBody")
+
+        self.assertTrue(result)
+        payload = mock_post.call_args.kwargs["json"]
+        self.assertEqual(payload["msgtype"], "text")
+        self.assertNotIn("[dsa-market-region]", payload["text"]["content"])
+        self.assertIn("# 🎯 Market Review", payload["text"]["content"])
+        self.assertIn("Body", payload["text"]["content"])
+
     def test_gen_wechat_payload_markdown(self):
         cfg = _config(wechat_webhook_url="u", wechat_msg_type="markdown")
         sender = WechatSender(cfg)
@@ -282,6 +297,15 @@ class TestWechatSender(unittest.TestCase):
         payload = sender._gen_wechat_payload("plain")
         self.assertEqual(payload["msgtype"], "text")
         self.assertEqual(payload["text"]["content"], "plain")
+
+    def test_gen_wechat_payload_text_strips_hidden_market_region_metadata(self):
+        cfg = _config(wechat_webhook_url="u", wechat_msg_type="text")
+        sender = WechatSender(cfg)
+        payload = sender._gen_wechat_payload("[dsa-market-region]: # (us)\n\n# 🎯 Market Review\n\nBody")
+        self.assertEqual(payload["msgtype"], "text")
+        self.assertNotIn("[dsa-market-region]", payload["text"]["content"])
+        self.assertIn("# 🎯 Market Review", payload["text"]["content"])
+        self.assertIn("Body", payload["text"]["content"])
 
     @mock.patch("src.notification_sender.wechat_sender.requests.post")
     def test_send_wechat_image_over_limit_returns_false(self, mock_post):
@@ -1724,6 +1748,20 @@ class TestTelegramSender(unittest.TestCase):
         self.assertIn("| 股票 | 信号 |", rendered)
         self.assertIn("[详情](https://example.com/report)", rendered)
         self.assertNotIn("# 日报", rendered)
+
+    @mock.patch("src.notification_sender.telegram_sender.requests.post")
+    def test_send_strips_hidden_market_region_metadata_from_text_payload(self, mock_post):
+        mock_post.return_value = _response(200, {"ok": True})
+        cfg = _config(telegram_bot_token="BOT", telegram_chat_id="CHAT")
+        sender = TelegramSender(cfg)
+
+        result = sender.send_to_telegram("[dsa-market-region]: # (us)\n\n# 🎯 Market Review\n\nBody")
+
+        self.assertTrue(result)
+        payload = mock_post.call_args.kwargs["json"]
+        self.assertNotIn("[dsa-market-region]", payload["text"])
+        self.assertIn("🎯 Market Review", payload["text"])
+        self.assertIn("Body", payload["text"])
 
     @mock.patch.object(TelegramSender, "_send_telegram_message", return_value=True)
     def test_send_telegram_chunked_splits_large_reason_without_delimiter(self, mock_send_telegram_message):

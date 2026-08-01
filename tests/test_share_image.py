@@ -219,6 +219,36 @@ def test_market_share_image_hides_unavailable_dimensions_and_uses_payload_color_
     assert '<strong class="red">+0.80%</strong>' in html
 
 
+def test_market_share_image_uses_payload_color_scheme_for_sector_rankings():
+    payload = {
+        "kind": "market_review",
+        "region": "us",
+        "color_scheme": "green_up",
+        "sectors": {
+            "top": [
+                {"name": "Software", "change_pct": 1.25},
+                {"name": "Semis", "change_pct": 0.8},
+            ],
+            "bottom": [
+                {"name": "Utilities", "change_pct": -0.35},
+                {"name": "Staples", "change_pct": -0.2},
+            ],
+        },
+    }
+
+    html = build_share_image_html(
+        "# US Market Recap\n\n## Sector Highlights\n\n- Software leads.\n",
+        generated_on=date(2026, 8, 1),
+        structured_payload=payload,
+    )
+
+    assert '<strong class="green">+1.25%</strong>' in html
+    assert '<strong class="green">+0.80%</strong>' in html
+    assert '<strong class="red">-0.35%</strong>' in html
+    assert '<strong class="red">-0.20%</strong>' in html
+    assert ".ranking-row.lagging strong{color:#0a9c58}" not in html
+
+
 def test_market_share_image_uses_market_variant_and_preserves_tables():
     html = build_share_image_html(
         "# A 股大盘复盘\n\n## 指数表现\n\n| 指数 | 涨跌 |\n| --- | --- |\n| 上证 | +0.8% |",

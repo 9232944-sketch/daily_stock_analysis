@@ -199,8 +199,8 @@ class MarketPoster:
     indices: list[tuple[str, str, str, str]] = field(default_factory=list)
     breadth: list[tuple[str, str, str]] = field(default_factory=list)
     dimensions: list[tuple[str, str, str]] = field(default_factory=list)
-    sectors: list[tuple[str, str]] = field(default_factory=list)
-    laggards: list[tuple[str, str]] = field(default_factory=list)
+    sectors: list[tuple[str, str, str]] = field(default_factory=list)
+    laggards: list[tuple[str, str, str]] = field(default_factory=list)
     funds: list[tuple[str, str, str]] = field(default_factory=list)
     focus: list[str] = field(default_factory=list)
     avoid: list[str] = field(default_factory=list)
@@ -524,6 +524,15 @@ def _positive_color_from_change(raw_change: str, change: str) -> str:
         return ""
     normalized_change = re.sub(r"[🟢🔴⚪\s]", "", change or "")
     return _opposite_color(marker_color) if normalized_change.startswith("-") else marker_color
+
+
+def _ranking_change_tone(change: str, *, positive_tone: str, negative_tone: str, default_tone: str) -> str:
+    normalized_change = (change or "").strip()
+    if normalized_change.startswith("+"):
+        return positive_tone
+    if normalized_change.startswith("-"):
+        return negative_tone
+    return default_tone
 
 
 def _has_meaningful_section(markdown_text: str, *terms: str) -> bool:
@@ -1276,7 +1285,19 @@ def _market_data(markdown_text: str, generated_on: date) -> MarketPoster:
     if sector_table:
         for row in sector_table.rows[:3]:
             if len(row) >= 3:
-                poster.sectors.append((_clean_value(row[-2], limit=20), _clean_value(row[-1], limit=12)))
+                change = _clean_value(row[-1], limit=12)
+                poster.sectors.append(
+                    (
+                        _clean_value(row[-2], limit=20),
+                        change,
+                        _ranking_change_tone(
+                            change,
+                            positive_tone=positive_color,
+                            negative_tone=_opposite_color(positive_color),
+                            default_tone=positive_color,
+                        ),
+                    )
+                )
     sector_tables = [
         table
         for table in _parse_tables(sector_section)
@@ -1285,8 +1306,18 @@ def _market_data(markdown_text: str, generated_on: date) -> MarketPoster:
     if len(sector_tables) > 1:
         for row in sector_tables[1].rows[:3]:
             if len(row) >= 3:
+                change = _clean_value(row[-1], limit=12)
                 poster.laggards.append(
-                    (_clean_value(row[-2], limit=20), _clean_value(row[-1], limit=12))
+                    (
+                        _clean_value(row[-2], limit=20),
+                        change,
+                        _ranking_change_tone(
+                            change,
+                            positive_tone=positive_color,
+                            negative_tone=_opposite_color(positive_color),
+                            default_tone=_opposite_color(positive_color),
+                        ),
+                    )
                 )
 
     catalyst_section = _section(markdown_text, "消息催化", "news catalysts", "뉴스 촉매")
@@ -1421,26 +1452,48 @@ def _market_data_from_payload(
     sectors = payload.get("sectors")
     top_sectors = sectors.get("top") if isinstance(sectors, Mapping) else None
     if isinstance(top_sectors, list):
-        exact_sectors: list[tuple[str, str]] = []
+        exact_sectors: list[tuple[str, str, str]] = []
         for item in top_sectors[:3]:
             if not isinstance(item, Mapping):
                 continue
             name = _clean_value(item.get("name"), limit=18)
             change = _signed_percent(item.get("change_pct"))
             if name:
-                exact_sectors.append((name, change))
+                exact_sectors.append(
+                    (
+                        name,
+                        change,
+                        _ranking_change_tone(
+                            change,
+                            positive_tone=positive_tone,
+                            negative_tone=negative_tone,
+                            default_tone=positive_tone,
+                        ),
+                    )
+                )
         if exact_sectors:
             poster.sectors = exact_sectors
     bottom_sectors = sectors.get("bottom") if isinstance(sectors, Mapping) else None
     if isinstance(bottom_sectors, list):
-        exact_laggards: list[tuple[str, str]] = []
+        exact_laggards: list[tuple[str, str, str]] = []
         for item in bottom_sectors[:3]:
             if not isinstance(item, Mapping):
                 continue
             name = _clean_value(item.get("name"), limit=18)
             change = _signed_percent(item.get("change_pct"))
             if name:
-                exact_laggards.append((name, change))
+                exact_laggards.append(
+                    (
+                        name,
+                        change,
+                        _ranking_change_tone(
+                            change,
+                            positive_tone=positive_tone,
+                            negative_tone=negative_tone,
+                            default_tone=negative_tone,
+                        ),
+                    )
+                )
         if exact_laggards:
             poster.laggards = exact_laggards
     return poster
@@ -1633,12 +1686,12 @@ def _market_body(data: MarketPoster, fallback_html: str, markdown_text: str) -> 
         f'<div class="metric-grid dimension-grid">{_metric_cards(data.dimensions, language=language)}</div>',
     ) if data.dimensions else ""
     sector_rows = "".join(
-        f'<div class="ranking-row"><b>{index:02d}</b><span>{_escape(name)}</span><strong>{_escape(change)}</strong></div>'
-        for index, (name, change) in enumerate(data.sectors, 1)
+        f'<div class="ranking-row"><b>{index:02d}</b><span>{_escape(name)}</span><strong class="{_escape(tone)}">{_escape(change)}</strong></div>'
+        for index, (name, change, tone) in enumerate(data.sectors, 1)
     )
     laggard_rows = "".join(
-        f'<div class="ranking-row lagging"><b>{index:02d}</b><span>{_escape(name)}</span><strong>{_escape(change)}</strong></div>'
-        for index, (name, change) in enumerate(data.laggards, 1)
+        f'<div class="ranking-row lagging"><b>{index:02d}</b><span>{_escape(name)}</span><strong class="{_escape(tone)}">{_escape(change)}</strong></div>'
+        for index, (name, change, tone) in enumerate(data.laggards, 1)
     )
     sectors = _section_html(_poster_text(language, "leaders"), "◆", f'<div class="ranking">{sector_rows}</div>') if sector_rows else ""
     laggards = _section_html(_poster_text(language, "laggards"), "◇", f'<div class="ranking">{laggard_rows}</div>') if laggard_rows else ""
@@ -1838,7 +1891,7 @@ def build_share_image_html(
     .position-box {{ overflow:hidden; border:1px solid #d5e1f0; border-radius:15px; background:#fff; }} .position-row {{ display:table; width:100%; padding:10px 18px; border-bottom:1px solid #e5ecf5; }} .position-row:last-child{{border:0}} .position-row .pill,.position-row p{{display:table-cell;vertical-align:middle}} .position-row .pill{{width:92px;padding:5px 10px;border-radius:8px;color:#fff;text-align:center;font-size:18px;font-weight:750;background:#357dea}} .position-row .pill.warning{{background:#f2a20c}} .position-row .pill.positive{{background:#13a365}} .position-row .pill.negative{{background:#eb3e47}} .position-row p{{margin:0;padding-left:16px}}
     .market-signal {{ display:table; width:calc(100% - 20px); min-height:154px; margin:0 10px 24px; padding:20px 27px; border:1px solid #bfd4f4; border-radius:22px; background:linear-gradient(135deg,#fff 0%,#f1f7ff 58%,#ecfff6 100%); box-shadow:0 12px 34px rgba(18,71,153,.08); table-layout:fixed; }} .signal-main,.market-label,.signal-guidance{{display:table-cell;vertical-align:middle}} .signal-main{{width:25%}} .market-signal span{{display:block;font-weight:750}} .market-signal strong{{color:#1768e8;font-size:74px;line-height:1.05}} .market-signal small{{font-size:30px}} .market-label{{width:19%;padding:9px 12px;border:1px solid #23ad69;border-radius:10px;color:#0d9958;text-align:center;font-size:23px;font-weight:800;background:#f1fff7}} .signal-guidance{{width:56%;padding-left:28px;color:#233653}} .signal-guidance span{{color:#1768e8;font-size:18px;letter-spacing:1px}} .signal-guidance p{{margin:6px 0 0;font-size:23px;font-weight:700;line-height:1.45}}
     .index-grid {{ display:table; width:100%; margin:0 0 24px; border-spacing:10px 0; table-layout:fixed; }} .index-card{{display:table-cell;padding:16px 18px;border:1px solid #d0dced;border-radius:18px;background:linear-gradient(160deg,#fff,#f6f9ff);box-shadow:0 8px 22px rgba(25,78,153,.05)}} .index-card span,.index-card small{{display:block}} .index-card span{{font-weight:750}} .index-card strong{{display:block;margin:8px 0 0;font-size:35px}} .index-card strong.red{{color:#ed3f36}} .index-card strong.green{{color:#0a9c58}} .index-card small{{color:#3d506f;font-size:19px}}
-    .breadth-grid .metric{{background:linear-gradient(160deg,#fff,#f7faff)}} .breadth-grid .metric strong{{font-size:29px}} .dimension-grid .metric{{height:94px;background:linear-gradient(145deg,#f7faff,#fff)}} .dimension-grid .metric strong{{font-size:33px}} .market-two-column{{display:table;width:calc(100% - 20px);margin:0 10px 24px;border-spacing:8px 0;table-layout:fixed}} .market-left,.market-right{{display:table-cell;width:50%;vertical-align:top}} .market-two-column .poster-section{{min-height:238px;margin:0;padding:20px 22px;border:1px solid #d3dfef;border-radius:19px;background:linear-gradient(160deg,#fff,#f8fbff)}} .ranking-row{{display:table;width:100%;padding:13px 0;border-bottom:1px solid #e6edf6}} .ranking-row:last-child{{border:0}} .ranking-row>*{{display:table-cell;vertical-align:middle}} .ranking-row b{{width:44px;color:#fff;border-radius:9px;text-align:center;background:linear-gradient(135deg,#1677ff,#6a5cff)}} .ranking-row:nth-child(2) b{{background:linear-gradient(135deg,#ff8a00,#ffb020)}} .ranking-row:nth-child(3) b{{background:linear-gradient(135deg,#12a66a,#37c98a)}} .ranking-row span{{padding-left:13px;font-weight:700}} .ranking-row strong{{text-align:right;color:#ed3f36}} .ranking-row.lagging b{{background:linear-gradient(135deg,#64748b,#94a3b8)}} .ranking-row.lagging strong{{color:#0a9c58}} .market-details .poster-section{{min-height:214px}} .focus-row,.fund-row{{display:table;width:100%;padding:10px 0;border-bottom:1px solid #e6edf6}} .focus-row:last-child,.fund-row:last-child{{border:0}} .focus-row b,.focus-row span,.fund-row span,.fund-row strong{{display:table-cell;vertical-align:middle}} .focus-row b{{width:66px;color:#fff;border-radius:8px;text-align:center;background:#1677ff}} .focus-row.avoid b{{background:#ef4444}} .focus-row span{{padding-left:14px;font-weight:700}} .fund-row span{{color:#52647f}} .fund-row strong{{text-align:right;color:#1768e8}} .fund-row.positive strong{{color:#0a9c58}} .fund-row.warning strong{{color:#f59e0b}} .strategy-strip{{padding:16px 22px;border:1px solid #cbdcf4;border-radius:17px;background:linear-gradient(90deg,#f6faff,#fff)}} .strategy-strip ul{{display:table;width:100%;padding-left:25px}} .strategy-strip li{{display:table-cell;width:33.33%;padding-right:20px;font-size:19px;vertical-align:top}}
+    .breadth-grid .metric{{background:linear-gradient(160deg,#fff,#f7faff)}} .breadth-grid .metric strong{{font-size:29px}} .dimension-grid .metric{{height:94px;background:linear-gradient(145deg,#f7faff,#fff)}} .dimension-grid .metric strong{{font-size:33px}} .market-two-column{{display:table;width:calc(100% - 20px);margin:0 10px 24px;border-spacing:8px 0;table-layout:fixed}} .market-left,.market-right{{display:table-cell;width:50%;vertical-align:top}} .market-two-column .poster-section{{min-height:238px;margin:0;padding:20px 22px;border:1px solid #d3dfef;border-radius:19px;background:linear-gradient(160deg,#fff,#f8fbff)}} .ranking-row{{display:table;width:100%;padding:13px 0;border-bottom:1px solid #e6edf6}} .ranking-row:last-child{{border:0}} .ranking-row>*{{display:table-cell;vertical-align:middle}} .ranking-row b{{width:44px;color:#fff;border-radius:9px;text-align:center;background:linear-gradient(135deg,#1677ff,#6a5cff)}} .ranking-row:nth-child(2) b{{background:linear-gradient(135deg,#ff8a00,#ffb020)}} .ranking-row:nth-child(3) b{{background:linear-gradient(135deg,#12a66a,#37c98a)}} .ranking-row span{{padding-left:13px;font-weight:700}} .ranking-row strong{{text-align:right}} .ranking-row strong.red{{color:#ed3f36}} .ranking-row strong.green{{color:#0a9c58}} .ranking-row.lagging b{{background:linear-gradient(135deg,#64748b,#94a3b8)}} .market-details .poster-section{{min-height:214px}} .focus-row,.fund-row{{display:table;width:100%;padding:10px 0;border-bottom:1px solid #e6edf6}} .focus-row:last-child,.fund-row:last-child{{border:0}} .focus-row b,.focus-row span,.fund-row span,.fund-row strong{{display:table-cell;vertical-align:middle}} .focus-row b{{width:66px;color:#fff;border-radius:8px;text-align:center;background:#1677ff}} .focus-row.avoid b{{background:#ef4444}} .focus-row span{{padding-left:14px;font-weight:700}} .fund-row span{{color:#52647f}} .fund-row strong{{text-align:right;color:#1768e8}} .fund-row.positive strong{{color:#0a9c58}} .fund-row.warning strong{{color:#f59e0b}} .strategy-strip{{padding:16px 22px;border:1px solid #cbdcf4;border-radius:17px;background:linear-gradient(90deg,#f6faff,#fff)}} .strategy-strip ul{{display:table;width:100%;padding-left:25px}} .strategy-strip li{{display:table-cell;width:33.33%;padding-right:20px;font-size:19px;vertical-align:top}}
     .risk-strip{{padding:16px 22px;border:1px solid #ffc5c5;border-radius:17px;background:linear-gradient(90deg,#fff3f3,#fffafa)}} .risk-strip h2{{color:#e7373f}} .risk-strip ul{{display:table;width:100%;padding-left:25px}} .risk-strip li{{display:table-cell;width:50%;padding-right:24px;font-size:19px}}
     .report-fallback {{ margin:0 10px 26px; padding:24px 28px; border:1px solid #d5e1f0; border-radius:18px; background:#fff; }} .report-content h1,.report-content h2,.report-content h3{{color:#153d78}} .report-content h2{{font-size:29px}} .report-content h3{{font-size:25px}} .report-content table{{width:100%;border-collapse:collapse;font-size:19px}} .report-content th,.report-content td{{padding:10px;border:1px solid #dbe4f1}} .report-content th{{background:#eef4fc}} .report-content blockquote{{margin:15px 0;padding:12px 18px;border-left:5px solid #4385ef;background:#f3f7fd}}
     .poster-footer {{ display:table; width:100%; margin-top:18px; padding:14px 34px 5px; border-top:1px solid #ccdaec; table-layout:fixed; }} .footer-brand,.qr-card{{display:table-cell;vertical-align:middle}} .footer-brand{{width:74%;padding-left:6px}} .footer-title{{display:flex;align-items:baseline;gap:15px}} .footer-title strong{{color:#1768e8;font-size:43px;font-style:italic;line-height:1}} .footer-title span{{font-size:24px;font-weight:800}} .footer-brand>small{{display:block;margin-top:4px;color:#536683;font-size:16px}} .repo-line{{display:flex;align-items:center;gap:9px;margin-top:11px;color:#111827}} .repo-line svg{{width:25px;height:25px;flex:none;fill:currentColor}} .repo-line div{{min-width:0}} .repo-line em,.repo-line b{{display:block;font-style:normal}} .repo-line em{{margin-bottom:1px;color:#64748b;font-size:12px;letter-spacing:.6px}} .repo-line b{{font-size:16px;line-height:1.15;white-space:nowrap}} .qr-card{{width:26%;text-align:center;font-size:16px;font-weight:750;line-height:1.2}} .qr-card>span b{{color:#ff2442}} .qr-frame{{width:132px;height:132px;margin:0 auto 5px;padding:4px;border:1px solid #d3deed;border-radius:13px;background:#fff}} .qr-frame img{{display:block;width:122px;height:122px;object-fit:contain}} .disclaimer{{margin:6px -34px -24px;padding:8px 34px;color:#285b9d;font-size:14px;text-align:center;background:#eaf3ff}}
