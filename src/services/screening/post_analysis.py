@@ -169,7 +169,9 @@ def _run_scorecard_analyzer(
 ) -> tuple[list[Pick], list[str]]:
     for idx, pick in enumerate(picks):
         if idx >= max_picks:
-            _record_post_result(pick, "scorecard", status="skipped", summary="", score_delta=0.0)
+            # Do not mark candidates beyond max_picks as "skipped" in post_analysis_status.
+            # This allows them to be eligible for near-cutoff rotation. Unanalyzed
+            # candidates are distinct from explicitly-skipped ones.
             continue
         delta, flags, tags, summary = _scorecard_delta(pick, profile=profile)
         pick.final_score = round(float(pick.final_score) + delta, 4)

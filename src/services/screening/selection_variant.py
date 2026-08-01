@@ -64,11 +64,13 @@ def apply_seeded_selection_variant(
             return not any(status == "skipped" for status in status_map.values())
 
         # If analyzers were configured, require each configured analyzer to have
-        # a non-skipped status recorded for this pick. Missing entries count as
-        # not-analyzed (treated like 'skipped').
+        # a non-skipped status recorded for this pick. Missing entries are treated
+        # as "not explicitly excluded" rather than "not analyzed", allowing candidates
+        # that exceeded the analysis cap to still participate in rotation.
         for analyzer in analyzer_names:
             s = status_map.get(analyzer)
-            if s is None or s == "skipped":
+            # Reject only if explicitly marked skipped; missing/unset is allowed.
+            if s == "skipped":
                 return False
         return True
 

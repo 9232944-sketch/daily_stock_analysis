@@ -71,7 +71,7 @@ SCREENING_EASTMONEY_JITTER_SEC=0.3
 - 有 `TUSHARE_TOKEN` 时默认优先 Tushare，否则默认从 Sina 开始；显式 `SNAPSHOT_SOURCE_PRIORITY` 始终优先。
 - 日 K 优先复用 DSA 历史行情链路，无结果时再走筛选引擎的数据源降级。
 - LLM 重排前只补充有限候选上下文，最终候选再补行情、基本面、新闻和摘要，控制请求量。
-- 模型、渠道、base URL、额外 headers、fallback、timeout 和 token 上限在单次调用范围内注入，不改写用户配置；主模型即使 HTTP 调用成功，但返回空内容、非 JSON 或覆盖率不足，也会继续尝试已配置的备用模型。兼容网关把最终 JSON 放在 `reasoning_content` 或分段 `content` 的响应。
+- 模型、渠道、base URL、额外 headers、fallback、timeout 和 token 上限在单次调用范围内注入，不改写用户配置；主模型即使 HTTP 调用成功，但返回空内容、非 JSON 或覆盖率不足，也会继续尝试已配置的备用模型。最终 JSON 必须在 `content` 块或 `output` 块中；`reasoning_content`（链式思考）被视为内部辅助，不作为最终结果。
 - 热点实时请求失败时优先使用 last-good cache；无缓存时返回稳定空态与明确错误。
 
 ## 结果轮换
