@@ -86,7 +86,8 @@ def screen(
         industry_map_files: Optional code->industry/concepts files used before L1/L2.
         industry_provider: Optional provider for board mapping, e.g. "akshare".
         post_analyzers: Optional L3 analyzers, e.g. ["scorecard", "dsa"].
-        post_analysis_max_picks: Override max number of picks sent to post analyzers.
+        post_analysis_max_picks: Override the remote post-analyzer candidate
+            cap. The local scorecard always evaluates the shortlisted pool.
         daily_enrich: Whether to enrich shortlisted candidates with daily K-line features.
         daily_enrich_max_candidates: Max candidates to enrich after snapshot filtering.
         explain_filters: Whether to include sequential hard-filter waterfall diagnostics.
@@ -471,26 +472,27 @@ def screen(
     # 11. Optional L3 post-analysis, DSA is only one possible analyzer.
     if analyzer_names:
         _emit_progress(progress_callback, 82, "正在执行最终评分与风险校验")
-        # Ensure post-analyzers run on at least the final output_count picks so
-        # that any candidate eligible for near-cutoff rotation has a recorded
-        # post-analysis status. This prevents promoting candidates that never
-        # received the same L3 treatment as protected top picks (see PR review).
+        # The local scorecard covers the complete shortlist. Remote analyzers
+        # retain their configured operational cap; the variant stage below
+        # admits only candidates that completed every configured analyzer.
         post_max_picks = (
             analyzer_max_picks
             if analyzer_max_picks is not None
             else config.post_analysis_max_picks
         )
-        # Preserve the configured operational cap for post-analysis. Do not
-        # silently raise it to output_count; if the cap is lower than the
-        # requested page size, rotation eligibility will be constrained to the
-        # analyzed subset and an explanatory degradation note is recorded.
+        # Do not silently raise the remote cap to output_count. If it is lower
+        # than the requested page size, record why rotation may be constrained.
         try:
             post_max_picks = int(post_max_picks)
         except Exception:
             post_max_picks = int(config.post_analysis_max_picks or 3)
-        if int(post_max_picks) < int(output_count):
+        capped_analyzers = [
+            name for name in analyzer_names if name in {"dsa", "external_http"}
+        ]
+        if capped_analyzers and int(post_max_picks) < int(output_count):
             degradation.append(
-                f"Post-analysis cap {post_max_picks} < requested output {output_count}; rotation eligibility constrained to analyzed picks"
+                f"Remote post-analysis cap {post_max_picks} < requested output {output_count}; "
+                "rotation eligibility constrained to remotely analyzed picks"
             )
         picks, post_degradation = run_post_analyzers(
             picks,

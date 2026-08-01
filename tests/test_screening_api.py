@@ -1288,6 +1288,83 @@ class ScreeningOpportunitiesApiTestCase(unittest.TestCase):
         self.assertNotIn("完整产业链背景", payload["route"][0]["description"])
         search_service.search_topic_news.assert_called_once()
 
+    def test_hotspot_search_excludes_missing_and_unsafe_links(self) -> None:
+        config = Config(screening_enabled=True, bocha_api_keys=["test-key"])
+        provider = screening_service.DsaEastMoneyHotspotProvider()
+        provider.hotspot_detail = MagicMock(return_value={
+            "topic": "钼",
+            "summary": "钼 当前涨跌幅 10.00%。",
+            "route": [{"title": "当日发酵", "description": "钼板块异动。", "source": "eastmoney_board_change"}],
+            "stocks": [],
+            "stock_count": 0,
+            "source_errors": [],
+        })
+        search_service = MagicMock()
+        search_service.search_topic_news.return_value = SimpleNamespace(
+            success=True,
+            provider="Bocha",
+            results=[
+                SimpleNamespace(
+                    title="没有来源链接的消息",
+                    snippet="这条结果不可验证。",
+                    url="",
+                    source="Unknown",
+                    published_date="2026-08-01",
+                ),
+                SimpleNamespace(
+                    title="不安全链接",
+                    snippet="这条结果不能作为外链展示。",
+                    url="javascript:alert(1)",
+                    source="Unknown",
+                    published_date="2026-08-01",
+                ),
+            ],
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with (
+                patch.dict(os.environ, {"SCREENING_DATA_DIR": str(Path(tmpdir) / "screening")}, clear=False),
+                patch("src.services.screening_service._get_screening_status_snapshot", return_value=({}, True, {})),
+                patch("src.services.screening_service._resolve_hotspot_provider", return_value=("akshare", provider)),
+                patch("src.services.screening_service.screening_hotspot", new=SimpleNamespace()),
+                patch("src.services.screening_service._get_dsa_search_service", return_value=search_service),
+            ):
+                payload = self._hotspot_detail(
+                    config=config,
+                    provider="akshare",
+                    topic="钼",
+                    include_search=True,
+                )
+
+        self.assertEqual(payload["news_search_status"], "no_results")
+        self.assertFalse(any(item.get("search_result") for item in payload["route"]))
+        self.assertEqual(payload["route"][0]["source"], "eastmoney_board_change")
+
+    def test_hotspot_search_skips_invalid_links_before_valid_result(self) -> None:
+        search_service = MagicMock(is_available=True)
+        search_service.search_topic_news.return_value = SimpleNamespace(
+            success=True,
+            provider="Bocha",
+            results=[
+                SimpleNamespace(title="无链接", snippet="不可验证", url=""),
+                SimpleNamespace(title="不安全链接", snippet="不可展示", url="javascript:alert(1)"),
+                SimpleNamespace(
+                    title="有效消息",
+                    snippet="有效且可验证的新闻事件。",
+                    url="https://example.com/valid-news",
+                    source="ExampleNews",
+                    published_date="2026-08-01",
+                ),
+            ],
+        )
+
+        with patch("src.services.screening_service._get_dsa_search_service", return_value=search_service):
+            routes = screening_service._build_hotspot_event_routes_from_search("钼")
+
+        self.assertEqual(len(routes), 1)
+        self.assertEqual(routes[0]["title"], "有效消息")
+        self.assertEqual(routes[0]["url"], "https://example.com/valid-news")
+
     def test_hotspot_search_does_not_pollute_or_refresh_shared_detail_cache(self) -> None:
         config = Config(screening_enabled=True, bocha_api_keys=["test-key"])
         provider = screening_service.DsaEastMoneyHotspotProvider()
@@ -1946,7 +2023,7 @@ class ScreeningOpportunitiesApiTestCase(unittest.TestCase):
         self.assertEqual(caught.exception.status_code, 424)
         self.assertEqual(caught.exception.detail["error"], "screening_unavailable")
         self.assertEqual(caught.exception.detail.get("diagnostics", {}).get("reason"), "unexpected_exception")
-        self.assertIn("内建选股引擎初始化失败", caught.exception.detail["message"])
+        self.assertIn("选股功能初始化失败", caught.exception.detail["message"])
 
     def test_start_screen_task_submits_background_work(self) -> None:
         config = self._config(enabled=True)
@@ -1991,7 +2068,7 @@ class ScreeningOpportunitiesApiTestCase(unittest.TestCase):
         fake_queue.update_task_progress.assert_any_call(
             "screen-task-1",
             20,
-            "正在执行内建选股，外部数据源较慢时会持续后台运行",
+            "正在执行选股，外部数据源较慢时会持续后台运行",
         )
         fake_queue.update_task_progress.assert_any_call(
             "screen-task-1",

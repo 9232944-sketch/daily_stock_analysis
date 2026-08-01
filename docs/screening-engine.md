@@ -6,7 +6,7 @@ DSA 将选股能力作为主项目的一部分维护。实现参考 [AlphaSift](
 
 - `src/services/screening/`：快照、日 K、策略加载、过滤、评分、风险、LLM 重排与热点实现。
 - `src/services/screening/strategies/`：随 DSA 版本发布的策略 YAML。
-- `src/services/screening/pipeline.py`：内建筛选流程的直接入口。
+- `src/services/screening/pipeline.py`：筛选流程的直接入口。
 - `src/services/screening_service.py`：DSA 业务编排，直接调用 pipeline，负责配置、数据源上下文、响应归一化、缓存与错误映射。
 - `src/storage.py`：使用 DSA 现有 SQLAlchemy/SQLite 基础设施持久化已完成的选股运行，不另建文件数据库。
 - `api/v1/endpoints/screening.py`：`/api/v1/screening` API。
@@ -74,6 +74,7 @@ SCREENING_EASTMONEY_JITTER_SEC=0.3
 - 有 `TUSHARE_TOKEN` 时默认优先 Tushare，否则默认从 Sina 开始；显式 `SNAPSHOT_SOURCE_PRIORITY` 始终优先。
 - 日 K 优先复用 DSA 历史行情链路，无结果时再走筛选引擎的数据源降级。
 - LLM 重排前只补充有限候选上下文，最终候选再补行情、基本面、新闻和摘要，控制请求量。
+- 默认本地 `scorecard` 会覆盖完整短名单，保证所有可能进入近分轮换的候选使用同一最终评分口径；`dsa` 与 `external_http` 等远程后置分析仍严格遵守 `POST_ANALYSIS_MAX_PICKS` 上限，启用远程分析时轮换只会在已完成相同分析的候选之间发生。
 - 模型、渠道、base URL、额外 headers、fallback、timeout 和 token 上限在单次调用范围内注入，不改写用户配置；主模型即使 HTTP 调用成功，但返回空内容、非 JSON 或覆盖率不足，也会继续尝试已配置的备用模型。最终 JSON 必须在 `content` 块或 `output` 块中；`reasoning_content`（链式思考）被视为内部辅助，不作为最终结果。
 - 热点榜单刷新与选股长流程可并行执行；列表默认不批量预取详情，用户选中具体题材时才加载该题材详情。
 - 热点成分股并行尝试东方财富与同花顺，任一源先返回即可继续，并在短暂合并窗口内吸收另一源结果；单源卡住不会再阻止后备源和本地核心股回退。
@@ -84,7 +85,7 @@ SCREENING_EASTMONEY_JITTER_SEC=0.3
 
 Web 会在浏览器本地生成一个不含用户信息的匿名种子，并随同步或后台选股请求传入 `variant_seed`。服务端将匿名种子与本次运行 ID、市场和策略共同作为扰动输入：不同浏览器以及同一浏览器的不同运行，都可能在质量接近的候选中看到不同股票。
 
-扰动不是随机改分，也不会绕过策略：硬过滤、风险否决、因子/LLM 得分、最终评分和组合集中度惩罚全部先执行。明显高于原 Top-N 截止分的候选继续受保护；其余名额从不低于原截止分 1.5 分的近分池中抽取，入选后仍按真实最终分排序。种子不写入选股结果或运行历史。未传 `variant_seed` 的 API 调用继续返回严格 Top-N，保持脚本与旧客户端兼容。
+扰动不是随机改分，也不会绕过策略：硬过滤、风险否决、因子/LLM 得分、最终评分和组合集中度惩罚全部先执行。默认本地评分覆盖完整短名单；启用有数量上限的远程后置分析时，只有完成相同分析的候选才可参与轮换。明显高于原 Top-N 截止分的候选继续受保护；其余名额从不低于原截止分 1.5 分的近分池中抽取，入选后仍按真实最终分排序。种子不写入选股结果或运行历史。未传 `variant_seed` 的 API 调用继续返回严格 Top-N，保持脚本与旧客户端兼容。
 
 ## 缓存与持久化
 

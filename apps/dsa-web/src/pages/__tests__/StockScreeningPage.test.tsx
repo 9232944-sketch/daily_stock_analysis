@@ -308,6 +308,14 @@ describe('StockScreeningPage', () => {
     }));
     const link = await screen.findByRole('link', { name: '查看消息' });
     expect(link).toHaveAttribute('href', 'https://example.com/ai-news');
+
+    fireEvent.click(screen.getByRole('button', { name: /收起热点题材/ }));
+    fireEvent.click(screen.getByRole('button', { name: /展开热点题材/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /AI算力/ }));
+
+    await waitFor(() => expect(screen.queryByRole('link', { name: '查看消息' })).not.toBeInTheDocument());
+    expect(screen.getByText('盘中发酵')).toBeInTheDocument();
+    expect(getHotspotDetail).toHaveBeenCalledTimes(2);
   });
 
   it('renders hotspot details as user-facing Chinese without provider internals', async () => {

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Built-in stock screening routes."""
+"""Stock screening routes."""
 
 from __future__ import annotations
 
@@ -144,7 +144,7 @@ def screening_start_screen_task(
         task_queue.update_task_progress(
             task_id,
             20,
-            "正在执行内建选股，外部数据源较慢时会持续后台运行",
+            "正在执行选股，外部数据源较慢时会持续后台运行",
         )
 
         def report_progress(progress: int, message: str) -> None:
@@ -169,7 +169,7 @@ def screening_start_screen_task(
         stock_code="screening_screen",
         stock_name=f"{request.strategy} / {request.market}",
         report_type="screening_screen",
-        message="内建选股任务已提交",
+        message="选股任务已提交",
         task_id=task_id,
         trace_id=task_id,
     )
@@ -177,7 +177,7 @@ def screening_start_screen_task(
         task_id=task.task_id,
         trace_id=task.trace_id or task.task_id,
         status=task.status.value if isinstance(task.status, QueueTaskStatus) else str(task.status),
-        message=task.message or "内建选股任务已提交",
+        message=task.message or "选股任务已提交",
         strategy=request.strategy,
         market=request.market,
         max_results=request.max_results,

@@ -85,7 +85,7 @@ def test_screening_ranker_direct_call_retries_temperature_with_param_recovery() 
     assert "temperature" not in completion_calls[1]
 
 
-def test_screening_ranker_reads_reasoning_content_when_content_is_empty() -> None:
+def test_screening_ranker_does_not_read_reasoning_content_when_content_is_empty() -> None:
     completion_calls: list[dict[str, object]] = []
 
     def completion(**kwargs):
@@ -115,6 +115,64 @@ def test_screening_ranker_reads_reasoning_content_when_content_is_empty() -> Non
     # level fallback logic to handle it instead.
     assert result == ''
     assert len(completion_calls) == 1
+
+
+def test_screening_ranker_reads_choice_content_blocks_without_changing_json() -> None:
+    expected = '{"ranked":[{"code":"600519"}]}'
+
+    def completion(**_kwargs):
+        return SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(content=""),
+                    content_blocks=[
+                        {"type": "output_text", "text": '{"ranked":[{"code":"600'},
+                        {"type": "output_text", "text": '519"}]}'},
+                    ],
+                )
+            ]
+        )
+
+    with patch.dict(sys.modules, {"litellm": SimpleNamespace(completion=completion)}, clear=False):
+        result = _call_llm(
+            "rank candidates",
+            api_key="test-key",
+            model="openai/gpt-5-mini",
+            base_url="",
+            json_mode=True,
+        )
+
+    assert result == expected
+
+
+def test_screening_ranker_ignores_thinking_blocks_in_message_content() -> None:
+    final = _ranking_response("600519")
+    draft = _ranking_response("000001")
+
+    def completion(**_kwargs):
+        return SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(
+                        content=[
+                            {"type": "thinking", "text": draft},
+                            {"type": "output_text", "text": final},
+                        ],
+                    )
+                )
+            ]
+        )
+
+    with patch.dict(sys.modules, {"litellm": SimpleNamespace(completion=completion)}, clear=False):
+        result = _call_llm(
+            "rank candidates",
+            api_key="test-key",
+            model="openai/gpt-5-mini",
+            base_url="",
+            json_mode=True,
+        )
+
+    assert result == final
 
 
 def test_screening_ranker_router_call_applies_kimi_temperature_and_recovery(tmp_path) -> None:

@@ -343,7 +343,7 @@ export function parseApiError(error: unknown): ParsedApiError {
     });
   }
 
-  if (errorCode === 'screening_unavailable' || includesAny(matchText, ['内建选股引擎初始化失败'])) {
+  if (errorCode === 'screening_unavailable' || includesAny(matchText, ['内建选股引擎初始化失败', '选股功能初始化失败'])) {
     return createParsedApiError({
       title: '选股功能未就绪',
       message: '选股功能暂不可用，请检查策略配置、数据依赖和服务日志。',

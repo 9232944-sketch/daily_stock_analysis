@@ -91,7 +91,14 @@ def run_post_analyzers(
     max_picks: int | None = None,
     scorecard_profile: dict[str, object] | None = None,
 ) -> tuple[list[Pick], list[str]]:
-    """Run selected post analyzers and re-rank by final_score."""
+    """Run selected post analyzers and re-rank by final_score.
+
+    ``max_picks`` is an operational cap for remote analyzers. The local
+    scorecard is deterministic and inexpensive, so it evaluates the complete
+    shortlisted pool. This keeps final scores comparable for every candidate
+    that may enter bounded near-score rotation without expanding remote DSA or
+    external HTTP work.
+    """
     if not picks or not analyzer_names:
         return picks, []
 
@@ -103,10 +110,9 @@ def run_post_analyzers(
             max_count = max_picks or config.post_analysis_max_picks
             result, messages = _run_dsa_analyzer(result, run_id=run_id, config=config, max_picks=max_count)
         elif analyzer == "scorecard":
-            max_count = max_picks or len(result)
             result, messages = _run_scorecard_analyzer(
                 result,
-                max_picks=max_count,
+                max_picks=len(result),
                 profile=scorecard_profile,
             )
         elif analyzer == "external_http":

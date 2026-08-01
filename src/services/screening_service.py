@@ -24,6 +24,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from queue import Empty, Queue
 from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
+from urllib.parse import urlparse
 
 from fastapi import HTTPException
 from pydantic import BaseModel, Field
@@ -357,10 +358,13 @@ def _build_hotspot_event_routes_from_search(topic: str) -> List[Dict[str, Any]]:
         return []
     today = datetime.now().date().isoformat()
     routes: List[Dict[str, Any]] = []
-    for result in list(getattr(response, "results", []) or [])[:2]:
+    for result in list(getattr(response, "results", []) or []):
         title = _env_text(getattr(result, "title", ""))
         snippet = _env_text(getattr(result, "snippet", ""))
         if not title and not snippet:
+            continue
+        url = _normalize_external_http_url(getattr(result, "url", ""))
+        if not url:
             continue
         published = _env_text(getattr(result, "published_date", ""))
         source = _env_text(getattr(result, "source", "")) or _env_text(getattr(response, "provider", "")) or "news_search"
@@ -378,10 +382,26 @@ def _build_hotspot_event_routes_from_search(topic: str) -> List[Dict[str, Any]]:
             "source": source,
             "date": date,
             "published_at": published or date,
-            "url": _env_text(getattr(result, "url", "")),
+            "url": url,
             "search_result": True,
         })
+        if len(routes) >= 2:
+            break
     return routes
+
+
+def _normalize_external_http_url(value: Any) -> str:
+    """Accept only absolute HTTP(S) links for user-visible search events."""
+    text = _env_text(value)
+    if not text:
+        return ""
+    try:
+        parsed = urlparse(text)
+    except ValueError:
+        return ""
+    if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
+        return ""
+    return text
 
 
 def _with_hotspot_search_augmentation(payload: Dict[str, Any], *, topic: str) -> Dict[str, Any]:
@@ -832,7 +852,7 @@ class ScreeningStrategyResponse(BaseModel):
 
 
 class ScreeningService:
-    """Coordinate the built-in screening engine with DSA-owned capabilities."""
+    """Coordinate stock screening with DSA-owned capabilities."""
 
     def __init__(self, config: Config, db_manager: Optional[DatabaseManager] = None):
         self.config = config
@@ -1445,7 +1465,7 @@ def _ensure_screening_available_for_use() -> None:
         return
     normalized_diagnostics = _include_screening_diagnostic_suffix(diagnostics)
     raise _screening_unavailable_exception(
-        "DSA 内建选股引擎初始化失败，请检查策略文件、依赖和服务端日志。",
+        "选股功能初始化失败，请检查策略文件、依赖和服务端日志。",
         diagnostics=normalized_diagnostics,
     )
 
@@ -1506,7 +1526,7 @@ def _call_screening_status() -> Dict[str, Any]:
     except Exception as exc:
         diagnostics = _log_unexpected_screening_exception("strategy_load", exc)
         raise _screening_unavailable_exception(
-            f"内建选股引擎状态检查失败：{exc}",
+            f"选股功能状态检查失败：{exc}",
             diagnostics=diagnostics,
         ) from exc
     return {
@@ -1553,7 +1573,7 @@ def _list_strategies() -> List[Dict[str, Any]]:
     if not isinstance(raw, list):
         raise HTTPException(
             status_code=424,
-            detail={"error": "screening_invalid_result", "message": "内建选股策略列表结构非法。"},
+            detail={"error": "screening_invalid_result", "message": "选股策略列表结构非法。"},
         )
 
     normalized: List[Dict[str, Any]] = []
@@ -3605,7 +3625,7 @@ def _ensure_supported_market(market: str) -> None:
             detail={
                 "error": "screening_invalid_market",
                 "message": (
-                    f"市场 {market} 不在内建选股引擎支持范围内"
+                    f"市场 {market} 不在选股功能支持范围内"
                     f"（支持市场：{', '.join(map(str, normalized)) or '未知'}）。"
                 ),
             },

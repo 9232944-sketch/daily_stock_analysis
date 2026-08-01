@@ -646,6 +646,25 @@ const buildHotspotPreviewDetail = (hotspot: ScreeningHotspot): ScreeningHotspotD
   };
 };
 
+const stripHotspotSearchAugmentation = (detail: ScreeningHotspotDetail): ScreeningHotspotDetail => {
+  const baseDetail: ScreeningHotspotDetail = {
+    ...detail,
+    route: (detail.route || []).filter((item) => !item.searchResult),
+    ...(detail.timeline
+      ? { timeline: detail.timeline.filter((item) => !item.searchResult) }
+      : {}),
+  };
+  delete baseDetail.newsSearchRequested;
+  delete baseDetail.newsSearchStatus;
+  return baseDetail;
+};
+
+const stripHotspotSearchAugmentationByTopic = (
+  details: Record<string, ScreeningHotspotDetail>,
+) => Object.fromEntries(
+  Object.entries(details).map(([topic, detail]) => [topic, stripHotspotSearchAugmentation(detail)]),
+) as Record<string, ScreeningHotspotDetail>;
+
 const getHotspotRouteItems = (detail: ScreeningHotspotDetail) => {
   const route = detail.route || [];
   if (route.length > 0) {
@@ -848,11 +867,14 @@ const StockScreeningPage: React.FC = () => {
       if (!canApplyRequest()) {
         return;
       }
+      const cacheableDetail = options.includeSearch
+        ? hotspotDetailsByTopicRef.current[topic] || stripHotspotSearchAugmentation(detail)
+        : stripHotspotSearchAugmentation(detail);
       hotspotDetailsByTopicRef.current = {
         ...hotspotDetailsByTopicRef.current,
-        [topic]: detail,
+        [topic]: cacheableDetail,
       };
-      setHotspotDetail(detail);
+      setHotspotDetail(options.includeSearch ? detail : cacheableDetail);
       if (options.includeSearch && detail.newsSearchStatus !== 'available') {
         setHotspotDetailError('暂未搜到该题材近期的有效消息。');
       }
@@ -901,7 +923,7 @@ const StockScreeningPage: React.FC = () => {
     try {
       const result = await screeningApi.getHotspots({ provider: 'akshare', top: 12, refresh });
       const nextHotspots = result.hotspots || [];
-      const nextDetails = result.details || {};
+      const nextDetails = stripHotspotSearchAugmentationByTopic(result.details || {});
       hotspotDetailsByTopicRef.current = {
         ...hotspotDetailsByTopicRef.current,
         ...nextDetails,

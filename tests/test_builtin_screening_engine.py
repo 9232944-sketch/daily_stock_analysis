@@ -267,6 +267,84 @@ def test_pipeline_uses_ranker_success_flag_instead_of_partial_llm_scores(monkeyp
     assert "LLM ranking failed: fell back to screen_score" in result.degradation
 
 
+def test_default_scorecard_scores_full_pool_before_seeded_rotation(monkeypatch) -> None:
+    snapshot_df = pd.DataFrame([
+        {
+            "code": f"00000{index}",
+            "name": f"Stock {index}",
+            "price": 10.0,
+            "change_pct": 1.0,
+            "amount": 200_000_000.0,
+            "raw_score": score,
+        }
+        for index, score in enumerate([84.2, 84.1, 84.0, 83.9, 83.8], start=1)
+    ])
+    snapshot_df.attrs.update({
+        "snapshot_source": "sina",
+        "source_errors": [],
+        "fallback_used": False,
+    })
+    strategy = Strategy(
+        name="demo",
+        display_name="Demo",
+        description="demo",
+        screening=ScreeningConfig(
+            enabled=True,
+            market_scope=["cn"],
+            hard_filters=HardFilterConfig(),
+            factor_weights={"value": 1.0},
+            max_output=3,
+        ),
+    )
+    config = ScreeningRuntimeConfig(
+        strategies_dir=SCREENING_ROOT / "strategies",
+        post_analyzers=["scorecard"],
+        post_analysis_max_picks=3,
+        llm_candidate_multiplier=2,
+        llm_max_candidates=10,
+        risk_enabled=False,
+        portfolio_diversity_enabled=False,
+    )
+    observed_statuses: list[list[str | None]] = []
+    original_variant = screening_pipeline.apply_seeded_selection_variant
+
+    def capture_variant(picks, **kwargs):
+        observed_statuses.append([
+            pick.post_analysis_status.get("scorecard") for pick in picks
+        ])
+        return original_variant(picks, **kwargs)
+
+    run_ids = iter(f"{index:012d}" for index in range(20))
+    monkeypatch.setattr(screening_pipeline, "load_all_strategies", lambda _path: {"demo": strategy})
+    monkeypatch.setattr(screening_pipeline, "fetch_snapshot_with_fallback", lambda *args, **kwargs: snapshot_df.copy())
+    monkeypatch.setattr(screening_pipeline, "apply_hard_filters", lambda df, _filters: df.copy())
+    monkeypatch.setattr(
+        screening_pipeline,
+        "compute_screen_scores",
+        lambda df, _screening: df.assign(screen_score=df["raw_score"]),
+    )
+    monkeypatch.setattr(screening_pipeline, "apply_dsa_provider_context", lambda picks, _context: [])
+    monkeypatch.setattr(screening_pipeline, "apply_seeded_selection_variant", capture_variant)
+    monkeypatch.setattr(screening_pipeline.uuid, "uuid4", lambda: SimpleNamespace(hex=next(run_ids)))
+
+    variants = {
+        tuple(
+            pick.code
+            for pick in screening_pipeline.screen(
+                "demo",
+                max_output=3,
+                use_llm=False,
+                selection_seed="browser-a",
+                config=config,
+            ).picks
+        )
+        for _ in range(20)
+    }
+
+    assert all(statuses == ["completed"] * 5 for statuses in observed_statuses)
+    assert len(variants) >= 2
+
+
 def test_dsa_provider_context_respects_host_max_candidates_setting() -> None:
     picks = [
         Pick(rank=index + 1, code=f"00000{index + 1}", name=f"Stock {index + 1}", final_score=90.0, screen_score=90.0)
