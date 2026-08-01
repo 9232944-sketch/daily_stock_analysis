@@ -662,7 +662,9 @@ def _coerce_completion_content(value: object) -> str:
             continue
         if isinstance(text, str):
             parts.append(text)
-    return "\n".join(parts)
+    # Join without adding characters to avoid inserting raw newlines inside
+    # JSON strings when providers segment content across blocks.
+    return "".join(parts)
 
 
 def _is_json_mode_unsupported(exc: Exception) -> bool:
