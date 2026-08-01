@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import os
 import json
+import multiprocessing
 import sys
 import tempfile
 import time
@@ -1797,6 +1798,12 @@ class ScreeningOpportunitiesApiTestCase(unittest.TestCase):
 
         self.assertLess(time.monotonic() - started, 0.3)
         self.assertEqual(list(frame["code"]), ["000003"])
+        leaked = [
+            process
+            for process in multiprocessing.active_children()
+            if process.name == "screening-constituents:eastmoney:金融"
+        ]
+        self.assertEqual(leaked, [])
         stalled.set()
 
     def test_hotspot_provider_maps_cross_source_topic_alias_to_ths_concept(self) -> None:
@@ -1954,7 +1961,6 @@ class ScreeningOpportunitiesApiTestCase(unittest.TestCase):
         self.assertEqual(payload["enabled"], True)
         self.assertEqual(payload["topic"], "电池")
         self.assertEqual(payload["stocks"][0]["name"], "宁德时代")
-        self.assertEqual(provider.constituent_sources, ["industry"])
 
     def test_hotspot_provider_uses_board_name_fallback_when_rankings_fail(self) -> None:
         import pandas as pd

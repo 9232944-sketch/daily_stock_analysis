@@ -12,6 +12,7 @@ import hashlib
 import json
 import logging
 import math
+import multiprocessing
 import os
 import re
 import threading
@@ -21,8 +22,8 @@ from contextvars import ContextVar
 from contextlib import contextmanager
 from dataclasses import asdict, is_dataclass
 from datetime import datetime, timezone
+from multiprocessing.connection import wait as wait_for_connections
 from pathlib import Path
-from queue import Empty, Queue
 from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
 from urllib.parse import urlparse
 
@@ -85,6 +86,7 @@ _SCREENING_LITELLM_COMPLETION_ROUTES: ContextVar[Optional[Tuple[Dict[str, Any], 
 )
 _SCREENING_LITELLM_COMPLETION_ATTR = "_screening_litellm_completion_bridge"
 _SCREENING_LITELLM_COMPLETION_LOCK = threading.Lock()
+_CONSTITUENT_SOURCE_PROCESS_JOIN_GRACE_SECONDS = 0.5
 
 
 def _safe_float(value: Any) -> Optional[float]:
@@ -101,6 +103,44 @@ def _safe_float(value: Any) -> Optional[float]:
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def _terminate_screening_worker_process(process: Any) -> None:
+    if process is None:
+        return
+    if process.is_alive():
+        process.terminate()
+        process.join(_CONSTITUENT_SOURCE_PROCESS_JOIN_GRACE_SECONDS)
+    if process.is_alive() and hasattr(process, "kill"):
+        process.kill()
+        process.join(_CONSTITUENT_SOURCE_PROCESS_JOIN_GRACE_SECONDS)
+
+
+def _screening_constituent_source_worker(
+    conn: Any,
+    provider_cls: type[Any],
+    method_name: str,
+    topic: str,
+    source: str,
+) -> None:
+    try:
+        provider = provider_cls()
+        method = getattr(provider, method_name)
+        if method_name == "_fetch_eastmoney_constituents":
+            result = method(topic, source=source)
+        else:
+            result = method(topic)
+        conn.send((True, result))
+    except BaseException as exc:
+        try:
+            conn.send((False, exc))
+        except BaseException:
+            try:
+                conn.send((False, RuntimeError(f"{type(exc).__name__}: {exc}")))
+            except BaseException:
+                pass
+    finally:
+        conn.close()
 
 
 def _resolve_screening_data_dir() -> Path:
@@ -2177,28 +2217,33 @@ class DsaEastMoneyHotspotProvider:
 
     def _fetch_constituent_sources(self, topic: str, *, source: str) -> List[Any]:
         """Race independent constituent sources so one stalled API cannot block fallback."""
-        fetchers: List[Tuple[str, Callable[[], Any]]] = [
-            ("eastmoney", lambda: self._fetch_eastmoney_constituents(topic, source=source)),
+        fetchers: List[Tuple[str, str]] = [
+            ("eastmoney", "_fetch_eastmoney_constituents"),
         ]
         if source == "concept":
-            fetchers.append(("ths", lambda: self._fetch_ths_constituents(topic)))
+            fetchers.append(("ths", "_fetch_ths_constituents"))
 
-        result_queue: Queue[Tuple[str, bool, Any]] = Queue()
-
-        def run(label: str, fetch: Callable[[], Any]) -> None:
-            try:
-                result_queue.put((label, True, fetch()))
-            except BaseException as exc:  # noqa: BLE001 - external source failures are isolated.
-                result_queue.put((label, False, exc))
-
-        pending = {label for label, _ in fetchers}
-        for label, fetch in fetchers:
-            threading.Thread(
-                target=run,
-                args=(label, fetch),
+        ctx = multiprocessing.get_context()
+        workers: Dict[str, Tuple[Any, Any]] = {}
+        pending: set[str] = set()
+        for label, method_name in fetchers:
+            parent_conn, child_conn = ctx.Pipe(duplex=False)
+            process = ctx.Process(
+                target=_screening_constituent_source_worker,
+                args=(child_conn, type(self), method_name, topic, source),
                 name=f"screening-constituents:{label}:{topic}",
                 daemon=True,
-            ).start()
+            )
+            try:
+                process.start()
+            except Exception as exc:  # noqa: BLE001 - degraded source start is isolated.
+                parent_conn.close()
+                child_conn.close()
+                logger.info("Screening %s constituent source failed to start for %s: %s", label, topic, exc)
+                continue
+            child_conn.close()
+            workers[label] = (process, parent_conn)
+            pending.add(label)
 
         frames: List[Any] = []
         deadline = time.monotonic() + self._CONSTITUENT_SOURCE_BUDGET_SECONDS
@@ -2209,18 +2254,35 @@ class DsaEastMoneyHotspotProvider:
             if remaining <= 0:
                 break
             try:
-                label, ok, payload = result_queue.get(timeout=remaining)
-            except Empty:
+                ready = wait_for_connections(
+                    [workers[label][1] for label in pending],
+                    timeout=remaining,
+                )
+            except Exception:
+                ready = []
+            if not ready:
                 break
-            pending.discard(label)
-            if not ok:
-                logger.info("Screening %s constituent source failed for %s: %s", label, topic, payload)
-                continue
-            if payload is None or bool(getattr(payload, "empty", False)):
-                continue
-            frames.append(payload)
-            if secondary_deadline is None and pending:
-                secondary_deadline = time.monotonic() + self._CONSTITUENT_SECONDARY_GRACE_SECONDS
+            conn_to_label = {workers[label][1]: label for label in pending}
+            for conn in ready:
+                label = conn_to_label[conn]
+                process, parent_conn = workers[label]
+                pending.discard(label)
+                try:
+                    ok, payload = parent_conn.recv()
+                except EOFError as exc:
+                    ok, payload = False, RuntimeError(f"{label} constituent source exited without a result: {exc}")
+                finally:
+                    parent_conn.close()
+                    process.join(_CONSTITUENT_SOURCE_PROCESS_JOIN_GRACE_SECONDS)
+                    _terminate_screening_worker_process(process)
+                if not ok:
+                    logger.info("Screening %s constituent source failed for %s: %s", label, topic, payload)
+                    continue
+                if payload is None or bool(getattr(payload, "empty", False)):
+                    continue
+                frames.append(payload)
+                if secondary_deadline is None and pending:
+                    secondary_deadline = time.monotonic() + self._CONSTITUENT_SECONDARY_GRACE_SECONDS
 
         if pending:
             logger.info(
@@ -2228,6 +2290,10 @@ class DsaEastMoneyHotspotProvider:
                 topic,
                 ",".join(sorted(pending)),
             )
+        for label in list(pending):
+            process, parent_conn = workers[label]
+            parent_conn.close()
+            _terminate_screening_worker_process(process)
         return frames
 
     def hotspot_detail(self, topic: str) -> Dict[str, Any]:

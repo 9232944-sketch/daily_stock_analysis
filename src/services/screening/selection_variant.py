@@ -61,18 +61,20 @@ def apply_seeded_selection_variant(
     score_gap = max(float(max_score_gap), 0.0)
     minimum_score = cutoff_score - score_gap
     # Only protect candidates whose lead over the original Top-N cutoff is
-    # larger than the full allowed sampling gap. In a genuinely near-score
-    # result, including rank 1, every slot may therefore vary between runs.
+    # larger than the full allowed sampling gap. When every Top-N candidate is
+    # within that gap, keep the leading slot fixed and rotate only the tail.
     quality_protected = [
         pick
         for pick in ordered[:output_count]
         if float(pick.final_score) > cutoff_score + score_gap
     ]
     remaining_slots = output_count - len(quality_protected)
+    minimum_position_protected = min(1, remaining_slots) if not quality_protected else 0
+    rotation_capacity = max(remaining_slots - minimum_position_protected, 0)
     rotation_slots = min(
-        remaining_slots,
+        rotation_capacity,
         max(1, int(round(output_count * max(float(rotation_ratio), 0.0)))),
-    )
+    ) if rotation_capacity > 0 else 0
     def _was_post_analyzed(pick: Pick) -> bool:
         # If analyzers were configured for this run, a pick must have explicit
         # non-skipped post-analysis results for all configured analyzers to be

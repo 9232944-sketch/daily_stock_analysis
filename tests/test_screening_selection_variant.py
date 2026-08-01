@@ -97,10 +97,12 @@ def test_selection_variant_produces_multiple_bounded_client_variants() -> None:
     assert any("000003" not in codes for codes in variants)
 
 
-def test_selection_variant_can_vary_rank_one_when_top_scores_are_close() -> None:
+def test_selection_variant_keeps_highest_scoring_pick_when_top_scores_are_close() -> None:
     close_picks = _picks()
-    close_picks[0].final_score = 84.2
-    close_picks[0].screen_score = 84.2
+    close_scores = [84.2, 84.1, 84.0, 83.9, 83.8, 82.0, 80.0]
+    for pick, score in zip(close_picks, close_scores):
+        pick.final_score = score
+        pick.screen_score = score
     variants = [
         apply_seeded_selection_variant(
             copy.deepcopy(close_picks),
@@ -111,7 +113,8 @@ def test_selection_variant_can_vary_rank_one_when_top_scores_are_close() -> None
         for index in range(30)
     ]
 
-    assert any("000001" not in {pick.code for pick in result.picks} for result in variants)
+    assert all("000001" in {pick.code for pick in result.picks} for result in variants)
+    assert any("000002" not in {pick.code for pick in result.picks} for result in variants)
     assert all(
         all(pick.final_score >= 82.5 for pick in result.picks)
         for result in variants
