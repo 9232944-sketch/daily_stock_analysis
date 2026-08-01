@@ -610,10 +610,33 @@ def _extract_completion_text(response: object) -> str:
     content = _coerce_completion_content(field("content"))
     if content.strip():
         return content
+
+    # If provider returns segmented blocks (LiteLLM, MiniMax, etc.), prefer
+    # extracting text from content_blocks before treating the response as empty.
+    content_blocks = None
+    for owner in (choice, message):
+        if isinstance(owner, dict):
+            cb = owner.get("content_blocks")
+        else:
+            cb = getattr(owner, "content_blocks", None)
+        if cb:
+            content_blocks = cb
+            break
+    if content_blocks is not None:
+        content = _coerce_completion_content(content_blocks)
+        if content.strip():
+            return content
+
     return _coerce_completion_content(field("reasoning_content"))
 
 
 def _coerce_completion_content(value: object) -> str:
+    """Coerce various completion content shapes into joined text.
+
+    Filter out non-final provider blocks (thinking/draft) by honoring the
+    block 'type' field. This prevents earlier thinking blocks from overriding
+    the model's final output when both are present.
+    """
     if isinstance(value, str):
         return value
     if not isinstance(value, list):
@@ -623,10 +646,17 @@ def _coerce_completion_content(value: object) -> str:
         if isinstance(item, str):
             parts.append(item)
             continue
+        # Determine block type and preferred text field robustly for dicts and
+        # provider objects.
         if isinstance(item, dict):
+            block_type = str(item.get("type") or "").strip().lower()
             text = item.get("text") or item.get("content")
         else:
+            block_type = str(getattr(item, "type", None) or "").strip().lower()
             text = getattr(item, "text", None) or getattr(item, "content", None)
+        # Skip thinking/diagnostic blocks; only accept final textual blocks.
+        if block_type and block_type not in {"text", "output_text"}:
+            continue
         if isinstance(text, str):
             parts.append(text)
     return "\n".join(parts)
