@@ -35,14 +35,28 @@ def apply_seeded_selection_variant(
     seed only affects which near-cutoff candidates fill the remaining slots;
     hard filters, risk vetoes, score values, and portfolio penalties are never
     changed.
+
+    Compatibility note: when the client does not provide a seed (empty string
+    or None), preserve the original pick ordering and return a strict Top-N
+    slice. This avoids silently applying the new code-based tie-breaker for
+    legacy callers that expect previous stable ordering.
     """
-    ordered = sorted(picks, key=lambda item: (-float(item.final_score), item.code))
-    output_count = min(max(int(max_output), 0), len(ordered))
     normalized_seed = str(seed or "").strip()
+
+    # Respect the original ordering when no seed is provided. This preserves
+    # backward compatibility for legacy clients that did not opt into rotation.
+    output_count = min(max(int(max_output), 0), len(picks))
     if output_count == 0:
         return SelectionVariant(picks=[])
-    if not normalized_seed or len(ordered) <= output_count or output_count < 2:
-        return SelectionVariant(picks=_rerank(ordered[:output_count]))
+    if not normalized_seed or output_count < 2 or len(picks) <= output_count:
+        # Preserve original order; just trim to requested output_count.
+        return SelectionVariant(picks=_rerank(picks[:output_count]))
+
+    # From here on the seed is non-empty and rotation logic may reorder
+    # near-cutoff candidates. Work on a deterministically ordered list so that
+    # rotation selection is stable across runs.
+    ordered = sorted(picks, key=lambda item: (-float(item.final_score), item.code))
+    output_count = min(max(int(max_output), 0), len(ordered))
 
     rotation_slots = min(
         output_count - 1,
@@ -52,6 +66,7 @@ def apply_seeded_selection_variant(
     protected = ordered[:protected_count]
     cutoff_score = float(ordered[output_count - 1].final_score)
     minimum_score = cutoff_score - max(float(max_score_gap), 0.0)
+
     def _was_post_analyzed(pick: Pick) -> bool:
         # If analyzers were configured for this run, a pick must have explicit
         # non-skipped post-analysis results for all configured analyzers to be

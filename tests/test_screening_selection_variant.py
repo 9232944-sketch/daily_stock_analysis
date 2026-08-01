@@ -35,6 +35,30 @@ def test_selection_variant_without_seed_preserves_top_n() -> None:
     assert result.applied is False
 
 
+def test_selection_variant_without_seed_preserves_top_n_with_tie() -> None:
+    """When the cutoff sits on a tie, legacy callers without a seed must get
+    the original top-N slice (no code-based tie-breaker applied).
+    """
+    picks = [
+        Pick(rank=1, code="A", name="A", screen_score=90.0, final_score=90.0),
+        Pick(rank=2, code="B", name="B", screen_score=88.0, final_score=88.0),
+        Pick(rank=3, code="C", name="C", screen_score=85.0, final_score=85.0),
+        # Tie at cutoff between C and D — legacy behavior should keep C
+        Pick(rank=4, code="D", name="D", screen_score=85.0, final_score=85.0),
+        Pick(rank=5, code="E", name="E", screen_score=80.0, final_score=80.0),
+    ]
+
+    result = apply_seeded_selection_variant(
+        picks,
+        max_output=3,
+        seed="",
+        period="2026-08-01",
+    )
+
+    assert [pick.code for pick in result.picks] == ["A", "B", "C"]
+    assert result.applied is False
+
+
 def test_selection_variant_is_stable_for_same_seed_and_period() -> None:
     first = apply_seeded_selection_variant(
         copy.deepcopy(_picks()),
