@@ -2017,6 +2017,41 @@ class TestNotificationServiceReportGeneration(unittest.TestCase):
         )
 
     @mock.patch("src.notification.get_config")
+    def test_static_text_channels_strip_hidden_market_metadata_before_sender(
+        self, mock_get_config: mock.MagicMock
+    ):
+        mock_get_config.return_value = _make_config()
+        service = NotificationService()
+        raw_content = "[dsa-market-region]: # (cn)\n\n# 🎯 Market Review\n\nBody"
+        expected = "# 🎯 Market Review\n\nBody"
+        cases = [
+            (NotificationChannel.FEISHU, "send_to_feishu"),
+            (NotificationChannel.DINGTALK, "send_to_dingtalk"),
+            (NotificationChannel.NTFY, "send_to_ntfy"),
+            (NotificationChannel.GOTIFY, "send_to_gotify"),
+            (NotificationChannel.PUSHPLUS, "send_to_pushplus"),
+            (NotificationChannel.SERVERCHAN3, "send_to_serverchan3"),
+            (NotificationChannel.CUSTOM, "send_to_custom"),
+            (NotificationChannel.ASTRBOT, "send_to_astrbot"),
+        ]
+
+        for channel, method_name in cases:
+            with self.subTest(channel=channel.value), mock.patch.object(
+                service, method_name, return_value=True
+            ) as mock_sender:
+                ok = service._send_to_static_channel(
+                    channel,
+                    raw_content,
+                    image_bytes=None,
+                    email_stock_codes=None,
+                    email_send_to_all=False,
+                    route_type="report",
+                )
+
+                self.assertTrue(ok)
+                mock_sender.assert_called_once_with(expected)
+
+    @mock.patch("src.notification.get_config")
     @mock.patch("smtplib.SMTP_SSL")
     def test_send_to_email_with_stock_group_routing(
         self, mock_smtp_ssl: mock.MagicMock, mock_get_config: mock.MagicMock

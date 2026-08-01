@@ -2523,6 +2523,7 @@ class NotificationService(
         route_type: Optional[str] = None,
     ) -> bool:
         use_image = self._should_use_image_for_channel(channel, image_bytes)
+        sanitized_content = strip_hidden_markdown_metadata(content).strip()
         if channel == NotificationChannel.WECHAT:
             if use_image:
                 return self._send_wechat_image(image_bytes)
@@ -2534,9 +2535,9 @@ class NotificationService(
                     content, filename=f"report_{date_str}.md"
                 )
                 return self.send_feishu_file(filepath)
-            return self.send_to_feishu(content)
+            return self.send_to_feishu(sanitized_content)
         if channel == NotificationChannel.DINGTALK:
-            return self.send_to_dingtalk(content)
+            return self.send_to_dingtalk(sanitized_content)
         if channel == NotificationChannel.TELEGRAM:
             if use_image:
                 return self._send_telegram_photo(image_bytes)
@@ -2550,23 +2551,23 @@ class NotificationService(
             if use_image:
                 return self._send_email_with_inline_image(image_bytes, receivers=receivers)
             return self.send_to_email(
-                strip_hidden_markdown_metadata(content).strip(),
+                sanitized_content,
                 receivers=receivers,
             )
         if channel == NotificationChannel.PUSHOVER:
             return self.send_to_pushover(content)
         if channel == NotificationChannel.NTFY:
-            return self.send_to_ntfy(content)
+            return self.send_to_ntfy(sanitized_content)
         if channel == NotificationChannel.GOTIFY:
-            return self.send_to_gotify(content)
+            return self.send_to_gotify(sanitized_content)
         if channel == NotificationChannel.PUSHPLUS:
-            return self.send_to_pushplus(content)
+            return self.send_to_pushplus(sanitized_content)
         if channel == NotificationChannel.SERVERCHAN3:
-            return self.send_to_serverchan3(content)
+            return self.send_to_serverchan3(sanitized_content)
         if channel == NotificationChannel.CUSTOM:
             if use_image:
                 return self._send_custom_webhook_image(image_bytes, fallback_content=content)
-            return self.send_to_custom(content)
+            return self.send_to_custom(sanitized_content)
         if channel == NotificationChannel.DISCORD:
             return self.send_to_discord(content)
         if channel == NotificationChannel.SLACK:
@@ -2574,7 +2575,7 @@ class NotificationService(
                 return self._send_slack_image(image_bytes, fallback_content=content)
             return self.send_to_slack(content)
         if channel == NotificationChannel.ASTRBOT:
-            return self.send_to_astrbot(content)
+            return self.send_to_astrbot(sanitized_content)
         logger.warning(f"不支持的通知渠道: {channel}")
         return False
 

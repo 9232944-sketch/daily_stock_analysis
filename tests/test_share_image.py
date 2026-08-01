@@ -322,6 +322,39 @@ def test_market_share_image_merges_partial_structured_indices_with_markdown_fall
     assert "+3.06%" in html
 
 
+def test_market_share_image_merges_partial_structured_breadth_with_markdown_fallback():
+    payload = {
+        "kind": "market_review",
+        "region": "cn",
+        "breadth": {
+            "up_count": 3200,
+            "total_amount": 12500,
+            "turnover_unit": "亿元",
+        },
+    }
+
+    html = build_share_image_html(
+        """# A股大盘复盘
+
+## 盘面总览
+
+| 指标 | 数值 |
+| --- | --- |
+| 上涨/下跌 | 3000 / 1800 |
+| 涨停/跌停 | 80 / 6 |
+| 两市成交额 | 1.10万亿 |
+""",
+        generated_on=date(2026, 8, 1),
+        structured_payload=payload,
+    )
+
+    assert "3200" in html
+    assert "1800" in html
+    assert "80" in html
+    assert "6" in html
+    assert "1.25万亿" in html
+
+
 def test_market_share_image_uses_payload_color_scheme_for_sector_rankings():
     payload = {
         "kind": "market_review",

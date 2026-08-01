@@ -26,6 +26,7 @@ from src.formatters import (
     PAGE_MARKER_SAFE_BYTES,
     chunk_content_by_max_bytes,
     format_feishu_markdown,
+    strip_hidden_markdown_metadata,
 )
 
 logger = logging.getLogger(__name__)
@@ -371,9 +372,10 @@ class FeishuSender:
         if content is None:
             logger.error("send_to_feishu: content 不能为 None")
             return False
+        sanitized_content = strip_hidden_markdown_metadata(content).strip()
         if self._feishu_url:
-            return self._send_via_webhook(content, timeout_seconds=timeout_seconds)
-        return self._send_via_app_bot(content)
+            return self._send_via_webhook(sanitized_content, timeout_seconds=timeout_seconds)
+        return self._send_via_app_bot(sanitized_content)
 
     def send_feishu_file(self, file_path: str) -> bool:
         """

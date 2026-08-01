@@ -334,6 +334,16 @@ class TestFeishuSender(unittest.TestCase):
         result = sender.send_to_feishu("hello")
         self.assertTrue(result)
 
+    @mock.patch.object(FeishuSender, "_send_via_webhook", return_value=True)
+    def test_send_strips_hidden_market_region_metadata_before_routing(self, mock_send):
+        cfg = _config(feishu_webhook_url="https://feishu.example/hook")
+        sender = FeishuSender(cfg)
+
+        result = sender.send_to_feishu("[dsa-market-region]: # (us)\n\n# 🎯 Market Review\n\nBody")
+
+        self.assertTrue(result)
+        mock_send.assert_called_once_with("# 🎯 Market Review\n\nBody", timeout_seconds=None)
+
     @mock.patch("src.notification_sender.feishu_sender.requests.post")
     def test_send_http_error_returns_false(self, mock_post):
         mock_post.return_value = _response(400)
@@ -1049,6 +1059,20 @@ class TestNtfySender(unittest.TestCase):
         self.assertFalse(call_kw["verify"])
 
     @mock.patch("src.notification_sender.ntfy_sender.requests.post")
+    def test_send_strips_hidden_market_region_metadata_from_message(self, mock_post):
+        mock_post.return_value = _response(200)
+        cfg = _config(ntfy_url="https://ntfy.sh/dsa-topic")
+        sender = NtfySender(cfg)
+
+        result = sender.send_to_ntfy("[dsa-market-region]: # (cn)\n\n# 🎯 Market Review\n\nBody")
+
+        self.assertTrue(result)
+        self.assertEqual(
+            mock_post.call_args.kwargs["json"]["message"],
+            "# 🎯 Market Review\n\nBody",
+        )
+
+    @mock.patch("src.notification_sender.ntfy_sender.requests.post")
     def test_send_supports_self_hosted_path_prefix(self, mock_post):
         mock_post.return_value = _response(200)
         cfg = _config(ntfy_url="https://example.com/ntfy/dsa-topic")
@@ -1156,6 +1180,20 @@ class TestGotifySender(unittest.TestCase):
         self.assertFalse(call_kw["verify"])
 
     @mock.patch("src.notification_sender.gotify_sender.requests.post")
+    def test_send_strips_hidden_market_region_metadata_from_message(self, mock_post):
+        mock_post.return_value = _response(200)
+        cfg = _config(gotify_url="https://gotify.example", gotify_token="secret-token")
+        sender = GotifySender(cfg)
+
+        result = sender.send_to_gotify("[dsa-market-region]: # (cn)\n\n# 🎯 Market Review\n\nBody")
+
+        self.assertTrue(result)
+        self.assertEqual(
+            mock_post.call_args.kwargs["json"]["message"],
+            "# 🎯 Market Review\n\nBody",
+        )
+
+    @mock.patch("src.notification_sender.gotify_sender.requests.post")
     def test_send_supports_reverse_proxy_path_prefix(self, mock_post):
         mock_post.return_value = _response(200)
         cfg = _config(gotify_url="https://example.com/gotify", gotify_token="secret-token")
@@ -1207,6 +1245,20 @@ class TestAstrbotSender(unittest.TestCase):
         self.assertTrue(result)
         self.assertEqual(mock_post.call_args[0][0], "https://astrbot.example/api")
 
+    @mock.patch("src.notification_sender.astrbot_sender.requests.post")
+    def test_send_strips_hidden_market_region_metadata_before_html_conversion(self, mock_post):
+        mock_post.return_value = _response(200)
+        cfg = _config(astrbot_url="https://astrbot.example/api")
+        sender = AstrbotSender(cfg)
+
+        result = sender.send_to_astrbot("[dsa-market-region]: # (us)\n\n# 🎯 Market Review\n\nBody")
+
+        self.assertTrue(result)
+        payload = mock_post.call_args.kwargs["json"]["content"]
+        self.assertNotIn("[dsa-market-region]", payload)
+        self.assertIn("Market Review", payload)
+        self.assertIn("Body", payload)
+
 
 class TestCustomWebhookSender(unittest.TestCase):
     """Unit tests for CustomWebhookSender."""
@@ -1226,6 +1278,20 @@ class TestCustomWebhookSender(unittest.TestCase):
         self.assertTrue(result)
         body = mock_post.call_args[1]["data"].decode("utf-8")
         self.assertIn("hello", body)
+
+    @mock.patch("src.notification_sender.custom_webhook_sender.requests.post")
+    def test_send_strips_hidden_market_region_metadata_from_payload(self, mock_post):
+        mock_post.return_value = _response(200)
+        cfg = _config(custom_webhook_urls=["https://example.com/webhook"])
+        sender = CustomWebhookSender(cfg)
+
+        result = sender.send_to_custom("[dsa-market-region]: # (cn)\n\n# 🎯 Market Review\n\nBody")
+
+        self.assertTrue(result)
+        body = mock_post.call_args.kwargs["data"].decode("utf-8")
+        self.assertNotIn("[dsa-market-region]", body)
+        self.assertIn("Market Review", body)
+        self.assertIn("Body", body)
 
     @mock.patch("src.notification_sender.custom_webhook_sender.requests.post")
     def test_send_returns_true_when_one_custom_webhook_succeeds(self, mock_post):
@@ -1481,6 +1547,20 @@ class TestPushplusSender(unittest.TestCase):
         result = sender.send_to_pushplus("hello")
         self.assertTrue(result)
 
+    @mock.patch("src.notification_sender.pushplus_sender.requests.post")
+    def test_send_strips_hidden_market_region_metadata_from_content(self, mock_post):
+        mock_post.return_value = _response(200, {"code": 200})
+        cfg = _config(pushplus_token="TOKEN")
+        sender = PushplusSender(cfg)
+
+        result = sender.send_to_pushplus("[dsa-market-region]: # (cn)\n\n# 🎯 Market Review\n\nBody")
+
+        self.assertTrue(result)
+        self.assertEqual(
+            mock_post.call_args.kwargs["json"]["content"],
+            "# 🎯 Market Review\n\nBody",
+        )
+
     @mock.patch("src.notification_sender.pushplus_sender.time.sleep")
     @mock.patch("src.notification_sender.pushplus_sender.requests.post")
     def test_send_long_message_chunks_pushplus_requests(self, mock_post, _mock_sleep):
@@ -1510,6 +1590,20 @@ class TestServerchan3Sender(unittest.TestCase):
         sender = Serverchan3Sender(cfg)
         result = sender.send_to_serverchan3("hello")
         self.assertTrue(result)
+
+    @mock.patch("src.notification_sender.serverchan3_sender.requests.post")
+    def test_send_strips_hidden_market_region_metadata_from_desp(self, mock_post):
+        mock_post.return_value = _response(200, {"code": 0})
+        cfg = _config(serverchan3_sendkey="SCT123")
+        sender = Serverchan3Sender(cfg)
+
+        result = sender.send_to_serverchan3("[dsa-market-region]: # (us)\n\n# 🎯 Market Review\n\nBody")
+
+        self.assertTrue(result)
+        self.assertEqual(
+            mock_post.call_args.kwargs["json"]["desp"],
+            "# 🎯 Market Review\n\nBody",
+        )
 
 
 class TestSlackSender(unittest.TestCase):

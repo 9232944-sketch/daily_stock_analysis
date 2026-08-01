@@ -1549,7 +1549,7 @@ def _market_data_from_payload(
             ) if item[1]
         ]
         if exact_breadth:
-            poster.breadth = exact_breadth
+            poster.breadth = _merge_metrics(poster.breadth, exact_breadth)
 
     sectors = payload.get("sectors")
     top_sectors = sectors.get("top") if isinstance(sectors, Mapping) else None
