@@ -734,7 +734,8 @@ class NotificationService(
         feishu_info = self._extract_feishu_reply_info()
         if feishu_info:
             try:
-                if self._send_feishu_stream_reply(feishu_info["chat_id"], content):
+                sanitized_content = strip_hidden_markdown_metadata(content).strip()
+                if self._send_feishu_stream_reply(feishu_info["chat_id"], sanitized_content):
                     logger.info("已通过飞书会话（Stream）推送报告")
                     success = True
                 else:
@@ -788,6 +789,7 @@ class NotificationService(
 
             # 飞书文本消息有长度限制，需要分批发送
             max_bytes = getattr(config, 'feishu_max_bytes', 20000)
+            content = strip_hidden_markdown_metadata(content).strip()
             content_bytes = len(content.encode('utf-8'))
 
             if content_bytes > max_bytes:

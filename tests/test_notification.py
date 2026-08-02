@@ -329,7 +329,10 @@ class TestNotificationServiceSendToMethods(unittest.TestCase):
         mock_custom.assert_not_called()
 
     @mock.patch("src.notification.get_config")
-    def test_feishu_context_response_skips_static_webhook(self, mock_get_config: mock.MagicMock):
+    def test_feishu_context_response_strips_hidden_metadata_and_skips_static_webhook(
+        self,
+        mock_get_config: mock.MagicMock,
+    ):
         cfg = _make_config(
             feishu_webhook_url="https://open.feishu.cn/open-apis/bot/v2/hook/test-token",
             feishu_app_id="cli_test",
@@ -337,17 +340,43 @@ class TestNotificationServiceSendToMethods(unittest.TestCase):
         )
         mock_get_config.return_value = cfg
         service = NotificationService(source_message=_make_feishu_message())
+        content = "[dsa-market-region]: # (cn)\n\n# 市场复盘\n\n正文"
 
         with mock.patch.object(service, "_send_feishu_stream_reply", return_value=True) as mock_reply, \
              mock.patch.object(service, "send_to_feishu", return_value=True) as mock_webhook:
-            result = service.send_with_results("content", route_type="report")
+            result = service.send_with_results(content, route_type="report")
 
         self.assertTrue(result.dispatched)
         self.assertTrue(result.success)
         self.assertEqual(result.status, "sent")
         self.assertEqual([item.channel for item in result.channel_results], ["__context__"])
-        mock_reply.assert_called_once_with("chat-1", "content")
+        mock_reply.assert_called_once_with("chat-1", "# 市场复盘\n\n正文")
         mock_webhook.assert_not_called()
+
+    @mock.patch("src.notification.get_config")
+    def test_send_feishu_stream_reply_strips_hidden_metadata_before_chunking(
+        self,
+        mock_get_config: mock.MagicMock,
+    ):
+        cfg = _make_config(
+            feishu_app_id="cli_test",
+            feishu_app_secret="app-secret",
+            feishu_max_bytes=10,
+        )
+        mock_get_config.return_value = cfg
+        service = NotificationService()
+        reply_client = mock.MagicMock()
+        content = "[dsa-market-region]: # (cn)\n\n# 市场复盘\n\n正文"
+
+        with mock.patch("bot.platforms.feishu_stream.FEISHU_SDK_AVAILABLE", True), \
+             mock.patch("src.config.get_config", return_value=cfg), \
+             mock.patch("bot.platforms.feishu_stream.FeishuReplyClient", return_value=reply_client), \
+             mock.patch.object(service, "_send_feishu_stream_chunked", return_value=True) as mock_chunked:
+            result = service._send_feishu_stream_reply("chat-1", content)
+
+        self.assertTrue(result)
+        mock_chunked.assert_called_once_with(reply_client, "chat-1", "# 市场复盘\n\n正文", 10)
+        reply_client.send_to_chat.assert_not_called()
 
     @mock.patch("src.notification.get_config")
     def test_feishu_context_failure_does_not_fallback_to_static_webhook(self, mock_get_config: mock.MagicMock):
