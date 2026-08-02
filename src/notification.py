@@ -2532,7 +2532,7 @@ class NotificationService(
             if getattr(self, "_feishu_send_as_file", False) and route_type == "report":
                 date_str = datetime.now().strftime('%Y%m%d')
                 filepath = self.save_report_to_file(
-                    content, filename=f"report_{date_str}.md"
+                    sanitized_content, filename=f"report_{date_str}.md"
                 )
                 return self.send_feishu_file(filepath)
             return self.send_to_feishu(sanitized_content)
@@ -2877,7 +2877,10 @@ class NotificationService(
         Returns:
             Whether the Feishu file upload succeeded.
         """
-        filepath = self.save_report_to_file(content, filename=filename)
+        filepath = self.save_report_to_file(
+            strip_hidden_markdown_metadata(content).strip(),
+            filename=filename,
+        )
         logger.info("将上传文件到飞书: %s", filepath)
         return self.send_feishu_file(filepath)
 

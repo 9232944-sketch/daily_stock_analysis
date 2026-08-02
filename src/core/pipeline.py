@@ -3636,7 +3636,8 @@ class StockAnalysisPipeline:
                             if getattr(self.notifier, "_feishu_send_as_file", False):
                                 date_str = datetime.now().strftime('%Y%m%d')
                                 filepath = self.notifier.save_report_to_file(
-                                    report, filename=f"dashboard_{date_str}.md"
+                                    strip_hidden_markdown_metadata(report).strip(),
+                                    filename=f"dashboard_{date_str}.md",
                                 )
                                 return self.notifier.send_feishu_file(filepath)
                             return self.notifier.send_to_feishu(report)

@@ -18,6 +18,7 @@ describe('ShareImageButton', () => {
     vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:share-image');
     vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
     vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
+    Object.defineProperty(window, 'dsaDesktop', { configurable: true, value: undefined });
     Object.defineProperty(navigator, 'share', { configurable: true, value: undefined });
     Object.defineProperty(navigator, 'canShare', { configurable: true, value: undefined });
   });
@@ -107,6 +108,25 @@ describe('ShareImageButton', () => {
     );
 
     expect(await screen.findByRole('button', { name: '重试' })).toBeInTheDocument();
+  });
+
+  it('does not render or prefetch share images during desktop runtime', () => {
+    mockedGetShareImage.mockResolvedValue(new Blob(['png'], { type: 'image/png' }));
+    Object.defineProperty(window, 'dsaDesktop', {
+      configurable: true,
+      value: { version: '1.0.0' },
+    });
+
+    render(
+      <ShareImageButton
+        recordId={23}
+        reportTitle="桌面端报告"
+        reportLanguage="zh"
+      />,
+    );
+
+    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+    expect(mockedGetShareImage).not.toHaveBeenCalled();
   });
 
   it('clears the previous success reset timer when switching to another record', async () => {

@@ -774,6 +774,25 @@ class TestFeishuSender(unittest.TestCase):
         self.assertIn("**Test Report**", rendered)
 
     @mock.patch("src.notification_sender.feishu_sender.Path")
+    @mock.patch("src.notification_sender.feishu_sender.requests.post")
+    def test_send_feishu_file_webhook_strips_hidden_metadata_from_file_content(self, mock_post, mock_path_cls):
+        mock_post.return_value = _response(200, {"code": 0})
+        mock_path = mock_path_cls.return_value
+        mock_path.is_file.return_value = True
+        mock_path.name = "report.md"
+        mock_path.suffix = ".md"
+        mock_path.read_text.return_value = "[dsa-market-region]: # (cn)\n\n# Test Report\n\nHello"
+        cfg = _config(feishu_webhook_url="https://feishu.example/hook")
+        sender = FeishuSender(cfg)
+
+        result = sender.send_feishu_file("/tmp/report.md")
+
+        self.assertTrue(result)
+        rendered = mock_post.call_args.kwargs["json"]["card"]["elements"][0]["text"]["content"]
+        self.assertNotIn("[dsa-market-region]", rendered)
+        self.assertIn("**Test Report**", rendered)
+
+    @mock.patch("src.notification_sender.feishu_sender.Path")
     def test_send_feishu_file_webhook_unreadable_file_returns_false(self, mock_path_cls):
         """Webhook fallback returns False when the file cannot be read."""
         mock_path = mock_path_cls.return_value
@@ -828,6 +847,55 @@ class TestFeishuSender(unittest.TestCase):
         self.assertEqual(mock_raw.call_args[0][1], "file")
         content_json = json.loads(mock_raw.call_args[0][2])
         self.assertEqual(content_json["file_key"], "file_key_abc")
+
+    @mock.patch("src.notification_sender.feishu_sender._CreateFileRequestBody", create=True)
+    @mock.patch("src.notification_sender.feishu_sender._CreateFileRequest", create=True)
+    @mock.patch("src.notification_sender.feishu_sender.FEISHU_FILE_SDK_AVAILABLE", True)
+    @mock.patch("src.notification_sender.feishu_sender.tempfile.NamedTemporaryFile")
+    def test_send_feishu_file_app_bot_strips_hidden_metadata_before_upload(self, mock_tmpfile, *_):
+        mock_path = mock.MagicMock()
+        mock_path.is_file.return_value = True
+        mock_path.name = "report.md"
+        mock_path.suffix = ".md"
+        mock_path.read_text.return_value = "[dsa-market-region]: # (cn)\n\n# Test Report\n\nHello"
+
+        temp_handle = mock.MagicMock()
+        temp_handle.name = "/tmp/feishu_sanitized.md"
+        temp_handle.__enter__.return_value = temp_handle
+        temp_handle.__exit__.return_value = None
+        mock_tmpfile.return_value = temp_handle
+
+        sanitized_path = mock.MagicMock()
+        sanitized_path.name = "feishu_sanitized.md"
+        sanitized_path.suffix = ".md"
+        sanitized_path.open.return_value.__enter__.return_value = mock.MagicMock()
+        sanitized_path.unlink.return_value = None
+
+        with mock.patch("src.notification_sender.feishu_sender.Path", side_effect=[mock_path, sanitized_path]):
+            cfg = _config(
+                feishu_app_id="cli_app",
+                feishu_app_secret="secret",
+                feishu_chat_id="oc_chat",
+            )
+            sender = FeishuSender(cfg)
+            dummy_client = mock.MagicMock()
+            file_resp = mock.MagicMock()
+            file_resp.success.return_value = True
+            file_resp.code = 0
+            file_resp.msg = "ok"
+            file_resp.data.file_key = "file_key_abc"
+            dummy_client.im.v1.file.create.return_value = file_resp
+            with mock.patch.object(FeishuSender, "_ensure_app_client", return_value=dummy_client), \
+                 mock.patch.object(FeishuSender, "_app_send_raw", return_value=True):
+                result = sender.send_feishu_file("/tmp/report.md")
+
+        self.assertTrue(result)
+        temp_handle.write.assert_called_once()
+        written_content = temp_handle.write.call_args.args[0]
+        self.assertNotIn("[dsa-market-region]", written_content)
+        self.assertIn("# Test Report", written_content)
+        sanitized_path.open.assert_called_once()
+        sanitized_path.unlink.assert_called_once()
 
     @mock.patch("src.notification_sender.feishu_sender._CreateFileRequestBody", create=True)
     @mock.patch("src.notification_sender.feishu_sender._CreateFileRequest", create=True)

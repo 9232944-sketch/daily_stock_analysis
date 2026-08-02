@@ -6,6 +6,10 @@ import type { ReportLanguage } from '../../types/analysis';
 import { getReportText, normalizeReportLanguage } from '../../utils/reportLanguage';
 import { Tooltip } from '../common/Tooltip';
 
+type DesktopWindow = Window & {
+  dsaDesktop?: unknown;
+};
+
 type ShareState = 'idle' | 'loading' | 'success' | 'error';
 
 interface ShareImageButtonProps {
@@ -35,21 +39,23 @@ export const ShareImageButton: React.FC<ShareImageButtonProps> = ({
   reportLanguage = 'zh',
   className = '',
 }) => {
+  const isDesktopRuntime = typeof window !== 'undefined' && Boolean((window as DesktopWindow).dsaDesktop);
+  const activeRecordId = isDesktopRuntime ? undefined : recordId;
   const text = getReportText(normalizeReportLanguage(reportLanguage));
   const [stateSnapshot, setStateSnapshot] = useState<{
     recordId?: number;
     state: ShareState;
   }>(() => ({
-    recordId,
-    state: recordId === undefined ? 'idle' : 'loading',
+    recordId: activeRecordId,
+    state: activeRecordId === undefined ? 'idle' : 'loading',
   }));
   const resetTimerRef = useRef<number | null>(null);
   const loadTokenRef = useRef(0);
   const cachedImageRef = useRef<{ recordId: number; blob: Blob } | null>(null);
-  const state = stateSnapshot.recordId === recordId ? stateSnapshot.state : 'loading';
+  const state = stateSnapshot.recordId === activeRecordId ? stateSnapshot.state : 'loading';
   const setState = useCallback((nextState: ShareState) => {
-    setStateSnapshot({ recordId, state: nextState });
-  }, [recordId]);
+    setStateSnapshot({ recordId: activeRecordId, state: nextState });
+  }, [activeRecordId]);
   const clearResetTimer = useCallback(() => {
     if (resetTimerRef.current !== null) {
       window.clearTimeout(resetTimerRef.current);
@@ -64,7 +70,7 @@ export const ShareImageButton: React.FC<ShareImageButtonProps> = ({
 
   const scheduleReset = useCallback(() => {
     clearResetTimer();
-    const scheduledRecordId = recordId;
+    const scheduledRecordId = activeRecordId;
     resetTimerRef.current = window.setTimeout(() => {
       setStateSnapshot((current) => (
         current.recordId === scheduledRecordId
@@ -72,37 +78,37 @@ export const ShareImageButton: React.FC<ShareImageButtonProps> = ({
           : current
       ));
     }, 2200);
-  }, [clearResetTimer, recordId]);
+  }, [activeRecordId, clearResetTimer]);
 
   const prepareShareImage = useCallback(() => {
-    if (recordId === undefined) return;
+    if (activeRecordId === undefined) return;
 
     const loadToken = loadTokenRef.current + 1;
     loadTokenRef.current = loadToken;
     cachedImageRef.current = null;
     setState('loading');
 
-    void historyApi.getShareImage(recordId).then((blob) => {
+    void historyApi.getShareImage(activeRecordId).then((blob) => {
       if (loadTokenRef.current !== loadToken) return;
-      cachedImageRef.current = { recordId, blob };
+      cachedImageRef.current = { recordId: activeRecordId, blob };
       setState('idle');
     }).catch((error: unknown) => {
       if (loadTokenRef.current !== loadToken) return;
       console.error('Generate share image failed:', error);
       setState('error');
     });
-  }, [recordId, setState]);
+  }, [activeRecordId, setState]);
 
   useEffect(() => {
     clearResetTimer();
-    if (recordId === undefined) return undefined;
+    if (activeRecordId === undefined) return undefined;
 
     const loadToken = loadTokenRef.current + 1;
     loadTokenRef.current = loadToken;
     cachedImageRef.current = null;
-    void historyApi.getShareImage(recordId).then((blob) => {
+    void historyApi.getShareImage(activeRecordId).then((blob) => {
       if (loadTokenRef.current !== loadToken) return;
-      cachedImageRef.current = { recordId, blob };
+      cachedImageRef.current = { recordId: activeRecordId, blob };
       setState('idle');
     }).catch((error: unknown) => {
       if (loadTokenRef.current !== loadToken) return;
@@ -114,18 +120,18 @@ export const ShareImageButton: React.FC<ShareImageButtonProps> = ({
       clearResetTimer();
       loadTokenRef.current += 1;
     };
-  }, [clearResetTimer, recordId, setState]);
+  }, [activeRecordId, clearResetTimer, setState]);
 
   const handleShare = useCallback(async () => {
-    if (recordId === undefined || state === 'loading') return;
+    if (activeRecordId === undefined || state === 'loading') return;
     const cachedImage = cachedImageRef.current;
-    if (!cachedImage || cachedImage.recordId !== recordId) {
+    if (!cachedImage || cachedImage.recordId !== activeRecordId) {
       prepareShareImage();
       return;
     }
 
     const blob = cachedImage.blob;
-    const filename = `${safeFilenamePart(reportTitle)}-${recordId}.png`;
+    const filename = `${safeFilenamePart(reportTitle)}-${activeRecordId}.png`;
     const file = new File([blob], filename, { type: 'image/png' });
     const canShareFile = typeof navigator.share === 'function'
       && typeof navigator.canShare === 'function'
@@ -159,9 +165,9 @@ export const ShareImageButton: React.FC<ShareImageButtonProps> = ({
       console.error('Generate share image failed:', error);
       setState('error');
     }
-  }, [prepareShareImage, recordId, reportTitle, scheduleReset, setState, state]);
+  }, [activeRecordId, prepareShareImage, reportTitle, scheduleReset, setState, state]);
 
-  if (recordId === undefined) return null;
+  if (activeRecordId === undefined) return null;
 
   const tooltipText = state === 'loading'
     ? text.generatingShareImage

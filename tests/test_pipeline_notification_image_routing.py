@@ -7,6 +7,7 @@ import os
 import sys
 import unittest
 from types import SimpleNamespace
+from unittest import mock
 from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -430,7 +431,6 @@ class TestPipelineReportRouteFiltering(unittest.TestCase):
             snapshot = current_diagnostic_snapshot() or {}
         finally:
             reset_run_diagnostic_context(token)
-
         notification_runs = snapshot.get("notification_runs", [])
         self.assertEqual([run.get("channel") for run in notification_runs], ["__context__", "telegram"])
         self.assertTrue(notification_runs[0]["success"])
@@ -553,6 +553,45 @@ class TestPipelineReportRouteFiltering(unittest.TestCase):
             "telegram",
             summary["components"]["notification"]["details"]["failed"],
         )
+
+
+class _FakeFeishuFileNotifier:
+    def __init__(self):
+        self._markdown_to_image_channels = set()
+        self._markdown_to_image_max_chars = 15000
+        self._feishu_send_as_file = True
+        self.generate_dashboard_report = MagicMock(
+            return_value="[dsa-market-region]: # (cn)\n\n# 市场复盘\n\n正文"
+        )
+        self.save_report_to_file = MagicMock(return_value="/tmp/dashboard_20260802.md")
+        self.is_available = MagicMock(return_value=True)
+        self.get_available_channels = MagicMock(return_value=[NotificationChannel.FEISHU])
+        self.get_channels_for_route = MagicMock(return_value=[NotificationChannel.FEISHU])
+        self.send_to_context = MagicMock(return_value=False)
+        self.evaluate_noise_control = MagicMock(
+            return_value=SimpleNamespace(should_send=True, message="")
+        )
+        self.record_noise_control = MagicMock()
+        self.release_noise_control = MagicMock()
+        self.send_feishu_file = MagicMock(return_value=True)
+        self.send_to_feishu = MagicMock(return_value=True)
+
+
+class TestPipelineFeishuFileRouting(unittest.TestCase):
+    def test_send_notifications_strips_hidden_market_metadata_before_saving_feishu_file(self):
+        pipeline = StockAnalysisPipeline.__new__(StockAnalysisPipeline)
+        pipeline.notifier = _FakeFeishuFileNotifier()
+        pipeline.config = SimpleNamespace(stock_email_groups=[])
+        results = [SimpleNamespace(code="000001")]
+
+        pipeline._send_notifications(results, ReportType.SIMPLE)
+
+        pipeline.notifier.save_report_to_file.assert_called_once_with(
+            "# 市场复盘\n\n正文",
+            filename=mock.ANY,
+        )
+        pipeline.notifier.send_feishu_file.assert_called_once_with("/tmp/dashboard_20260802.md")
+        pipeline.notifier.send_to_feishu.assert_not_called()
 
 
 if __name__ == "__main__":

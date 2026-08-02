@@ -438,10 +438,30 @@ class TestNotificationServiceSendToMethods(unittest.TestCase):
         mock_get_config.return_value = cfg
         service = NotificationService()
         with mock.patch.object(service, "send_feishu_file", return_value=True) as mock_file, \
-             mock.patch.object(service, "save_report_to_file", return_value="/tmp/report.md"):
+             mock.patch.object(service, "save_report_to_file", return_value="/tmp/report.md") as mock_save:
             result = service.send_with_results("report content", route_type="report")
         self.assertTrue(result.success)
         mock_file.assert_called_once()
+        mock_save.assert_called_once_with("report content", filename=mock.ANY)
+
+    @mock.patch("src.notification.get_config")
+    def test_feishu_send_as_file_route_report_strips_hidden_metadata_before_save(self, mock_get_config):
+        cfg = _make_config(
+            feishu_webhook_url="https://feishu.example/hook",
+            feishu_send_as_file=True,
+        )
+        mock_get_config.return_value = cfg
+        service = NotificationService()
+        content = "[dsa-market-region]: # (cn)\n\n# 市场复盘\n\n正文"
+
+        with mock.patch.object(service, "send_feishu_file", return_value=True), \
+             mock.patch.object(service, "save_report_to_file", return_value="/tmp/report.md") as mock_save:
+            result = service.send_with_results(content, route_type="report")
+
+        self.assertTrue(result.success)
+        saved_content = mock_save.call_args.args[0]
+        self.assertNotIn("[dsa-market-region]", saved_content)
+        self.assertIn("# 市场复盘", saved_content)
 
     @mock.patch("src.notification.get_config")
     def test_feishu_send_as_file_route_alert_calls_send_to_feishu(self, mock_get_config):
