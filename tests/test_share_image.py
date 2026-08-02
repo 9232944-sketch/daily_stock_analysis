@@ -385,6 +385,98 @@ def test_market_share_image_uses_payload_color_scheme_for_sector_rankings():
     assert ".ranking-row.lagging strong{color:#0a9c58}" not in html
 
 
+def test_market_share_image_merges_partial_structured_sectors_with_markdown_fallback():
+    payload = {
+        "kind": "market_review",
+        "region": "cn",
+        "sectors": {
+            "top": [
+                {"name": "AI算力"},
+                {"name": "机器人", "change_pct": 2.45},
+            ],
+            "bottom": [
+                {"name": "消费"},
+                {"name": "地产", "change_pct": -1.3},
+            ],
+        },
+    }
+
+    html = build_share_image_html(
+        """# A股大盘复盘
+
+## 板块主线
+
+### 领涨板块 Top 3
+
+| 排名 | 板块 | 涨跌幅 |
+| --- | --- | --- |
+| 1 | AI算力 | +3.20% |
+| 2 | 机器人 | +2.10% |
+| 3 | 算力租赁 | +1.50% |
+
+### 领跌板块 Top 3
+
+| 排名 | 板块 | 涨跌幅 |
+| --- | --- | --- |
+| 1 | 消费 | -1.80% |
+| 2 | 地产 | -1.10% |
+| 3 | 医药 | -0.80% |
+""",
+        generated_on=date(2026, 8, 1),
+        structured_payload=payload,
+    )
+
+    assert "AI算力" in html
+    assert "+3.20%" in html
+    assert "机器人" in html
+    assert "+2.45%" in html
+    assert "算力租赁" in html
+    assert "+1.50%" in html
+    assert "消费" in html
+    assert "-1.80%" in html
+    assert "地产" in html
+    assert "-1.30%" in html
+    assert "医药" in html
+    assert "-0.80%" in html
+
+
+def test_market_share_image_does_not_replace_markdown_sector_with_unmatched_name_only_overlay():
+    payload = {
+        "kind": "market_review",
+        "region": "cn",
+        "sectors": {
+            "top": [
+                {"name": "新消费"},
+            ],
+        },
+    }
+
+    html = build_share_image_html(
+        """# A股大盘复盘
+
+## 板块主线
+
+### 领涨板块 Top 3
+
+| 排名 | 板块 | 涨跌幅 |
+| --- | --- | --- |
+| 1 | AI算力 | +3.20% |
+| 2 | 机器人 | +2.10% |
+| 3 | 算力租赁 | +1.50% |
+""",
+        generated_on=date(2026, 8, 1),
+        structured_payload=payload,
+    )
+
+    assert "AI算力" in html
+    assert "+3.20%" in html
+    assert "机器人" in html
+    assert "+2.10%" in html
+    assert "算力租赁" in html
+    assert "+1.50%" in html
+    assert "新消费" not in html
+
+
 def test_market_share_image_uses_market_variant_and_preserves_tables():
     html = build_share_image_html(
         "# A 股大盘复盘\n\n## 指数表现\n\n| 指数 | 涨跌 |\n| --- | --- |\n| 上证 | +0.8% |",

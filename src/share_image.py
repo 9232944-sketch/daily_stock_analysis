@@ -393,6 +393,10 @@ def _normalize_index_name(value: object) -> str:
     return _plain(_clean_value(value, limit=28)).strip().lower()
 
 
+def _normalize_ranking_name(value: object) -> str:
+    return _plain(_clean_value(value, limit=28)).strip().lower()
+
+
 def _merge_index_cards(
     existing: Iterable[tuple[str, str, str, str]],
     overlay: Iterable[Mapping[str, Any]],
@@ -446,6 +450,65 @@ def _merge_index_cards(
         )
         positions[key] = len(merged) - 1
     return merged[:4]
+
+
+def _merge_sector_rankings(
+    existing: Iterable[tuple[str, str, str]],
+    overlay: Iterable[Mapping[str, Any]],
+    *,
+    positive_tone: str,
+    negative_tone: str,
+    default_tone: str,
+) -> list[tuple[str, str, str]]:
+    """Merge structured sector rows into Markdown rankings without dropping fallbacks."""
+
+    merged = list(existing)
+    positions = {
+        key: index
+        for index, (name, _change, _tone) in enumerate(merged)
+        if (key := _normalize_ranking_name(name))
+    }
+    for offset, item in enumerate(overlay):
+        name = _clean_value(item.get("name"), limit=18)
+        change = _signed_percent(item.get("change_pct"))
+        if not name:
+            continue
+        key = _normalize_ranking_name(name)
+        target_index = positions.get(key) if key else None
+        if target_index is None and change and offset < len(merged):
+            target_index = offset
+        if target_index is not None:
+            current_name, current_change, current_tone = merged[target_index]
+            current_key = _normalize_ranking_name(current_name)
+            merged_change = change or current_change
+            if merged_change.startswith("+"):
+                tone = positive_tone
+            elif merged_change.startswith("-"):
+                tone = negative_tone
+            else:
+                tone = current_tone or default_tone
+            merged[target_index] = (
+                name or current_name,
+                merged_change,
+                tone,
+            )
+            if current_key and current_key != key and positions.get(current_key) == target_index:
+                positions.pop(current_key, None)
+            if key:
+                positions[key] = target_index
+            continue
+        if len(merged) >= 3:
+            continue
+        merged.append(
+            (
+                name,
+                change,
+                positive_tone if change.startswith("+") else negative_tone if change.startswith("-") else default_tone,
+            )
+        )
+        if key:
+            positions[key] = len(merged) - 1
+    return merged[:3]
 
 
 def _number_text(value: object, *, suffix: str = "") -> str:
@@ -1554,50 +1617,26 @@ def _market_data_from_payload(
     sectors = payload.get("sectors")
     top_sectors = sectors.get("top") if isinstance(sectors, Mapping) else None
     if isinstance(top_sectors, list):
-        exact_sectors: list[tuple[str, str, str]] = []
-        for item in top_sectors[:3]:
-            if not isinstance(item, Mapping):
-                continue
-            name = _clean_value(item.get("name"), limit=18)
-            change = _signed_percent(item.get("change_pct"))
-            if name:
-                exact_sectors.append(
-                    (
-                        name,
-                        change,
-                        _ranking_change_tone(
-                            change,
-                            positive_tone=positive_tone,
-                            negative_tone=negative_tone,
-                            default_tone=positive_tone,
-                        ),
-                    )
-                )
-        if exact_sectors:
-            poster.sectors = exact_sectors
+        structured_top = [item for item in top_sectors[:3] if isinstance(item, Mapping)]
+        if structured_top:
+            poster.sectors = _merge_sector_rankings(
+                poster.sectors,
+                structured_top,
+                positive_tone=positive_tone,
+                negative_tone=negative_tone,
+                default_tone=positive_tone,
+            )
     bottom_sectors = sectors.get("bottom") if isinstance(sectors, Mapping) else None
     if isinstance(bottom_sectors, list):
-        exact_laggards: list[tuple[str, str, str]] = []
-        for item in bottom_sectors[:3]:
-            if not isinstance(item, Mapping):
-                continue
-            name = _clean_value(item.get("name"), limit=18)
-            change = _signed_percent(item.get("change_pct"))
-            if name:
-                exact_laggards.append(
-                    (
-                        name,
-                        change,
-                        _ranking_change_tone(
-                            change,
-                            positive_tone=positive_tone,
-                            negative_tone=negative_tone,
-                            default_tone=negative_tone,
-                        ),
-                    )
-                )
-        if exact_laggards:
-            poster.laggards = exact_laggards
+        structured_bottom = [item for item in bottom_sectors[:3] if isinstance(item, Mapping)]
+        if structured_bottom:
+            poster.laggards = _merge_sector_rankings(
+                poster.laggards,
+                structured_bottom,
+                positive_tone=positive_tone,
+                negative_tone=negative_tone,
+                default_tone=negative_tone,
+            )
     return poster
 
 
