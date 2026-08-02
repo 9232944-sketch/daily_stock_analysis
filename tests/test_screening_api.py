@@ -1361,6 +1361,27 @@ class ScreeningOpportunitiesApiTestCase(unittest.TestCase):
             timeout_seconds=12.0,
         )
 
+    def test_hotspot_search_keeps_hard_deadline_when_caller_timeout_is_disabled(self) -> None:
+        search_service = MagicMock(is_available=True)
+        search_service.search_topic_news_bounded.return_value = SimpleNamespace(
+            success=False,
+            results=[],
+        )
+
+        with (
+            patch.dict(os.environ, {"SCREENING_HOTSPOT_SEARCH_TIMEOUT_SEC": "off"}, clear=False),
+            patch("src.services.screening_service._get_dsa_search_service", return_value=search_service),
+        ):
+            routes = screening_service._build_hotspot_event_routes_from_search("钼")
+
+        self.assertEqual(routes, [])
+        search_service.search_topic_news_bounded.assert_called_once_with(
+            "钼",
+            max_results=3,
+            focus_keywords=['"钼"', "A股", "最新消息", "催化"],
+            timeout_seconds=12.0,
+        )
+
     def test_hotspot_search_excludes_missing_and_unsafe_links(self) -> None:
         config = Config(screening_enabled=True, bocha_api_keys=["test-key"])
         provider = screening_service.DsaEastMoneyHotspotProvider()
@@ -1905,6 +1926,81 @@ class ScreeningOpportunitiesApiTestCase(unittest.TestCase):
             provider._AKSHARE_CALL_TIMEOUT_SECONDS,
         )
         self.assertIn("stock_board_concept_cons_em", bounded_call.call_args.kwargs["call_name"])
+
+    def test_hotspot_provider_routes_configured_budget_into_hard_deadline(self) -> None:
+        provider = screening_service.DsaEastMoneyHotspotProvider()
+        rankings = [{
+            "name": "机器人概念",
+            "change_pct": 3.5,
+        }]
+
+        with (
+            patch.dict(os.environ, {"SCREENING_HOTSPOT_CALL_TIMEOUT_SEC": "0.25"}, clear=False),
+            patch(
+                "data_provider.akshare_fetcher._akshare_call_with_timeout",
+                side_effect=[pd.DataFrame(), (rankings, [])],
+            ) as bounded_call,
+        ):
+            frame = screening_service.screening_hotspot._call_provider_frame(
+                provider,
+                "stock_board_concept_name_em",
+                provider_label="dsa_eastmoney",
+            )
+
+        self.assertIsNotNone(frame)
+        self.assertEqual(frame.iloc[0]["name"], "机器人概念")
+        self.assertEqual(bounded_call.call_count, 2)
+        timeouts = [call.kwargs["timeout"] for call in bounded_call.call_args_list]
+        self.assertTrue(all(0 < timeout <= 0.25 for timeout in timeouts))
+        self.assertLessEqual(timeouts[1], timeouts[0])
+
+    def test_hotspot_provider_routes_remaining_budget_into_http_timeout(self) -> None:
+        provider = screening_service.DsaEastMoneyHotspotProvider()
+        response = MagicMock()
+        response.json.return_value = {
+            "data": {"diff": [{"f14": "机器人概念", "f3": 3.5}]},
+        }
+        provider._session.get = MagicMock(return_value=response)
+
+        with (
+            patch.dict(os.environ, {"SCREENING_HOTSPOT_CALL_TIMEOUT_SEC": "0.25"}, clear=False),
+            patch.object(provider, "_fetch_board_changes_with_fallback", return_value=pd.DataFrame()),
+            patch.object(provider, "_fetch_rankings_with_fallback", return_value=pd.DataFrame()),
+        ):
+            frame = provider.stock_board_concept_name_em()
+
+        self.assertEqual(frame.iloc[0]["板块名称"], "机器人概念")
+        timeout = provider._session.get.call_args.kwargs["timeout"]
+        self.assertGreater(timeout[0], 0)
+        self.assertGreater(timeout[1], 0)
+        self.assertLessEqual(sum(timeout), 0.25)
+
+    def test_hotspot_provider_disabled_outer_budget_keeps_source_hard_deadline(self) -> None:
+        provider = screening_service.DsaEastMoneyHotspotProvider()
+        board_changes = pd.DataFrame([{
+            "板块名称": "机器人",
+            "涨跌幅": 3.5,
+            "板块异动总次数": 20,
+        }])
+
+        with (
+            patch.dict(os.environ, {"SCREENING_HOTSPOT_CALL_TIMEOUT_SEC": "off"}, clear=False),
+            patch(
+                "data_provider.akshare_fetcher._akshare_call_with_timeout",
+                return_value=board_changes,
+            ) as bounded_call,
+        ):
+            frame = screening_service.screening_hotspot._call_provider_frame(
+                provider,
+                "stock_board_concept_name_em",
+                provider_label="dsa_eastmoney",
+            )
+
+        self.assertIsNotNone(frame)
+        self.assertEqual(
+            bounded_call.call_args.kwargs["timeout"],
+            provider._AKSHARE_CALL_TIMEOUT_SECONDS,
+        )
 
     def test_hotspot_provider_reaps_timed_out_constituent_process(self) -> None:
         import akshare as ak

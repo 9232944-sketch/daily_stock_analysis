@@ -58,6 +58,7 @@ DSA_SCREENING_MIN_HOTSPOT_CACHE_COUNT = 3
 DSA_SCREENING_HOTSPOT_DETAIL_CACHE_TTL_SECONDS = 30 * 60
 DSA_SCREENING_HOTSPOT_EVENT_SUMMARY_MAX_CHARS = 90
 DSA_SCREENING_HOTSPOT_PREFETCH_DETAIL_COUNT = 8
+DSA_SCREENING_HOTSPOT_CALL_TIMEOUT_SECONDS = 8
 DSA_SCREENING_HOTSPOT_SEARCH_TIMEOUT_SECONDS = 12
 DSA_SCREENING_HOTSPOT_UNAVAILABLE_CODE = "eastmoney_hotspot_unavailable"
 DSA_SCREENING_HOTSPOT_UNAVAILABLE_MESSAGE = "热点源连接中断，暂无可用缓存。"
@@ -81,6 +82,10 @@ _DSA_FETCHER_MANAGER: Any = None
 _FUNDAMENTAL_BLOCKS = ("valuation", "growth", "earnings", "institution", "capital_flow", "boards")
 _SCREENING_LITELLM_COMPLETION_ROUTES: ContextVar[Optional[Tuple[Dict[str, Any], ...]]] = ContextVar(
     "screening_litellm_completion_routes",
+    default=None,
+)
+_DSA_HOTSPOT_CALL_DEADLINE: ContextVar[Optional[float]] = ContextVar(
+    "dsa_hotspot_call_deadline",
     default=None,
 )
 _SCREENING_LITELLM_COMPLETION_ATTR = "_screening_litellm_completion_bridge"
@@ -338,13 +343,21 @@ def _build_hotspot_event_routes_from_search(topic: str) -> List[Dict[str, Any]]:
         service = _get_dsa_search_service()
         if not getattr(service, "is_available", False):
             return []
+        configured_timeout = parse_source_timeout_seconds(
+            "SCREENING_HOTSPOT_SEARCH_TIMEOUT_SEC",
+            default=DSA_SCREENING_HOTSPOT_SEARCH_TIMEOUT_SECONDS,
+        )
         response = service.search_topic_news_bounded(
             topic_text,
             max_results=3,
             focus_keywords=[f'"{topic_text}"', "A股", "最新消息", "催化"],
-            timeout_seconds=parse_source_timeout_seconds(
-                "SCREENING_HOTSPOT_SEARCH_TIMEOUT_SEC",
-                default=DSA_SCREENING_HOTSPOT_SEARCH_TIMEOUT_SECONDS,
+            # Bounded search owns a killable subprocess and therefore always
+            # needs a concrete hard deadline. Disabling the caller-side
+            # screening guard falls back to this safety ceiling.
+            timeout_seconds=(
+                configured_timeout
+                if configured_timeout is not None
+                else float(DSA_SCREENING_HOTSPOT_SEARCH_TIMEOUT_SECONDS)
             ),
         )
     except Exception as exc:
@@ -2053,11 +2066,64 @@ class DsaEastMoneyHotspotProvider:
         self._last_request_ts = 0.0
         self._min_request_interval = 0.25
 
+    @contextmanager
+    def _source_call_budget(self) -> Iterator[None]:
+        """Apply one configured budget to a board or constituent source call.
+
+        The provider uses killable subprocesses for AkShare and socket
+        timeouts for direct HTTP, so it must not be wrapped in the generic
+        daemon-thread timeout. Nested public calls reuse the same deadline to
+        prevent fallback steps from each receiving a fresh full budget.
+        """
+        if _DSA_HOTSPOT_CALL_DEADLINE.get() is not None:
+            yield
+            return
+        timeout = parse_source_timeout_seconds(
+            "SCREENING_HOTSPOT_CALL_TIMEOUT_SEC",
+            default=DSA_SCREENING_HOTSPOT_CALL_TIMEOUT_SECONDS,
+        )
+        if timeout is None:
+            yield
+            return
+        token = _DSA_HOTSPOT_CALL_DEADLINE.set(time.monotonic() + timeout)
+        try:
+            yield
+        finally:
+            _DSA_HOTSPOT_CALL_DEADLINE.reset(token)
+
+    def _remaining_source_timeout(self, fallback: float) -> float:
+        deadline = _DSA_HOTSPOT_CALL_DEADLINE.get()
+        if deadline is None:
+            return float(fallback)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("screening hotspot provider call exceeded its configured timeout")
+        return remaining
+
+    def _akshare_timeout_seconds(self) -> float:
+        return self._remaining_source_timeout(self._AKSHARE_CALL_TIMEOUT_SECONDS)
+
+    def _http_timeout(self) -> Tuple[float, float]:
+        deadline = _DSA_HOTSPOT_CALL_DEADLINE.get()
+        if deadline is None:
+            return self._CONSTITUENT_HTTP_TIMEOUT
+        remaining = self._remaining_source_timeout(sum(self._CONSTITUENT_HTTP_TIMEOUT))
+        connect = min(self._CONSTITUENT_HTTP_TIMEOUT[0], max(remaining / 2.0, 0.001))
+        read = max(remaining - connect, 0.001)
+        return connect, read
+
+    def _sleep_within_source_budget(self, seconds: float) -> None:
+        deadline = _DSA_HOTSPOT_CALL_DEADLINE.get()
+        if deadline is not None and self._remaining_source_timeout(seconds) <= seconds:
+            raise TimeoutError("screening hotspot provider call exceeded its configured timeout")
+        time.sleep(seconds)
+
     def _eastmoney_get_once(self, url: str, **kwargs: Any) -> Any:
         with self._request_lock:
             elapsed = time.monotonic() - self._last_request_ts
             if elapsed < self._min_request_interval:
-                time.sleep(self._min_request_interval - elapsed)
+                self._sleep_within_source_budget(self._min_request_interval - elapsed)
+            kwargs["timeout"] = self._http_timeout()
             try:
                 return self._session.get(url, **kwargs)
             finally:
@@ -2086,34 +2152,37 @@ class DsaEastMoneyHotspotProvider:
                     attempt + 1,
                     exc,
                 )
-                time.sleep(delays[attempt])
+                self._sleep_within_source_budget(delays[attempt])
         assert last_error is not None
         raise last_error
 
     def stock_board_concept_name_em(self) -> Any:
-        frame = self._fetch_board_changes_with_fallback()
-        if frame is not None and not frame.empty:
-            return frame
-        frame = self._fetch_rankings_with_fallback("concept")
-        if frame is not None and not frame.empty:
-            return frame
-        return self._fetch_board_names(source_fs="m:90 t:3 f:!50")
+        with self._source_call_budget():
+            frame = self._fetch_board_changes_with_fallback()
+            if frame is not None and not frame.empty:
+                return frame
+            frame = self._fetch_rankings_with_fallback("concept")
+            if frame is not None and not frame.empty:
+                return frame
+            return self._fetch_board_names(source_fs="m:90 t:3 f:!50")
 
     def stock_board_industry_name_em(self) -> Any:
-        concept_frame = self._fetch_board_changes_with_fallback()
-        if concept_frame is not None and not concept_frame.empty:
-            import pandas as pd
+        with self._source_call_budget():
+            concept_frame = self._fetch_board_changes_with_fallback()
+            if concept_frame is not None and not concept_frame.empty:
+                import pandas as pd
 
-            return pd.DataFrame()
-        frame = self._fetch_rankings_with_fallback("industry")
-        if frame is not None and not frame.empty:
-            return frame
-        return self._fetch_board_names(source_fs="m:90 t:2 f:!50")
+                return pd.DataFrame()
+            frame = self._fetch_rankings_with_fallback("industry")
+            if frame is not None and not frame.empty:
+                return frame
+            return self._fetch_board_names(source_fs="m:90 t:2 f:!50")
 
     def hotspot_rows(self, *, top: int = 12) -> List[Dict[str, Any]]:
         import pandas as pd
 
-        frame = self.stock_board_concept_name_em()
+        with self._source_call_budget():
+            frame = self.stock_board_concept_name_em()
         df = pd.DataFrame(frame)
         if df.empty:
             return []
@@ -2160,25 +2229,27 @@ class DsaEastMoneyHotspotProvider:
         return rows
 
     def stock_board_concept_cons_em(self, symbol: str = "") -> Any:
-        cached = self._get_constituent_cache("concept", symbol)
-        if cached is not None:
-            return cached
-        frames = self._fetch_constituent_sources(symbol, source="concept")
-        frames.append(self._fallback_constituents(symbol))
-        frames.append(self._related_hotspot_constituents(symbol))
-        frame = self._merge_constituent_frames(frames)
-        self._set_constituent_cache("concept", symbol, frame)
-        return frame
+        with self._source_call_budget():
+            cached = self._get_constituent_cache("concept", symbol)
+            if cached is not None:
+                return cached
+            frames = self._fetch_constituent_sources(symbol, source="concept")
+            frames.append(self._fallback_constituents(symbol))
+            frames.append(self._related_hotspot_constituents(symbol))
+            frame = self._merge_constituent_frames(frames)
+            self._set_constituent_cache("concept", symbol, frame)
+            return frame
 
     def stock_board_industry_cons_em(self, symbol: str = "") -> Any:
-        cached = self._get_constituent_cache("industry", symbol)
-        if cached is not None:
-            return cached
-        frames = self._fetch_constituent_sources(symbol, source="industry")
-        frames.append(self._fallback_constituents(symbol))
-        frame = self._merge_constituent_frames(frames)
-        self._set_constituent_cache("industry", symbol, frame)
-        return frame
+        with self._source_call_budget():
+            cached = self._get_constituent_cache("industry", symbol)
+            if cached is not None:
+                return cached
+            frames = self._fetch_constituent_sources(symbol, source="industry")
+            frames.append(self._fallback_constituents(symbol))
+            frame = self._merge_constituent_frames(frames)
+            self._set_constituent_cache("industry", symbol, frame)
+            return frame
 
     def _fetch_constituent_sources(self, topic: str, *, source: str) -> List[Any]:
         """Fetch independent sources in parallel without orphan workers.
@@ -2194,10 +2265,19 @@ class DsaEastMoneyHotspotProvider:
         if source == "concept":
             fetchers.append(("ths", lambda: self._fetch_ths_constituents(topic)))
 
+        source_deadline = _DSA_HOTSPOT_CALL_DEADLINE.get()
+
         def run(fetch: Callable[[], Any]) -> Any:
+            token = (
+                _DSA_HOTSPOT_CALL_DEADLINE.set(source_deadline)
+                if source_deadline is not None
+                else None
+            )
             try:
                 return fetch()
             finally:
+                if token is not None:
+                    _DSA_HOTSPOT_CALL_DEADLINE.reset(token)
                 self._CONSTITUENT_WORKER_SLOTS.release()
 
         frames_by_source: Dict[str, Any] = {}
@@ -2331,7 +2411,7 @@ class DsaEastMoneyHotspotProvider:
             return self._board_changes_raw_cache.copy()
         df = _akshare_call_with_timeout(
             ak.stock_board_change_em,
-            timeout=self._AKSHARE_CALL_TIMEOUT_SECONDS,
+            timeout=self._akshare_timeout_seconds(),
             call_name="screening.stock_board_change_em",
         )
         self._board_changes_raw_cache = df
@@ -2351,10 +2431,15 @@ class DsaEastMoneyHotspotProvider:
 
     def _fetch_rankings(self, source: str) -> Any:
         import pandas as pd
+        from data_provider.akshare_fetcher import _akshare_call_with_timeout
 
-        manager = _get_dsa_fetcher_manager()
-        fetch = manager.get_concept_rankings if source == "concept" else manager.get_sector_rankings
-        top, _bottom = fetch(100)
+        top, _bottom = _akshare_call_with_timeout(
+            _fetch_dsa_hotspot_rankings,
+            source,
+            100,
+            timeout=self._akshare_timeout_seconds(),
+            call_name=f"screening.dsa_{source}_rankings",
+        )
         rows = []
         for index, item in enumerate(top or []):
             name = _env_text((item or {}).get("name"))
@@ -2384,7 +2469,7 @@ class DsaEastMoneyHotspotProvider:
         response = self._eastmoney_get(
             self._BASE_URL,
             params=params,
-            timeout=self._CONSTITUENT_HTTP_TIMEOUT,
+            timeout=self._http_timeout(),
             headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json,text/plain,*/*"},
         )
         response.raise_for_status()
@@ -2594,7 +2679,7 @@ class DsaEastMoneyHotspotProvider:
         try:
             df = _akshare_call_with_timeout(
                 ak.stock_board_concept_summary_ths,
-                timeout=self._AKSHARE_CALL_TIMEOUT_SECONDS,
+                timeout=self._akshare_timeout_seconds(),
                 call_name="screening.stock_board_concept_summary_ths",
             )
         except Exception:
@@ -2619,7 +2704,7 @@ class DsaEastMoneyHotspotProvider:
             df = _akshare_call_with_timeout(
                 ak.stock_board_concept_info_ths,
                 symbol=topic,
-                timeout=self._AKSHARE_CALL_TIMEOUT_SECONDS,
+                timeout=self._akshare_timeout_seconds(),
                 call_name="screening.stock_board_concept_info_ths",
             )
         except Exception:
@@ -2644,7 +2729,7 @@ class DsaEastMoneyHotspotProvider:
         return _akshare_call_with_timeout(
             fetch,
             symbol=topic,
-            timeout=self._AKSHARE_CALL_TIMEOUT_SECONDS,
+            timeout=self._akshare_timeout_seconds(),
             call_name=f"screening.{fetch.__name__}",
         )
 
@@ -2658,7 +2743,7 @@ class DsaEastMoneyHotspotProvider:
         response = requests.get(
             f"https://q.10jqka.com.cn/gn/detail/code/{code}/",
             headers={"User-Agent": "Mozilla/5.0", "Referer": "https://q.10jqka.com.cn/gn/"},
-            timeout=self._CONSTITUENT_HTTP_TIMEOUT,
+            timeout=self._http_timeout(),
         )
         response.raise_for_status()
         html = response.content.decode("gbk", "ignore")
@@ -2701,7 +2786,7 @@ class DsaEastMoneyHotspotProvider:
 
         return _akshare_call_with_timeout(
             ak.stock_board_concept_name_ths,
-            timeout=self._AKSHARE_CALL_TIMEOUT_SECONDS,
+            timeout=self._akshare_timeout_seconds(),
             call_name="screening.stock_board_concept_name_ths",
         )
 
@@ -3209,6 +3294,13 @@ def _get_dsa_fetcher_manager() -> Any:
 
                 _DSA_FETCHER_MANAGER = DataFetcherManager()
     return _DSA_FETCHER_MANAGER
+
+
+def _fetch_dsa_hotspot_rankings(source: str, limit: int) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """Load DSA's ranking fallback inside the caller's killable subprocess."""
+    manager = _get_dsa_fetcher_manager()
+    fetch = manager.get_concept_rankings if source == "concept" else manager.get_sector_rankings
+    return fetch(limit)
 
 
 def _get_dsa_search_service() -> Any:
