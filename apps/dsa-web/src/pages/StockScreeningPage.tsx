@@ -911,8 +911,10 @@ const StockScreeningPage: React.FC = () => {
         [topic]: cacheableDetail,
       };
       setHotspotDetail(options.includeSearch ? detail : cacheableDetail);
-      if (options.includeSearch && detail.newsSearchStatus !== 'available') {
+      if (options.includeSearch && detail.newsSearchStatus === 'no_results') {
         setHotspotDetailError('暂未搜到该题材近期的有效消息。');
+      } else if (options.includeSearch && detail.newsSearchStatus !== 'available') {
+        setHotspotDetailError('消息搜索失败，请稍后重试。');
       }
     } catch (err) {
       if (!canApplyRequest()) {

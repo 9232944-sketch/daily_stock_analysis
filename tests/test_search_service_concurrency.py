@@ -309,6 +309,72 @@ class SearchServiceConcurrencyTestCase(unittest.TestCase):
         self.assertIs(wait_for_cached.call_args_list[1].args[1], retry_owner)
         subprocess_call.assert_not_called()
 
+    def test_bounded_topic_search_cache_wait_uses_the_caller_deadline(self):
+        service = SearchService(
+            bocha_keys=["dummy_key"],
+            searxng_public_instances_enabled=False,
+            news_max_age_days=3,
+            news_strategy_profile="short",
+        )
+        current_owner = threading.Event()
+
+        with (
+            patch.object(
+                service,
+                "_get_cached_or_reserve",
+                return_value=(None, False, current_owner),
+            ),
+            patch("src.search_service._call_topic_news_in_subprocess") as subprocess_call,
+        ):
+            started = time.monotonic()
+            with self.assertRaisesRegex(TimeoutError, "调用截止时间"):
+                service.search_topic_news_bounded("影视传媒", max_results=2, timeout_seconds=0.05)
+            elapsed = time.monotonic() - started
+
+        self.assertLess(elapsed, 0.5)
+        subprocess_call.assert_not_called()
+
+    def test_bounded_topic_search_provider_receives_only_remaining_deadline(self):
+        service = SearchService(
+            bocha_keys=["dummy_key"],
+            searxng_public_instances_enabled=False,
+            news_max_age_days=3,
+            news_strategy_profile="short",
+        )
+        first_owner = threading.Event()
+        retry_owner = threading.Event()
+        response = SearchResponse(
+            query='"影视传媒" A股 最新消息 催化',
+            results=[],
+            provider="Filtered",
+            success=True,
+        )
+
+        def wait_for_owner(_key, _event, *, timeout_seconds):
+            self.assertGreater(timeout_seconds, 0)
+            self.assertLessEqual(timeout_seconds, 0.2)
+            time.sleep(0.03)
+            return None
+
+        with (
+            patch.object(
+                service,
+                "_get_cached_or_reserve",
+                side_effect=[
+                    (None, False, first_owner),
+                    (None, True, retry_owner),
+                ],
+            ),
+            patch.object(service, "_wait_for_cached", side_effect=wait_for_owner),
+            patch("src.search_service._call_topic_news_in_subprocess", return_value=response) as subprocess_call,
+        ):
+            actual = service.search_topic_news_bounded("影视传媒", max_results=2, timeout_seconds=0.2)
+
+        self.assertIs(actual, response)
+        remaining = subprocess_call.call_args.kwargs["timeout_seconds"]
+        self.assertGreater(remaining, 0)
+        self.assertLess(remaining, 0.2)
+
     def test_bounded_topic_search_timeout_terminates_and_reaps_process(self):
         with patch("src.search_service._search_topic_news_process_worker", _hang_topic_news_process_worker):
             with self.assertRaisesRegex(TimeoutError, "已终止请求进程"):

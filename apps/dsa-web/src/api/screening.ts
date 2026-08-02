@@ -183,7 +183,7 @@ export type ScreeningHotspotDetail = {
   cachedAt?: string | null;
   resolverCandidates?: Record<string, unknown>[];
   newsSearchRequested?: boolean;
-  newsSearchStatus?: 'available' | 'no_results' | string;
+  newsSearchStatus?: 'available' | 'no_results' | 'unavailable' | string;
 };
 
 export type ScreeningHotspotsResponse = {

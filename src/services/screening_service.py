@@ -20,7 +20,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextvars import ContextVar
 from contextlib import contextmanager
-from dataclasses import asdict, is_dataclass
+from dataclasses import asdict, dataclass, is_dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
@@ -335,14 +335,20 @@ def _normalize_screening_hotspot_cache_payload(raw: Any) -> Optional[Dict[str, A
     }
 
 
-def _build_hotspot_event_routes_from_search(topic: str) -> List[Dict[str, Any]]:
+@dataclass(frozen=True)
+class _HotspotSearchAugmentation:
+    routes: List[Dict[str, Any]]
+    status: str
+
+
+def _build_hotspot_event_routes_from_search(topic: str) -> _HotspotSearchAugmentation:
     topic_text = _env_text(topic)
     if not topic_text:
-        return []
+        return _HotspotSearchAugmentation(routes=[], status="unavailable")
     try:
         service = _get_dsa_search_service()
         if not getattr(service, "is_available", False):
-            return []
+            return _HotspotSearchAugmentation(routes=[], status="unavailable")
         configured_timeout = parse_source_timeout_seconds(
             "SCREENING_HOTSPOT_SEARCH_TIMEOUT_SEC",
             default=DSA_SCREENING_HOTSPOT_SEARCH_TIMEOUT_SECONDS,
@@ -362,10 +368,10 @@ def _build_hotspot_event_routes_from_search(topic: str) -> List[Dict[str, Any]]:
         )
     except Exception as exc:
         logger.info("Screening hotspot event search skipped for %s: %s", topic_text, exc)
-        return []
+        return _HotspotSearchAugmentation(routes=[], status="unavailable")
 
     if not bool(getattr(response, "success", False)):
-        return []
+        return _HotspotSearchAugmentation(routes=[], status="unavailable")
     today = datetime.now().date().isoformat()
     routes: List[Dict[str, Any]] = []
     for result in list(getattr(response, "results", []) or []):
@@ -397,7 +403,10 @@ def _build_hotspot_event_routes_from_search(topic: str) -> List[Dict[str, Any]]:
         })
         if len(routes) >= 2:
             break
-    return routes
+    return _HotspotSearchAugmentation(
+        routes=routes,
+        status="available" if routes else "no_results",
+    )
 
 
 def _normalize_external_http_url(value: Any) -> str:
@@ -417,7 +426,8 @@ def _normalize_external_http_url(value: Any) -> str:
 def _with_hotspot_search_augmentation(payload: Dict[str, Any], *, topic: str) -> Dict[str, Any]:
     """Attach opt-in search results to one response without changing its base detail."""
     augmented = _strip_hotspot_search_augmentation(payload)
-    search_routes = _build_hotspot_event_routes_from_search(topic)
+    search_result = _build_hotspot_event_routes_from_search(topic)
+    search_routes = search_result.routes
     if search_routes:
         route = augmented.get("route")
         existing_routes = route if isinstance(route, list) else []
@@ -430,7 +440,7 @@ def _with_hotspot_search_augmentation(payload: Dict[str, Any], *, topic: str) ->
         # display-oriented route summaries.
         augmented["timeline"] = [*search_routes, *existing_timeline]
     augmented["news_search_requested"] = True
-    augmented["news_search_status"] = "available" if search_routes else "no_results"
+    augmented["news_search_status"] = search_result.status
     return _remove_non_finite_json_values(augmented)
 
 

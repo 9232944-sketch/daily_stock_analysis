@@ -98,6 +98,7 @@ def _call_topic_news_in_subprocess(
     max_results: int,
     focus_keywords: Optional[List[str]],
     timeout_seconds: float,
+    deadline: Optional[float] = None,
 ) -> "SearchResponse":
     """Execute a topic-news provider chain with a hard, process-level deadline."""
     wait_seconds = max(0.01, float(timeout_seconds))
@@ -130,7 +131,12 @@ def _call_topic_news_in_subprocess(
             child_conn.close()
             child_conn = None
 
-            if not parent_conn.poll(wait_seconds):
+            poll_seconds = (
+                wait_seconds
+                if deadline is None
+                else max(0.0, deadline - time.monotonic())
+            )
+            if poll_seconds <= 0 or not parent_conn.poll(poll_seconds):
                 _terminate_search_process(process)
                 raise TimeoutError(f"题材新闻搜索超过 {wait_seconds:g}s，已终止请求进程")
             try:
@@ -2708,13 +2714,26 @@ class SearchService:
                 self._cache_inflight.pop(key, None)
                 event.set()
 
-    def _wait_for_cached(self, key: str, event: threading.Event) -> Optional['SearchResponse']:
-        event.wait(timeout=max(1.0, min(float(self._cache_ttl), 30.0)))
+    def _wait_for_cached(
+        self,
+        key: str,
+        event: threading.Event,
+        *,
+        timeout_seconds: Optional[float] = None,
+    ) -> Optional['SearchResponse']:
+        wait_seconds = (
+            max(1.0, min(float(self._cache_ttl), 30.0))
+            if timeout_seconds is None
+            else max(0.0, float(timeout_seconds))
+        )
+        event.wait(timeout=wait_seconds)
         return self._get_cached(key)
 
     def _get_cached_or_wait_for_reservation(
         self,
         key: str,
+        *,
+        deadline: Optional[float] = None,
     ) -> Tuple[Optional['SearchResponse'], bool, Optional[threading.Event], bool]:
         """Return a cache hit or exclusive ownership of one cache fill.
 
@@ -2730,9 +2749,17 @@ class SearchService:
             if cache_event is None:  # Defensive: the reservation API promises an event here.
                 raise RuntimeError("搜索缓存请求合并状态异常")
             waited = True
-            cached = self._wait_for_cached(key, cache_event)
+            remaining = None if deadline is None else deadline - time.monotonic()
+            if remaining is not None and remaining <= 0:
+                raise TimeoutError("题材新闻搜索等待超过调用截止时间")
+            if remaining is None:
+                cached = self._wait_for_cached(key, cache_event)
+            else:
+                cached = self._wait_for_cached(key, cache_event, timeout_seconds=remaining)
             if cached is not None:
                 return cached, False, None, waited
+            if deadline is not None and time.monotonic() >= deadline:
+                raise TimeoutError("题材新闻搜索等待超过调用截止时间")
 
     def _put_cache(self, key: str, response: 'SearchResponse') -> None:
         """Store a successful SearchResponse in cache."""
@@ -3918,7 +3945,7 @@ class SearchService:
         *,
         timeout_seconds: float = 12.0,
     ) -> SearchResponse:
-        """Search topic news with parent cache and a killable provider process."""
+        """Search topic news within one cache-wait and provider deadline."""
         topic_text = (topic or "").strip()
         if not topic_text or not self.is_available:
             return SearchResponse(
@@ -3929,21 +3956,32 @@ class SearchService:
                 error_message="未配置搜索能力或题材为空",
             )
 
+        wait_seconds = float(timeout_seconds)
+        if wait_seconds <= 0:
+            raise ValueError("题材新闻搜索超时必须大于 0 秒")
+        deadline = time.monotonic() + wait_seconds
         search_days = self._effective_news_window_days()
         query_terms = [str(item).strip() for item in (focus_keywords or []) if str(item).strip()]
         query = " ".join(query_terms) if query_terms else f'"{topic_text}" A股 最新消息 催化'
         cache_key = self._cache_key(f"topic_news:{topic_text}:{query}", max_results, search_days)
-        cached, cache_owner, cache_event, _waited = self._get_cached_or_wait_for_reservation(cache_key)
+        cached, cache_owner, cache_event, _waited = self._get_cached_or_wait_for_reservation(
+            cache_key,
+            deadline=deadline,
+        )
         if cached is not None:
             return cached
 
         try:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("题材新闻搜索等待超过调用截止时间")
             response = _call_topic_news_in_subprocess(
                 constructor_kwargs=self._constructor_kwargs,
                 topic=topic_text,
                 max_results=max_results,
                 focus_keywords=focus_keywords,
-                timeout_seconds=timeout_seconds,
+                timeout_seconds=remaining,
+                deadline=deadline,
             )
             if response.success and response.results:
                 self._put_cache(cache_key, response)

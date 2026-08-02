@@ -309,13 +309,44 @@ describe('StockScreeningPage', () => {
     const link = await screen.findByRole('link', { name: '查看消息' });
     expect(link).toHaveAttribute('href', 'https://example.com/ai-news');
 
+    getHotspotDetail.mockResolvedValueOnce({
+      enabled: true,
+      provider: 'akshare',
+      topic: 'AI算力',
+      newsSearchRequested: true,
+      newsSearchStatus: 'unavailable',
+      route: [{ title: '盘中发酵', description: '概念股活跃。' }],
+      stocks: [],
+      stockCount: 0,
+    });
+    fireEvent.click(screen.getByRole('button', { name: '搜索最新消息' }));
+
+    expect(await screen.findByText('消息搜索失败，请稍后重试。')).toBeInTheDocument();
+    expect(screen.getByText('盘中发酵')).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: '查看消息' })).not.toBeInTheDocument();
+
+    getHotspotDetail.mockResolvedValueOnce({
+      enabled: true,
+      provider: 'akshare',
+      topic: 'AI算力',
+      newsSearchRequested: true,
+      newsSearchStatus: 'no_results',
+      route: [{ title: '盘中发酵', description: '概念股活跃。' }],
+      stocks: [],
+      stockCount: 0,
+    });
+    fireEvent.click(screen.getByRole('button', { name: '搜索最新消息' }));
+
+    expect(await screen.findByText('暂未搜到该题材近期的有效消息。')).toBeInTheDocument();
+    expect(screen.queryByText('消息搜索失败，请稍后重试。')).not.toBeInTheDocument();
+
     fireEvent.click(screen.getByRole('button', { name: /收起热点题材/ }));
     fireEvent.click(screen.getByRole('button', { name: /展开热点题材/ }));
     fireEvent.click(await screen.findByRole('button', { name: /AI算力/ }));
 
     await waitFor(() => expect(screen.queryByRole('link', { name: '查看消息' })).not.toBeInTheDocument());
     expect(screen.getByText('盘中发酵')).toBeInTheDocument();
-    expect(getHotspotDetail).toHaveBeenCalledTimes(2);
+    expect(getHotspotDetail).toHaveBeenCalledTimes(4);
   });
 
   it('renders hotspot details as user-facing Chinese without provider internals', async () => {

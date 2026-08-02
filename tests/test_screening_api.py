@@ -1372,9 +1372,10 @@ class ScreeningOpportunitiesApiTestCase(unittest.TestCase):
             patch.dict(os.environ, {"SCREENING_HOTSPOT_SEARCH_TIMEOUT_SEC": "off"}, clear=False),
             patch("src.services.screening_service._get_dsa_search_service", return_value=search_service),
         ):
-            routes = screening_service._build_hotspot_event_routes_from_search("钼")
+            result = screening_service._build_hotspot_event_routes_from_search("钼")
 
-        self.assertEqual(routes, [])
+        self.assertEqual(result.routes, [])
+        self.assertEqual(result.status, "unavailable")
         search_service.search_topic_news_bounded.assert_called_once_with(
             "钼",
             max_results=3,
@@ -1434,6 +1435,24 @@ class ScreeningOpportunitiesApiTestCase(unittest.TestCase):
         self.assertFalse(any(item.get("search_result") for item in payload["route"]))
         self.assertEqual(payload["route"][0]["source"], "eastmoney_board_change")
 
+    def test_hotspot_search_reports_operational_failure_without_losing_base_detail(self) -> None:
+        search_service = MagicMock(is_available=True)
+        search_service.search_topic_news_bounded.side_effect = TimeoutError("provider timed out")
+        base_detail = {
+            "topic": "钼",
+            "route": [{"title": "当日发酵", "source": "eastmoney_board_change"}],
+            "timeline": [{"title": "原始时间线", "source": "raw_timeline"}],
+            "stocks": [{"code": "601958", "name": "金钼股份"}],
+        }
+
+        with patch("src.services.screening_service._get_dsa_search_service", return_value=search_service):
+            payload = screening_service._with_hotspot_search_augmentation(base_detail, topic="钼")
+
+        self.assertEqual(payload["news_search_status"], "unavailable")
+        self.assertEqual(payload["route"], base_detail["route"])
+        self.assertEqual(payload["timeline"], base_detail["timeline"])
+        self.assertEqual(payload["stocks"], base_detail["stocks"])
+
     def test_hotspot_search_skips_invalid_links_before_valid_result(self) -> None:
         search_service = MagicMock(is_available=True)
         search_service.search_topic_news_bounded.return_value = SimpleNamespace(
@@ -1453,11 +1472,12 @@ class ScreeningOpportunitiesApiTestCase(unittest.TestCase):
         )
 
         with patch("src.services.screening_service._get_dsa_search_service", return_value=search_service):
-            routes = screening_service._build_hotspot_event_routes_from_search("钼")
+            result = screening_service._build_hotspot_event_routes_from_search("钼")
 
-        self.assertEqual(len(routes), 1)
-        self.assertEqual(routes[0]["title"], "有效消息")
-        self.assertEqual(routes[0]["url"], "https://example.com/valid-news")
+        self.assertEqual(result.status, "available")
+        self.assertEqual(len(result.routes), 1)
+        self.assertEqual(result.routes[0]["title"], "有效消息")
+        self.assertEqual(result.routes[0]["url"], "https://example.com/valid-news")
 
     def test_hotspot_search_does_not_pollute_or_refresh_shared_detail_cache(self) -> None:
         config = Config(screening_enabled=True, bocha_api_keys=["test-key"])
