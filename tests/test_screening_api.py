@@ -1974,6 +1974,46 @@ class ScreeningOpportunitiesApiTestCase(unittest.TestCase):
         self.assertTrue(all(0 < timeout <= 0.25 for timeout in timeouts))
         self.assertLessEqual(timeouts[1], timeouts[0])
 
+    def test_hotspot_provider_detail_fallback_reuses_one_configured_deadline(self) -> None:
+        provider = screening_service.DsaEastMoneyHotspotProvider()
+        observed_timeouts: List[float] = []
+
+        def record_remaining(value: Any) -> Any:
+            observed_timeouts.append(provider._akshare_timeout_seconds())
+            time.sleep(0.005)
+            return value
+
+        with (
+            patch.dict(os.environ, {"SCREENING_HOTSPOT_CALL_TIMEOUT_SEC": "0.25"}, clear=False),
+            patch.object(provider, "_find_board_change", side_effect=lambda _topic: record_remaining({})),
+            patch.object(provider, "_is_industry_hotspot", side_effect=lambda _topic: record_remaining(False)),
+            patch.object(
+                provider,
+                "stock_board_concept_cons_em",
+                side_effect=lambda _topic: record_remaining(pd.DataFrame([{
+                    "code": "000001",
+                    "name": "平安银行",
+                }])),
+            ),
+            patch.object(
+                provider,
+                "_fetch_ths_summary_event",
+                side_effect=lambda _topic: record_remaining(""),
+            ),
+            patch.object(provider, "_fetch_ths_info", side_effect=lambda _topic: record_remaining({})),
+            patch("src.services.screening_service._get_dsa_fetcher_manager") as fetcher_manager,
+        ):
+            detail = provider.hotspot_detail("机器人")
+
+        self.assertEqual(detail["leader_stocks"][0]["code"], "000001")
+        self.assertEqual(len(observed_timeouts), 5)
+        self.assertTrue(all(0 < timeout <= 0.25 for timeout in observed_timeouts))
+        self.assertTrue(all(
+            later < earlier
+            for earlier, later in zip(observed_timeouts, observed_timeouts[1:])
+        ))
+        fetcher_manager.assert_not_called()
+
     def test_hotspot_provider_routes_remaining_budget_into_http_timeout(self) -> None:
         provider = screening_service.DsaEastMoneyHotspotProvider()
         response = MagicMock()

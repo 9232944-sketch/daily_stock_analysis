@@ -2078,7 +2078,7 @@ class DsaEastMoneyHotspotProvider:
 
     @contextmanager
     def _source_call_budget(self) -> Iterator[None]:
-        """Apply one configured budget to a board or constituent source call.
+        """Apply one configured budget to a board, constituent, or detail call.
 
         The provider uses killable subprocesses for AkShare and socket
         timeouts for direct HTTP, so it must not be wrapped in the generic
@@ -2326,6 +2326,10 @@ class DsaEastMoneyHotspotProvider:
         ]
 
     def hotspot_detail(self, topic: str) -> Dict[str, Any]:
+        with self._source_call_budget():
+            return self._hotspot_detail(topic)
+
+    def _hotspot_detail(self, topic: str) -> Dict[str, Any]:
         try:
             summary = self._find_board_change(topic)
         except Exception as exc:
@@ -2339,7 +2343,6 @@ class DsaEastMoneyHotspotProvider:
             stocks = self._normalize_constituent_records(self.stock_board_industry_cons_em(topic))
         else:
             stocks = self._normalize_constituent_records(self.stock_board_concept_cons_em(topic))
-        stocks = self._enrich_constituent_quotes(stocks)
         route = self._build_hotspot_route(topic, summary)
         info = self._fetch_ths_info(topic)
         if info:
@@ -2902,46 +2905,6 @@ class DsaEastMoneyHotspotProvider:
                 record.setdefault("name", name)
                 merged.append(record)
         return pd.DataFrame(merged)
-
-    def _enrich_constituent_quotes(self, stocks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        codes = [str(item.get("code") or "").strip() for item in stocks if item.get("code")]
-        codes = [code for code in codes if code][:12]
-        if len(codes) < 4:
-            return stocks
-        try:
-            manager = _get_dsa_fetcher_manager()
-            manager.prefetch_realtime_quotes(codes)
-        except Exception as exc:
-            logger.debug("Screening hotspot quote prefetch skipped: %s", exc)
-            return stocks
-        quote_by_code: Dict[str, Any] = {}
-        for code in codes:
-            try:
-                quote = manager.get_realtime_quote(code, log_final_failure=False)
-            except Exception:
-                quote = None
-            if quote is not None:
-                quote_by_code[code] = quote
-        if not quote_by_code:
-            return stocks
-        enriched: List[Dict[str, Any]] = []
-        for item in stocks:
-            next_item = dict(item)
-            code = str(next_item.get("code") or "").strip()
-            quote = quote_by_code.get(code)
-            if quote is not None:
-                if next_item.get("change_pct") is None:
-                    next_item["change_pct"] = _safe_float(getattr(quote, "change_pct", None))
-                if next_item.get("amount") is None:
-                    next_item["amount"] = _safe_float(getattr(quote, "amount", None))
-                if next_item.get("turnover_rate") is None:
-                    next_item["turnover_rate"] = _safe_float(getattr(quote, "turnover_rate", None))
-                if next_item.get("volume_ratio") is None:
-                    next_item["volume_ratio"] = _safe_float(getattr(quote, "volume_ratio", None))
-                if next_item.get("hot_stock_score") in (None, 0.0):
-                    next_item["hot_stock_score"] = min(99.0, max(1.0, abs(next_item.get("change_pct") or 0.0) * 8.0))
-            enriched.append(next_item)
-        return enriched
 
     def _normalize_constituent_records(self, frame: Any) -> List[Dict[str, Any]]:
         import pandas as pd
