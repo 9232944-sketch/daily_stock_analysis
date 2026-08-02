@@ -383,6 +383,35 @@ def _merge_metrics(
     return merged
 
 
+def _merge_compact_list(
+    existing: Iterable[object],
+    overlay: object,
+    *,
+    limit_items: int = 2,
+    limit_chars: int = 36,
+) -> list[str]:
+    """Prefer structured list items without erasing Markdown fallback entries."""
+
+    if not isinstance(overlay, list):
+        return [str(item) for item in existing if _clean_value(item)][:limit_items]
+
+    merged: list[str] = []
+    seen: set[str] = set()
+    for source in (overlay, list(existing)):
+        for item in source:
+            text = _compact_text(item, limit=limit_chars)
+            if not text:
+                continue
+            key = _plain(text).lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(text)
+            if len(merged) >= limit_items:
+                return merged
+    return merged
+
+
 def _market_light_overlay_allowed(payload: Mapping[str, Any]) -> bool:
     """Skip fabricated market-light snapshots that were persisted as unavailable."""
 
@@ -1179,9 +1208,9 @@ def _stock_data_from_payload(
     catalysts = intelligence.get("positive_catalysts")
     risks = intelligence.get("risk_alerts")
     if isinstance(catalysts, list):
-        poster.catalysts = [_compact_text(item, limit=36) for item in catalysts[:2] if _clean_value(item)]
+        poster.catalysts = _merge_compact_list(poster.catalysts, catalysts)
     if isinstance(risks, list):
-        poster.risks = [_compact_text(item, limit=36) for item in risks[:2] if _clean_value(item)]
+        poster.risks = _merge_compact_list(poster.risks, risks)
 
     watch_conditions = phase.get("watch_conditions")
     payload_watch_items = [

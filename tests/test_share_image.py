@@ -144,6 +144,42 @@ def test_stock_share_image_prefers_structured_json_and_compacts_trade_points():
     assert "风控策略" not in html
 
 
+def test_stock_share_image_merges_partial_intelligence_lists_with_markdown_fallback():
+    payload = {
+        "name": "中钨高新",
+        "code": "000657",
+        "dashboard": {
+            "intelligence": {
+                "positive_catalysts": ["订单修复信号开始出现，板块景气边际改善"],
+                "risk_alerts": [],
+            },
+        },
+    }
+
+    html = build_share_image_html(
+        """# 中钨高新 000657 分析报告
+
+## 重要信息
+
+**利好催化：**
+- 钨价企稳叠加军工需求回暖，盈利弹性有望释放。
+- 海外订单恢复，出口占比回升。
+
+## 风险提示
+
+- 下游需求恢复不及预期。
+- 跌破关键支撑后可能继续放量回撤。
+""",
+        generated_on=date(2026, 8, 1),
+        structured_payload=payload,
+    )
+
+    assert "订单修复信号开始出现" in html
+    assert "钨价企稳叠加军工需求回暖" in html
+    assert "下游需求恢复不及预期" in html
+    assert "跌破关键支撑后可能继续放量回撤" in html
+
+
 def test_market_share_image_prefers_structured_market_metrics():
     payload = {
         "kind": "market_review",
