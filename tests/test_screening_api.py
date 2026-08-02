@@ -1305,6 +1305,7 @@ class ScreeningOpportunitiesApiTestCase(unittest.TestCase):
             "topic": "钼",
             "summary": "钼 当前涨跌幅 10.00%。",
             "route": [{"title": "当日发酵", "description": "钼板块异动。", "source": "eastmoney_board_change"}],
+            "timeline": [{"title": "原始时间线", "description": "原始详情证据。", "source": "raw_timeline"}],
             "stocks": [],
             "stock_count": 0,
             "source_errors": [],
@@ -1347,6 +1348,9 @@ class ScreeningOpportunitiesApiTestCase(unittest.TestCase):
         self.assertEqual(payload["route"][0]["title"], "以钼代钨带动小金属行情")
         self.assertEqual(payload["route"][0]["date"], "2026-06-12")
         self.assertEqual(payload["route"][0]["url"], "https://example.com/news")
+        self.assertEqual(payload["timeline"][0]["source"], "ExampleNews")
+        self.assertEqual(payload["timeline"][1]["source"], "raw_timeline")
+        self.assertEqual(payload["timeline"][1]["title"], "原始时间线")
         self.assertEqual(payload["news_search_status"], "available")
         self.assertLessEqual(len(payload["route"][0]["description"]), 93)
         self.assertNotIn("完整产业链背景", payload["route"][0]["description"])

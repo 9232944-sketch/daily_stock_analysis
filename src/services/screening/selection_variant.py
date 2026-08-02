@@ -52,10 +52,11 @@ def apply_seeded_selection_variant(
         # Preserve original order; just trim to requested output_count.
         return SelectionVariant(picks=_rerank(picks[:output_count]))
 
-    # From here on the seed is non-empty and rotation logic may reorder
-    # near-cutoff candidates. Work on a deterministically ordered list so that
-    # rotation selection is stable across runs.
-    ordered = sorted(picks, key=lambda item: (-float(item.final_score), item.code))
+    # The upstream pipeline has already produced the authoritative final order.
+    # Keep that order as the basis for the protected head and cutoff. In
+    # particular, a code-based tie-break here would silently move equal-score
+    # candidates across the original Top-N boundary before rotation starts.
+    ordered = list(picks)
     output_count = min(max(int(max_output), 0), len(ordered))
 
     cutoff_score = float(ordered[output_count - 1].final_score)
@@ -81,6 +82,7 @@ def apply_seeded_selection_variant(
         max_tail_slots,
         max(1, int(round(output_count * requested_ratio))),
     )
+
     def _was_post_analyzed(pick: Pick) -> bool:
         # If analyzers were configured for this run, a pick must have explicit
         # non-skipped post-analysis results for all configured analyzers to be
@@ -134,10 +136,17 @@ def apply_seeded_selection_variant(
     )
     chosen_codes = {pick.code for pick in varied_pool[:rotation_slots]}
     chosen_tail = [pick for pick in pool if pick.code in chosen_codes]
-    selected = sorted(
-        [*protected, *chosen_tail],
-        key=lambda item: (-float(item.final_score), item.code),
-    )[:output_count]
+    selected_code_set = {
+        pick.code
+        for pick in [*protected, *chosen_tail]
+    }
+    # Rotation changes membership only. Preserve the upstream relative order
+    # for every selected candidate, including equal-score candidates.
+    selected = [
+        pick
+        for pick in ordered
+        if pick.code in selected_code_set
+    ][:output_count]
     base_codes = [pick.code for pick in ordered[:output_count]]
     selected_codes = [pick.code for pick in selected]
     changed_count = len(set(selected_codes) - set(base_codes))

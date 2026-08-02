@@ -266,6 +266,49 @@ class SearchServiceConcurrencyTestCase(unittest.TestCase):
         subprocess_call.assert_called_once()
         self.assertEqual(service._cache_inflight, {})
 
+    def test_bounded_topic_search_waits_when_retry_reservation_has_another_owner(self):
+        service = SearchService(
+            bocha_keys=["dummy_key"],
+            searxng_public_instances_enabled=False,
+            news_max_age_days=3,
+            news_strategy_profile="short",
+        )
+        first_owner = threading.Event()
+        retry_owner = threading.Event()
+        response = SearchResponse(
+            query='"影视传媒" A股 最新消息 催化',
+            results=[
+                SearchResult(
+                    title="并发 owner 返回结果",
+                    snippet="只允许 owner 执行供应商链。",
+                    url="https://example.com/coalesced-topic-news",
+                    source="example.com",
+                    published_date=datetime.now().date().isoformat(),
+                )
+            ],
+            provider="MockProvider",
+            success=True,
+        )
+
+        with (
+            patch.object(
+                service,
+                "_get_cached_or_reserve",
+                side_effect=[
+                    (None, False, first_owner),
+                    (None, False, retry_owner),
+                ],
+            ),
+            patch.object(service, "_wait_for_cached", side_effect=[None, response]) as wait_for_cached,
+            patch("src.search_service._call_topic_news_in_subprocess") as subprocess_call,
+        ):
+            actual = service.search_topic_news_bounded("影视传媒", max_results=2, timeout_seconds=0.5)
+
+        self.assertIs(actual, response)
+        self.assertIs(wait_for_cached.call_args_list[0].args[1], first_owner)
+        self.assertIs(wait_for_cached.call_args_list[1].args[1], retry_owner)
+        subprocess_call.assert_not_called()
+
     def test_bounded_topic_search_timeout_terminates_and_reaps_process(self):
         with patch("src.search_service._search_topic_news_process_worker", _hang_topic_news_process_worker):
             with self.assertRaisesRegex(TimeoutError, "已终止请求进程"):
@@ -322,6 +365,68 @@ class SearchServiceConcurrencyTestCase(unittest.TestCase):
 
         slots.acquire.assert_called_once_with(blocking=False)
         slots.release.assert_not_called()
+
+    def test_bounded_topic_search_releases_capacity_when_process_start_fails(self):
+        slots = MagicMock()
+        slots.acquire.return_value = True
+        parent_conn = MagicMock()
+        child_conn = MagicMock()
+        process = MagicMock()
+        process.start.side_effect = OSError("spawn failed")
+        context = MagicMock()
+        context.Pipe.return_value = (parent_conn, child_conn)
+        context.Process.return_value = process
+
+        with (
+            patch("src.search_service._SEARCH_TIMEOUT_WORKER_SLOTS", slots),
+            patch("src.search_service.multiprocessing.get_context", return_value=context),
+            patch("src.search_service._terminate_search_process") as terminate_process,
+        ):
+            with self.assertRaisesRegex(OSError, "spawn failed"):
+                _call_topic_news_in_subprocess(
+                    constructor_kwargs={},
+                    topic="影视传媒",
+                    max_results=2,
+                    focus_keywords=None,
+                    timeout_seconds=0.5,
+                )
+
+        process.join.assert_not_called()
+        terminate_process.assert_not_called()
+        parent_conn.close.assert_called_once_with()
+        child_conn.close.assert_called_once_with()
+        slots.release.assert_called_once_with()
+
+    def test_bounded_topic_search_reaps_started_process_when_pipe_close_fails(self):
+        slots = MagicMock()
+        slots.acquire.return_value = True
+        parent_conn = MagicMock()
+        child_conn = MagicMock()
+        child_conn.close.side_effect = [OSError("pipe close failed"), None]
+        process = MagicMock()
+        context = MagicMock()
+        context.Pipe.return_value = (parent_conn, child_conn)
+        context.Process.return_value = process
+
+        with (
+            patch("src.search_service._SEARCH_TIMEOUT_WORKER_SLOTS", slots),
+            patch("src.search_service.multiprocessing.get_context", return_value=context),
+            patch("src.search_service._terminate_search_process") as terminate_process,
+        ):
+            with self.assertRaisesRegex(OSError, "pipe close failed"):
+                _call_topic_news_in_subprocess(
+                    constructor_kwargs={},
+                    topic="影视传媒",
+                    max_results=2,
+                    focus_keywords=None,
+                    timeout_seconds=0.5,
+                )
+
+        process.join.assert_called_once()
+        terminate_process.assert_called_once_with(process)
+        parent_conn.close.assert_called_once_with()
+        self.assertEqual(child_conn.close.call_count, 2)
+        slots.release.assert_called_once_with()
 
     def test_get_search_service_initializes_singleton_once(self):
         reset_search_service()

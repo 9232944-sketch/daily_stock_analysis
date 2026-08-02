@@ -971,13 +971,18 @@ const StockScreeningPage: React.FC = () => {
       setHotspotsUpdatedAt(result.cachedAt || (nextHotspots.length > 0 ? new Date().toISOString() : null));
       setSelectedHotspotTopic(nextTopic);
       selectedHotspotTopicRef.current = nextTopic;
+      setHotspotDetailError('');
       if (nextTopic && nextDetails[nextTopic]) {
         setHotspotDetail(nextDetails[nextTopic]);
         setLoadingHotspotDetail(false);
       } else if (!retainedTopic) {
         setHotspotDetail(null);
+      } else if (refresh && nextTopic) {
+        // A refreshed list and a retained detail must describe the same source
+        // snapshot. The list endpoint intentionally omits details by default,
+        // so explicitly bypass the detail cache for the retained topic.
+        await loadHotspotDetail(nextTopic, { refresh: true });
       }
-      setHotspotDetailError('');
       if (nextHotspots.length === 0) {
         setHotspotError(formatHotspotEmptyMessage(result));
       }
@@ -986,7 +991,7 @@ const StockScreeningPage: React.FC = () => {
     } finally {
       setLoadingHotspots(false);
     }
-  }, []);
+  }, [loadHotspotDetail]);
 
   const handleHotspotSelect = useCallback((topic: string) => {
     selectedHotspotTopicRef.current = topic;

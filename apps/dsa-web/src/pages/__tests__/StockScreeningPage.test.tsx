@@ -757,7 +757,7 @@ describe('StockScreeningPage', () => {
     expect(screen.queryByText('中际旭创')).not.toBeInTheDocument();
   });
 
-  it('keeps selected hotspot detail when refreshing the list retains the same topic', async () => {
+  it('refreshes selected hotspot detail when refreshing the list retains the same topic', async () => {
     getScreeningStatus.mockResolvedValueOnce({
       enabled: true,
       available: true,
@@ -797,16 +797,27 @@ describe('StockScreeningPage', () => {
         ],
         hotspotCount: 1,
       });
-    getHotspotDetail.mockResolvedValueOnce({
-      enabled: true,
-      provider: 'akshare',
-      topic: 'AI算力',
-      name: 'AI算力',
-      summary: 'AI算力 盘中发酵。',
-      route: [{ title: '盘中发酵', description: '出现大笔买入。', source: 'eastmoney_board_change' }],
-      stocks: [{ code: '300000', name: '中际旭创', role: '核心龙头', hotStockScore: 88 }],
-      stockCount: 1,
-    });
+    getHotspotDetail
+      .mockResolvedValueOnce({
+        enabled: true,
+        provider: 'akshare',
+        topic: 'AI算力',
+        name: 'AI算力',
+        summary: 'AI算力 盘中发酵。',
+        route: [{ title: '盘中发酵', description: '出现大笔买入。', source: 'eastmoney_board_change' }],
+        stocks: [{ code: '300000', name: '中际旭创', role: '核心龙头', hotStockScore: 88 }],
+        stockCount: 1,
+      })
+      .mockResolvedValueOnce({
+        enabled: true,
+        provider: 'akshare',
+        topic: 'AI算力',
+        name: 'AI算力',
+        summary: 'AI算力 刷新后发酵。',
+        route: [{ title: '刷新后发酵', description: '榜单与详情来自同次刷新。', source: 'eastmoney_board_change' }],
+        stocks: [{ code: '601138', name: '工业富联', role: '核心龙头', hotStockScore: 92 }],
+        stockCount: 1,
+      });
 
     render(<StockScreeningPage />);
 
@@ -818,9 +829,15 @@ describe('StockScreeningPage', () => {
     fireEvent.click(screen.getByRole('button', { name: /刷新热点题材/ }));
 
     await waitFor(() => expect(getHotspots).toHaveBeenCalledWith({ provider: 'akshare', top: 12, refresh: true }));
-    expect(getHotspotDetail).toHaveBeenCalledTimes(1);
-    expect(screen.getByText('盘中发酵')).toBeInTheDocument();
-    expect(screen.getByText('中际旭创')).toBeInTheDocument();
+    await waitFor(() => expect(getHotspotDetail).toHaveBeenLastCalledWith({
+      topic: 'AI算力',
+      provider: 'akshare',
+      refresh: true,
+    }));
+    expect(await screen.findByText('刷新后发酵')).toBeInTheDocument();
+    expect(screen.getByText('工业富联')).toBeInTheDocument();
+    expect(screen.queryByText('盘中发酵')).not.toBeInTheDocument();
+    expect(screen.queryByText('中际旭创')).not.toBeInTheDocument();
   });
 
   it('keeps existing hotspot cards when manual refresh fails', async () => {

@@ -408,9 +408,14 @@ def _with_hotspot_search_augmentation(payload: Dict[str, Any], *, topic: str) ->
     if search_routes:
         route = augmented.get("route")
         existing_routes = route if isinstance(route, list) else []
+        timeline = augmented.get("timeline")
+        existing_timeline = timeline if isinstance(timeline, list) else []
         combined_routes = [*search_routes, *existing_routes]
         augmented["route"] = combined_routes
-        augmented["timeline"] = list(combined_routes)
+        # Search is an additive response-only augmentation. Keep raw timeline
+        # records under their existing field instead of replacing them with the
+        # display-oriented route summaries.
+        augmented["timeline"] = [*search_routes, *existing_timeline]
     augmented["news_search_requested"] = True
     augmented["news_search_status"] = "available" if search_routes else "no_results"
     return _remove_non_finite_json_values(augmented)

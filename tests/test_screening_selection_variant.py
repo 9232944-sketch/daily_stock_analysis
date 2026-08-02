@@ -134,6 +134,37 @@ def test_selection_variant_zero_rotation_ratio_disables_rotation() -> None:
     assert result.applied is False
 
 
+def test_selection_variant_preserves_incoming_tie_order_for_seeded_runs() -> None:
+    picks = [
+        Pick(rank=1, code="B", name="B", screen_score=90.0, final_score=90.0),
+        Pick(rank=2, code="C", name="C", screen_score=85.0, final_score=85.0),
+        Pick(rank=3, code="D", name="D", screen_score=85.0, final_score=85.0),
+        Pick(rank=4, code="A", name="A", screen_score=85.0, final_score=85.0),
+    ]
+
+    disabled = apply_seeded_selection_variant(
+        copy.deepcopy(picks),
+        max_output=3,
+        seed="browser-a",
+        period="2026-08-01",
+        rotation_ratio=0.0,
+    )
+    variants = [
+        apply_seeded_selection_variant(
+            copy.deepcopy(picks),
+            max_output=3,
+            seed=f"browser-{index}",
+            period="2026-08-01",
+        )
+        for index in range(20)
+    ]
+
+    assert [pick.code for pick in disabled.picks] == ["B", "C", "D"]
+    assert disabled.applied is False
+    assert all([pick.code for pick in result.picks][:2] == ["B", "C"] for result in variants)
+    assert all("A" not in [pick.code for pick in result.picks][:2] for result in variants)
+
+
 def test_selection_variant_protects_materially_superior_candidates() -> None:
     variants = [
         apply_seeded_selection_variant(

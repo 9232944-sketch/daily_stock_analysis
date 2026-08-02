@@ -105,48 +105,61 @@ def _call_topic_news_in_subprocess(
         raise RuntimeError("题材新闻搜索并发已满，请稍后重试")
 
     process: Any = None
+    process_started = False
     parent_conn: Any = None
     child_conn: Any = None
     try:
-        multiprocessing.freeze_support()
-        ctx = multiprocessing.get_context(_SEARCH_TIMEOUT_PROCESS_START_METHOD)
-        parent_conn, child_conn = ctx.Pipe(duplex=False)
-        process = ctx.Process(
-            target=_search_topic_news_process_worker,
-            args=(
-                child_conn,
-                constructor_kwargs,
-                topic,
-                max_results,
-                focus_keywords,
-            ),
-            name="search-topic-news",
-            daemon=True,
-        )
-        process.start()
-        child_conn.close()
-        child_conn = None
-
-        if not parent_conn.poll(wait_seconds):
-            _terminate_search_process(process)
-            raise TimeoutError(f"题材新闻搜索超过 {wait_seconds:g}s，已终止请求进程")
         try:
-            ok, value = parent_conn.recv()
-        except EOFError as exc:
-            raise RuntimeError("题材新闻搜索进程未返回结果") from exc
-    finally:
-        if child_conn is not None:
+            multiprocessing.freeze_support()
+            ctx = multiprocessing.get_context(_SEARCH_TIMEOUT_PROCESS_START_METHOD)
+            parent_conn, child_conn = ctx.Pipe(duplex=False)
+            process = ctx.Process(
+                target=_search_topic_news_process_worker,
+                args=(
+                    child_conn,
+                    constructor_kwargs,
+                    topic,
+                    max_results,
+                    focus_keywords,
+                ),
+                name="search-topic-news",
+                daemon=True,
+            )
+            process.start()
+            process_started = True
             child_conn.close()
-        if parent_conn is not None:
-            parent_conn.close()
-        if process is not None:
-            process.join(_SEARCH_TIMEOUT_PROCESS_JOIN_GRACE_SECONDS)
-            _terminate_search_process(process)
+            child_conn = None
+
+            if not parent_conn.poll(wait_seconds):
+                _terminate_search_process(process)
+                raise TimeoutError(f"题材新闻搜索超过 {wait_seconds:g}s，已终止请求进程")
+            try:
+                ok, value = parent_conn.recv()
+            except EOFError as exc:
+                raise RuntimeError("题材新闻搜索进程未返回结果") from exc
+        finally:
+            try:
+                if child_conn is not None:
+                    child_conn.close()
+            finally:
+                try:
+                    if parent_conn is not None:
+                        parent_conn.close()
+                finally:
+                    if process_started:
+                        try:
+                            process.join(_SEARCH_TIMEOUT_PROCESS_JOIN_GRACE_SECONDS)
+                        finally:
+                            _terminate_search_process(process)
+    finally:
+        # Capacity belongs to the accepted call, not to a successfully started
+        # process. Release it even if Process.start() or cleanup itself fails.
         _SEARCH_TIMEOUT_WORKER_SLOTS.release()
 
     if ok:
         return value
     raise value
+
 
 # Transient network errors (retryable)
 _SEARCH_TRANSIENT_EXCEPTIONS = (
@@ -2699,6 +2712,28 @@ class SearchService:
         event.wait(timeout=max(1.0, min(float(self._cache_ttl), 30.0)))
         return self._get_cached(key)
 
+    def _get_cached_or_wait_for_reservation(
+        self,
+        key: str,
+    ) -> Tuple[Optional['SearchResponse'], bool, Optional[threading.Event], bool]:
+        """Return a cache hit or exclusive ownership of one cache fill.
+
+        Waiters never proceed to provider work without becoming the owner. If
+        an owner finishes without a cacheable response, all waiters compete for
+        the next reservation and the losers keep waiting on that new owner.
+        """
+        waited = False
+        while True:
+            cached, cache_owner, cache_event = self._get_cached_or_reserve(key)
+            if cached is not None or cache_owner:
+                return cached, cache_owner, cache_event, waited
+            if cache_event is None:  # Defensive: the reservation API promises an event here.
+                raise RuntimeError("搜索缓存请求合并状态异常")
+            waited = True
+            cached = self._wait_for_cached(key, cache_event)
+            if cached is not None:
+                return cached, False, None, waited
+
     def _put_cache(self, key: str, response: 'SearchResponse') -> None:
         """Store a successful SearchResponse in cache."""
         with self._cache_lock:
@@ -3796,16 +3831,9 @@ class SearchService:
         query = " ".join(query_terms) if query_terms else f'"{topic_text}" A股 最新消息 催化'
         prefer_chinese = self._contains_chinese_text(query)
         cache_key = self._cache_key(f"topic_news:{topic_text}:{query}", max_results, search_days)
-        cached, cache_owner, cache_event = self._get_cached_or_reserve(cache_key)
+        cached, cache_owner, cache_event, _waited = self._get_cached_or_wait_for_reservation(cache_key)
         if cached is not None:
             return cached
-        if not cache_owner and cache_event is not None:
-            cached = self._wait_for_cached(cache_key, cache_event)
-            if cached is not None:
-                return cached
-            cached, cache_owner, cache_event = self._get_cached_or_reserve(cache_key)
-            if cached is not None:
-                return cached
 
         had_provider_success = False
         try:
@@ -3905,16 +3933,9 @@ class SearchService:
         query_terms = [str(item).strip() for item in (focus_keywords or []) if str(item).strip()]
         query = " ".join(query_terms) if query_terms else f'"{topic_text}" A股 最新消息 催化'
         cache_key = self._cache_key(f"topic_news:{topic_text}:{query}", max_results, search_days)
-        cached, cache_owner, cache_event = self._get_cached_or_reserve(cache_key)
+        cached, cache_owner, cache_event, _waited = self._get_cached_or_wait_for_reservation(cache_key)
         if cached is not None:
             return cached
-        if not cache_owner and cache_event is not None:
-            cached = self._wait_for_cached(cache_key, cache_event)
-            if cached is not None:
-                return cached
-            cached, cache_owner, cache_event = self._get_cached_or_reserve(cache_key)
-            if cached is not None:
-                return cached
 
         try:
             response = _call_topic_news_in_subprocess(
@@ -4016,12 +4037,17 @@ class SearchService:
             max_results,
             search_days,
         )
-        cached, cache_owner, cache_event = self._get_cached_or_reserve(cache_key)
+        cached, cache_owner, cache_event, waited = self._get_cached_or_wait_for_reservation(cache_key)
         if cached is not None:
-            logger.info(f"使用缓存搜索结果: {stock_name}({stock_code})")
+            logger.info(
+                "%s: %s(%s)",
+                "使用并发填充后的缓存搜索结果" if waited else "使用缓存搜索结果",
+                stock_name,
+                stock_code,
+            )
             self._record_news_search_run(
                 provider=cached.provider or "SearchCache",
-                operation="search_stock_news_cache",
+                operation="search_stock_news_cache_wait" if waited else "search_stock_news_cache",
                 success=bool(cached.success),
                 latency_ms=0,
                 record_count=len(cached.results or []),
@@ -4029,34 +4055,6 @@ class SearchService:
                 error_message=cached.error_message,
             )
             return cached
-
-        if not cache_owner and cache_event is not None:
-            cached = self._wait_for_cached(cache_key, cache_event)
-            if cached is not None:
-                logger.info(f"使用并发填充后的缓存搜索结果: {stock_name}({stock_code})")
-                self._record_news_search_run(
-                    provider=cached.provider or "SearchCache",
-                    operation="search_stock_news_cache_wait",
-                    success=bool(cached.success),
-                    latency_ms=0,
-                    record_count=len(cached.results or []),
-                    cache_hit=True,
-                    error_message=cached.error_message,
-                )
-                return cached
-            cached, cache_owner, cache_event = self._get_cached_or_reserve(cache_key)
-            if cached is not None:
-                logger.info(f"使用等待后命中的缓存搜索结果: {stock_name}({stock_code})")
-                self._record_news_search_run(
-                    provider=cached.provider or "SearchCache",
-                    operation="search_stock_news_cache_retry",
-                    success=bool(cached.success),
-                    latency_ms=0,
-                    record_count=len(cached.results or []),
-                    cache_hit=True,
-                    error_message=cached.error_message,
-                )
-                return cached
 
         try:
             # 依次尝试各个搜索引擎（若过滤后为空，继续尝试下一引擎）
