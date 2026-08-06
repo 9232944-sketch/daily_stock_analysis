@@ -140,8 +140,8 @@ daily_stock_analysis/
 | `MARKDOWN_TO_IMAGE_MAX_CHARS` | 超过此长度不转图片，避免超大图片（默认 15000） | 可选 |
 | `MD2IMG_ENGINE` | 转图引擎：`wkhtmltoimage`（默认）、`markdown-to-file` 或 `playwright`（需安装 Web 依赖与 Chromium） | 可选 |
 | `SHARE_IMAGE_XIAOHONGSHU_URL` | 分享图小红书主页 URL；仅当 4 项小红书配置全部留空时才一起回退到仓库内置品牌，配置任一自定义值后可单独留空该链接 | 可选 |
-| `SHARE_IMAGE_XIAOHONGSHU_HANDLE` | 分享图小红书昵称；仅当 4 项小红书配置全部留空时显示内置昵称 `@霸天土小豆`，自定义品牌时建议与 ID/二维码一起配置 | 可选 |
-| `SHARE_IMAGE_XIAOHONGSHU_ID` | 分享图小红书 ID；默认不展示；自定义品牌时可选填，但不会单独触发内置昵称或二维码回退 | 可选 |
+| `SHARE_IMAGE_XIAOHONGSHU_HANDLE` | 分享图小红书昵称；默认不注入源码内置账号，自定义品牌时建议与 ID/二维码一起配置 | 可选 |
+| `SHARE_IMAGE_XIAOHONGSHU_ID` | 分享图小红书 ID；默认不展示；自定义品牌时可选填，但不会单独触发任何内置身份回退 | 可选 |
 | `SHARE_IMAGE_XIAOHONGSHU_QR_PATH` | 分享图小红书二维码文件路径；支持绝对路径或相对项目根目录，仅当 4 项小红书配置全部留空时使用仓库内置二维码 | 可选 |
 | `PREFETCH_REALTIME_QUOTES` | 设为 `false` 可禁用实时行情预取，避免 efinance/akshare_em 全市场拉取（默认 true） | 可选 |
 

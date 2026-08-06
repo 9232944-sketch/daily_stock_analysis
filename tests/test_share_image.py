@@ -7,7 +7,6 @@ from types import SimpleNamespace
 import pytest
 
 from src.share_image import (
-    DEFAULT_XIAOHONGSHU_HANDLE,
     DEFAULT_XIAOHONGSHU_QR_PATH,
     PROJECT_DISPLAY_NAME,
     PROJECT_REPOSITORY,
@@ -66,7 +65,7 @@ def test_stock_share_image_omits_unconfigured_social_account():
 def test_runtime_branding_defaults_to_bundled_xiaohongshu_qr():
     branding = share_image_branding_from_config(object())
 
-    assert branding.xiaohongshu_handle == DEFAULT_XIAOHONGSHU_HANDLE
+    assert branding.xiaohongshu_handle == ""
     assert branding.xiaohongshu_id == ""
     assert branding.xiaohongshu_qr_path == DEFAULT_XIAOHONGSHU_QR_PATH
     html = build_share_image_html(
@@ -77,7 +76,8 @@ def test_runtime_branding_defaults_to_bundled_xiaohongshu_qr():
 
     assert html.count('class="qr-frame"') == 1
     assert html.count("data:image/jpeg;base64,") == 1
-    assert f"<b>小红书</b> {DEFAULT_XIAOHONGSHU_HANDLE}" in html
+    assert "<b>小红书</b>" in html
+    assert "@霸天土小豆" not in html
     assert " · ID " not in html
 
 
@@ -102,7 +102,7 @@ def test_runtime_branding_does_not_mix_default_qr_with_custom_identity():
     assert "@自定义账号" in html
     assert "ID custom-id" in html
     assert "data:image/jpeg;base64," not in html
-    assert DEFAULT_XIAOHONGSHU_HANDLE not in html
+    assert "@霸天土小豆" not in html
 
 
 def test_runtime_branding_does_not_mix_default_pair_with_custom_handle_or_url():
@@ -126,7 +126,7 @@ def test_runtime_branding_does_not_mix_default_pair_with_custom_handle_or_url():
     assert "@自定义账号" in html
     assert 'href="https://example.com/custom"' in html
     assert "data:image/jpeg;base64," not in html
-    assert DEFAULT_XIAOHONGSHU_HANDLE not in html
+    assert "@霸天土小豆" not in html
 
 
 def test_runtime_branding_does_not_mix_default_handle_with_custom_qr():
@@ -148,7 +148,7 @@ def test_runtime_branding_does_not_mix_default_handle_with_custom_qr():
     )
 
     assert html.count("data:image/jpeg;base64,") == 1
-    assert DEFAULT_XIAOHONGSHU_HANDLE not in html
+    assert "@霸天土小豆" not in html
 
 
 def test_runtime_branding_treats_whitespace_only_values_as_unconfigured():
@@ -161,7 +161,7 @@ def test_runtime_branding_treats_whitespace_only_values_as_unconfigured():
         )
     )
 
-    assert branding.xiaohongshu_handle == DEFAULT_XIAOHONGSHU_HANDLE
+    assert branding.xiaohongshu_handle == ""
     assert branding.xiaohongshu_id == ""
     assert branding.xiaohongshu_qr_path == DEFAULT_XIAOHONGSHU_QR_PATH
 
