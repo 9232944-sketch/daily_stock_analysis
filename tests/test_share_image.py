@@ -6,10 +6,13 @@ from pathlib import Path
 import pytest
 
 from src.share_image import (
+    DEFAULT_XIAOHONGSHU_ID,
+    DEFAULT_XIAOHONGSHU_QR_PATH,
     PROJECT_DISPLAY_NAME,
     PROJECT_REPOSITORY,
     ShareImageBranding,
     build_share_image_html,
+    share_image_branding_from_config,
 )
 
 XIAOHONGSHU_HANDLE = "@示例账号"
@@ -57,6 +60,22 @@ def test_stock_share_image_omits_unconfigured_social_account():
     assert 'class="qr-card' not in html
     assert "小红书" not in html
     assert 'class="footer-brand full"' in html
+
+
+def test_runtime_branding_defaults_to_bundled_xiaohongshu_qr():
+    branding = share_image_branding_from_config(object())
+
+    assert branding.xiaohongshu_id == DEFAULT_XIAOHONGSHU_ID
+    assert branding.xiaohongshu_qr_path == DEFAULT_XIAOHONGSHU_QR_PATH
+    html = build_share_image_html(
+        "# 贵州茅台 600519 分析报告\n\n## 核心判断\n\n- 趋势偏多\n",
+        generated_on=date(2026, 7, 31),
+        branding=branding,
+    )
+
+    assert html.count('class="qr-frame"') == 1
+    assert html.count("data:image/jpeg;base64,") == 1
+    assert f"ID {DEFAULT_XIAOHONGSHU_ID}" in html
 
 
 def test_stock_share_image_does_not_link_unsafe_social_url():

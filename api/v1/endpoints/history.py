@@ -59,7 +59,11 @@ from src.analysis_context_pack_overview import (
 from src.market_phase_summary import extract_market_phase_summary
 from src.config import get_config
 from src.md2img import markdown_to_image
-from src.share_image import ShareImageBranding, build_share_image_html
+from src.share_image import (
+    ShareImageBranding,
+    build_share_image_html,
+    share_image_branding_from_config,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -122,12 +126,7 @@ def _history_share_image_input(
 
 
 def _history_share_image_branding(config: object) -> ShareImageBranding:
-    return ShareImageBranding(
-        xiaohongshu_url=str(getattr(config, "share_image_xiaohongshu_url", None) or ""),
-        xiaohongshu_handle=str(getattr(config, "share_image_xiaohongshu_handle", None) or ""),
-        xiaohongshu_id=str(getattr(config, "share_image_xiaohongshu_id", None) or ""),
-        xiaohongshu_qr_path=str(getattr(config, "share_image_xiaohongshu_qr_path", None) or ""),
-    )
+    return share_image_branding_from_config(config)
 
 
 def _normalize_code_for_grouping(code: str) -> str:

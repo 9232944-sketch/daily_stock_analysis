@@ -26,6 +26,8 @@ import markdown2
 PROJECT_URL = "https://github.com/ZhuLinsen/daily_stock_analysis"
 PROJECT_REPOSITORY = "ZhuLinsen/daily_stock_analysis"
 PROJECT_DISPLAY_NAME = "股票智能分析系统"
+DEFAULT_XIAOHONGSHU_QR_PATH = "src/assets/share_image/xiaohongshu_qr.jpg"
+DEFAULT_XIAOHONGSHU_ID = "9544718011"
 _MARKET_RE = re.compile(
     r"(?:大盘复盘|市场复盘|market\s+(?:review|recap)|시황\s*리뷰)", re.IGNORECASE
 )
@@ -175,6 +177,23 @@ class ShareImageBranding:
             self.xiaohongshu_id,
             self.xiaohongshu_qr_path,
         ))
+
+
+def share_image_branding_from_config(config: object) -> ShareImageBranding:
+    """Build poster branding with the bundled QR as the no-config fallback."""
+
+    return ShareImageBranding(
+        xiaohongshu_url=str(getattr(config, "share_image_xiaohongshu_url", None) or ""),
+        xiaohongshu_handle=str(getattr(config, "share_image_xiaohongshu_handle", None) or ""),
+        xiaohongshu_id=str(
+            getattr(config, "share_image_xiaohongshu_id", None)
+            or DEFAULT_XIAOHONGSHU_ID
+        ),
+        xiaohongshu_qr_path=str(
+            getattr(config, "share_image_xiaohongshu_qr_path", None)
+            or DEFAULT_XIAOHONGSHU_QR_PATH
+        ),
+    )
 
 
 @dataclass
@@ -2134,9 +2153,12 @@ def build_share_image_html(
 
 
 __all__ = [
+    "DEFAULT_XIAOHONGSHU_ID",
+    "DEFAULT_XIAOHONGSHU_QR_PATH",
     "PROJECT_REPOSITORY",
     "PROJECT_DISPLAY_NAME",
     "PROJECT_URL",
     "ShareImageBranding",
     "build_share_image_html",
+    "share_image_branding_from_config",
 ]

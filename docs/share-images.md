@@ -1,6 +1,6 @@
 # 分享图片模板与数据填充
 
-分享图片用于把个股分析和市场复盘转换为适合社交平台传播的 1080px 长图。个股和大盘使用两套独立的信息结构，但共用 DSA 品牌、仓库标识 `ZhuLinsen/daily_stock_analysis` 和风险声明。GitHub 区不放二维码；小红书区域由部署配置决定，未配置时整块隐藏，避免 fork 或私有部署默认宣传维护者账号。
+分享图片用于把个股分析和市场复盘转换为适合社交平台传播的 1080px 长图。个股和大盘使用两套独立的信息结构，但共用 DSA 品牌、仓库标识 `ZhuLinsen/daily_stock_analysis` 和风险声明。GitHub 区不放二维码；Web 与桌面端分享图默认展示仓库内置小红书二维码及账号 ID `9544718011`，部署配置可替换二维码和账号信息。
 
 ## 运行时如何填充
 
@@ -22,7 +22,7 @@
 
 `MARKDOWN_TO_IMAGE_CHANNELS`、`MD2IMG_ENGINE`、`MARKDOWN_TO_IMAGE_MAX_CHARS` 继续控制哪些通知渠道转图、使用哪个引擎以及最大输入长度。转换失败时仍回退为文本通知。
 
-小红书品牌使用以下可选配置，四项全部留空即关闭该区域：
+小红书品牌使用以下可选配置。全部留空时仍展示仓库内置二维码及账号 ID `9544718011`；配置自定义值后优先使用自定义资产和 ID：
 
 ```dotenv
 SHARE_IMAGE_XIAOHONGSHU_URL=https://example.com/my-xiaohongshu
@@ -31,7 +31,7 @@ SHARE_IMAGE_XIAOHONGSHU_ID=123456789
 SHARE_IMAGE_XIAOHONGSHU_QR_PATH=assets/my-xiaohongshu-qr.png
 ```
 
-二维码路径支持绝对路径或相对项目根目录路径；冻结桌面后端也会从 PyInstaller 资源目录解析相对路径。账号 URL 只接受 `http://` 或 `https://`。二维码在转图时以内嵌 Data URI 渲染，不依赖运行时网络。
+二维码路径支持绝对路径或相对项目根目录路径；冻结桌面后端也会从 PyInstaller 资源目录解析相对路径。账号 URL 只接受 `http://` 或 `https://`。二维码在转图时以内嵌 Data URI 渲染，不依赖运行时网络。未配置 `SHARE_IMAGE_XIAOHONGSHU_QR_PATH` 时，统一回退到随源码和桌面包分发的 `src/assets/share_image/xiaohongshu_qr.jpg`，因此 Web PNG 与桌面 Electron PNG 都会保留二维码。
 
 ## Web 一键分享
 
@@ -151,6 +151,6 @@ png_bytes = markdown_to_image(
 - 涨跌颜色优先使用结构化 payload 持久化的 `color_scheme`，旧记录则从最终报告颜色标记恢复；模板不按市场地区硬编码涨跌色。
 - 分享图中的买入、止损和目标只保留可扫描的价格或“等待企稳”；完整条件始终保留在原报告中。
 - 没有真实价格序列时不绘制伪 K 线；顶部仅保留非数据化的品牌光晕。
-- 小红书 URL、账号、ID 和二维码路径来自运行时配置；全部留空时不渲染小红书区域。GitHub 固定展示仓库标识 `ZhuLinsen/daily_stock_analysis`，不生成二维码。
+- 小红书 URL 和账号文案来自运行时配置；ID 与二维码路径可由运行时配置覆盖，留空时分别使用内置 ID `9544718011` 和仓库内置二维码。GitHub 固定展示仓库标识 `ZhuLinsen/daily_stock_analysis`，不生成二维码。
 - 大盘报告在核心模块已成功提取时不重复附加完整 Markdown；额外的详情章节保留在原报告中，分享图只呈现结构化摘要。
 - 图片底部固定说明“AI 生成，仅供研究交流，不构成投资建议”。
