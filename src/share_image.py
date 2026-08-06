@@ -27,7 +27,7 @@ PROJECT_URL = "https://github.com/ZhuLinsen/daily_stock_analysis"
 PROJECT_REPOSITORY = "ZhuLinsen/daily_stock_analysis"
 PROJECT_DISPLAY_NAME = "股票智能分析系统"
 DEFAULT_XIAOHONGSHU_QR_PATH = "src/assets/share_image/xiaohongshu_qr.jpg"
-DEFAULT_XIAOHONGSHU_ID = "9544718011"
+DEFAULT_XIAOHONGSHU_HANDLE = "@霸天土小豆"
 _MARKET_RE = re.compile(
     r"(?:大盘复盘|市场复盘|market\s+(?:review|recap)|시황\s*리뷰)", re.IGNORECASE
 )
@@ -188,7 +188,7 @@ def share_image_branding_from_config(config: object) -> ShareImageBranding:
     qr_path = str(getattr(config, "share_image_xiaohongshu_qr_path", None) or "").strip()
 
     if not any((url, handle, account_id, qr_path)):
-        account_id = DEFAULT_XIAOHONGSHU_ID
+        handle = DEFAULT_XIAOHONGSHU_HANDLE
         qr_path = DEFAULT_XIAOHONGSHU_QR_PATH
 
     return ShareImageBranding(
@@ -2156,7 +2156,7 @@ def build_share_image_html(
 
 
 __all__ = [
-    "DEFAULT_XIAOHONGSHU_ID",
+    "DEFAULT_XIAOHONGSHU_HANDLE",
     "DEFAULT_XIAOHONGSHU_QR_PATH",
     "PROJECT_REPOSITORY",
     "PROJECT_DISPLAY_NAME",

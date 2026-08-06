@@ -12,7 +12,7 @@ from src.md2img import (
     markdown_to_image,
 )
 from src.share_image import (
-    DEFAULT_XIAOHONGSHU_ID,
+    DEFAULT_XIAOHONGSHU_HANDLE,
     DEFAULT_XIAOHONGSHU_QR_PATH,
     ShareImageBranding,
 )
@@ -140,7 +140,8 @@ def test_markdown_to_image_uses_bundled_qr_when_branding_is_unconfigured():
         assert markdown_to_image("# 大盘复盘") == b"png"
 
     branding = render.call_args.args[2]
-    assert branding.xiaohongshu_id == DEFAULT_XIAOHONGSHU_ID
+    assert branding.xiaohongshu_handle == DEFAULT_XIAOHONGSHU_HANDLE
+    assert branding.xiaohongshu_id == ""
     assert branding.xiaohongshu_qr_path == DEFAULT_XIAOHONGSHU_QR_PATH
 
 
