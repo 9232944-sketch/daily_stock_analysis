@@ -2,6 +2,7 @@
 
 from datetime import date
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -76,6 +77,90 @@ def test_runtime_branding_defaults_to_bundled_xiaohongshu_qr():
     assert html.count('class="qr-frame"') == 1
     assert html.count("data:image/jpeg;base64,") == 1
     assert f"ID {DEFAULT_XIAOHONGSHU_ID}" in html
+
+
+def test_runtime_branding_does_not_mix_default_qr_with_custom_identity():
+    branding = share_image_branding_from_config(
+        SimpleNamespace(
+            share_image_xiaohongshu_url="https://example.com/custom",
+            share_image_xiaohongshu_handle="@自定义账号",
+            share_image_xiaohongshu_id="custom-id",
+        )
+    )
+
+    assert branding.xiaohongshu_id == "custom-id"
+    assert branding.xiaohongshu_qr_path == ""
+
+    html = build_share_image_html(
+        "# 贵州茅台 600519 分析报告\n\n## 核心判断\n\n- 趋势偏多\n",
+        generated_on=date(2026, 7, 31),
+        branding=branding,
+    )
+
+    assert "@自定义账号" in html
+    assert "ID custom-id" in html
+    assert "data:image/jpeg;base64," not in html
+    assert DEFAULT_XIAOHONGSHU_ID not in html
+
+
+def test_runtime_branding_does_not_mix_default_pair_with_custom_handle_or_url():
+    branding = share_image_branding_from_config(
+        SimpleNamespace(
+            share_image_xiaohongshu_url="https://example.com/custom",
+            share_image_xiaohongshu_handle="@自定义账号",
+        )
+    )
+
+    assert branding.xiaohongshu_handle == "@自定义账号"
+    assert branding.xiaohongshu_id == ""
+    assert branding.xiaohongshu_qr_path == ""
+
+    html = build_share_image_html(
+        "# 贵州茅台 600519 分析报告\n\n## 核心判断\n\n- 趋势偏多\n",
+        generated_on=date(2026, 7, 31),
+        branding=branding,
+    )
+
+    assert "@自定义账号" in html
+    assert 'href="https://example.com/custom"' in html
+    assert "data:image/jpeg;base64," not in html
+    assert DEFAULT_XIAOHONGSHU_ID not in html
+
+
+def test_runtime_branding_does_not_mix_default_id_with_custom_qr():
+    branding = share_image_branding_from_config(
+        SimpleNamespace(
+            share_image_xiaohongshu_qr_path=str(
+                Path(__file__).parents[1] / "src" / "assets" / "share_image" / "xiaohongshu_qr.jpg"
+            ),
+        )
+    )
+
+    assert branding.xiaohongshu_id == ""
+    assert branding.xiaohongshu_qr_path
+
+    html = build_share_image_html(
+        "# 贵州茅台 600519 分析报告\n\n## 核心判断\n\n- 趋势偏多\n",
+        generated_on=date(2026, 7, 31),
+        branding=branding,
+    )
+
+    assert html.count("data:image/jpeg;base64,") == 1
+    assert f"ID {DEFAULT_XIAOHONGSHU_ID}" not in html
+
+
+def test_runtime_branding_treats_whitespace_only_values_as_unconfigured():
+    branding = share_image_branding_from_config(
+        SimpleNamespace(
+            share_image_xiaohongshu_url="  ",
+            share_image_xiaohongshu_handle="  ",
+            share_image_xiaohongshu_id="  ",
+            share_image_xiaohongshu_qr_path="  ",
+        )
+    )
+
+    assert branding.xiaohongshu_id == DEFAULT_XIAOHONGSHU_ID
+    assert branding.xiaohongshu_qr_path == DEFAULT_XIAOHONGSHU_QR_PATH
 
 
 def test_stock_share_image_does_not_link_unsafe_social_url():

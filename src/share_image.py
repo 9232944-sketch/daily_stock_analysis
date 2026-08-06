@@ -172,27 +172,30 @@ class ShareImageBranding:
     @property
     def has_xiaohongshu(self) -> bool:
         return any((
-            self.xiaohongshu_url,
-            self.xiaohongshu_handle,
-            self.xiaohongshu_id,
-            self.xiaohongshu_qr_path,
+            self.xiaohongshu_url.strip(),
+            self.xiaohongshu_handle.strip(),
+            self.xiaohongshu_id.strip(),
+            self.xiaohongshu_qr_path.strip(),
         ))
 
 
 def share_image_branding_from_config(config: object) -> ShareImageBranding:
-    """Build poster branding with the bundled QR as the no-config fallback."""
+    """Build poster branding with bundled defaults applied only as an atomic pair."""
+
+    url = str(getattr(config, "share_image_xiaohongshu_url", None) or "").strip()
+    handle = str(getattr(config, "share_image_xiaohongshu_handle", None) or "").strip()
+    account_id = str(getattr(config, "share_image_xiaohongshu_id", None) or "").strip()
+    qr_path = str(getattr(config, "share_image_xiaohongshu_qr_path", None) or "").strip()
+
+    if not any((url, handle, account_id, qr_path)):
+        account_id = DEFAULT_XIAOHONGSHU_ID
+        qr_path = DEFAULT_XIAOHONGSHU_QR_PATH
 
     return ShareImageBranding(
-        xiaohongshu_url=str(getattr(config, "share_image_xiaohongshu_url", None) or ""),
-        xiaohongshu_handle=str(getattr(config, "share_image_xiaohongshu_handle", None) or ""),
-        xiaohongshu_id=str(
-            getattr(config, "share_image_xiaohongshu_id", None)
-            or DEFAULT_XIAOHONGSHU_ID
-        ),
-        xiaohongshu_qr_path=str(
-            getattr(config, "share_image_xiaohongshu_qr_path", None)
-            or DEFAULT_XIAOHONGSHU_QR_PATH
-        ),
+        xiaohongshu_url=url,
+        xiaohongshu_handle=handle,
+        xiaohongshu_id=account_id,
+        xiaohongshu_qr_path=qr_path,
     )
 
 
