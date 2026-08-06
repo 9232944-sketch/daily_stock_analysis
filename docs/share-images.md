@@ -22,7 +22,7 @@
 
 `MARKDOWN_TO_IMAGE_CHANNELS`、`MD2IMG_ENGINE`、`MARKDOWN_TO_IMAGE_MAX_CHARS` 继续控制哪些通知渠道转图、使用哪个引擎以及最大输入长度。转换失败时仍回退为文本通知。
 
-小红书品牌使用以下可选配置。全部留空时展示仓库内置二维码及昵称 `@霸天土小豆`；配置任一自定义值后仅使用这组自定义品牌信息，避免把自定义账号与默认二维码混合：
+小红书品牌使用以下可选配置。全部留空时展示仓库内置二维码及昵称 `@霸天土小豆`；配置任一自定义值后仅使用这组自定义品牌信息，不再补默认昵称或二维码，避免把自定义账号与默认二维码混合：
 
 ```dotenv
 SHARE_IMAGE_XIAOHONGSHU_URL=https://example.com/my-xiaohongshu
@@ -31,7 +31,7 @@ SHARE_IMAGE_XIAOHONGSHU_ID=123456789
 SHARE_IMAGE_XIAOHONGSHU_QR_PATH=assets/my-xiaohongshu-qr.png
 ```
 
-二维码路径支持绝对路径或相对项目根目录路径；冻结桌面后端也会从 PyInstaller 资源目录解析相对路径。账号 URL 只接受 `http://` 或 `https://`。二维码在转图时以内嵌 Data URI 渲染，不依赖运行时网络。未配置 `SHARE_IMAGE_XIAOHONGSHU_QR_PATH` 时，统一回退到随源码和桌面包分发的 `src/assets/share_image/xiaohongshu_qr.jpg`，因此 Web PNG 与桌面 Electron PNG 都会保留二维码。
+二维码路径支持绝对路径或相对项目根目录路径；冻结桌面后端也会从 PyInstaller 资源目录解析相对路径。账号 URL 只接受 `http://` 或 `https://`。二维码在转图时以内嵌 Data URI 渲染，不依赖运行时网络。仅当 `SHARE_IMAGE_XIAOHONGSHU_URL`、`SHARE_IMAGE_XIAOHONGSHU_HANDLE`、`SHARE_IMAGE_XIAOHONGSHU_ID` 和 `SHARE_IMAGE_XIAOHONGSHU_QR_PATH` 全部未配置时，才回退到随源码和桌面包分发的 `src/assets/share_image/xiaohongshu_qr.jpg`；如果已配置任一自定义品牌字段但未配置 `SHARE_IMAGE_XIAOHONGSHU_QR_PATH`，分享图将不显示二维码。
 
 ## Web 一键分享
 
