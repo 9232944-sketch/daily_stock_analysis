@@ -37,9 +37,9 @@ SHARE_IMAGE_XIAOHONGSHU_QR_PATH=assets/my-xiaohongshu-qr.png
 
 浏览器版历史个股报告、市场复盘和完整报告抽屉右上角都会显示“分享”按钮。页面加载报告时不会生成图片；只有用户点击“分享”后，页面才调用 `GET /api/v1/history/{record_id}/share-image` 按需生成或读取缓存 PNG。支持文件分享的浏览器会在图片准备好后提示“再次点击分享”，由第二次点击同步打开系统分享面板，避免异步生成过程使浏览器的用户激活状态失效；其他浏览器会在首次生成完成后直接下载 PNG。如果系统分享面板打开失败，除用户主动取消外也会自动回退下载已经生成的 PNG。
 
-Electron 桌面运行时默认不展示该按钮。当前 Windows/macOS 打包版不会随包分发 `wkhtmltoimage`、`markdown-to-file` 或 Playwright/Chromium renderer，避免桌面用户在页面加载时就命中 `share_image_unavailable` 失败态。
+Electron 桌面端同样展示“分享”按钮，但不依赖额外分发 `wkhtmltoimage`、`markdown-to-file` 或 Playwright。用户点击后，桌面 preload 通过受限 IPC 让主进程打开本地 `GET /api/v1/history/{record_id}/share-image-html`，使用 Electron 自带的隐藏 Chromium 窗口按完整页面高度截图为 PNG，随后走与浏览器一致的下载回退。IPC 只接受正整数记录 ID，主进程只允许当前桌面窗口请求本次启动时确定的后端 origin（包括显式配置的局域网 `WEBUI_HOST`），HTML 响应使用 CSP 禁止脚本、外部资源和网络加载。
 
-Web 手工生成不受 `MARKDOWN_TO_IMAGE_CHANNELS` 限制，但服务端仍需配置可用的 `MD2IMG_ENGINE`。使用 Playwright 时先执行：
+Web 手工生成不受 `MARKDOWN_TO_IMAGE_CHANNELS` 限制，但服务端仍需配置可用的 `MD2IMG_ENGINE`。桌面端手工生成复用 Electron，不读取 `MD2IMG_ENGINE`。Web 使用 Playwright 时先执行：
 
 ```bash
 cd apps/dsa-web
