@@ -179,15 +179,12 @@ class ShareImageBranding:
 
 
 def share_image_branding_from_config(config: object) -> ShareImageBranding:
-    """Build poster branding with an optional bundled QR fallback."""
+    """Build poster branding strictly from deployment-provided settings."""
 
     url = str(getattr(config, "share_image_xiaohongshu_url", None) or "").strip()
     handle = str(getattr(config, "share_image_xiaohongshu_handle", None) or "").strip()
     account_id = str(getattr(config, "share_image_xiaohongshu_id", None) or "").strip()
     qr_path = str(getattr(config, "share_image_xiaohongshu_qr_path", None) or "").strip()
-
-    if not any((url, handle, account_id, qr_path)):
-        qr_path = DEFAULT_XIAOHONGSHU_QR_PATH
 
     return ShareImageBranding(
         xiaohongshu_url=url,

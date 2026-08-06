@@ -12,7 +12,6 @@ from src.md2img import (
     markdown_to_image,
 )
 from src.share_image import (
-    DEFAULT_XIAOHONGSHU_QR_PATH,
     ShareImageBranding,
 )
 
@@ -130,7 +129,7 @@ def test_markdown_to_image_forwards_social_branding_from_config():
     )
 
 
-def test_markdown_to_image_uses_bundled_qr_when_branding_is_unconfigured():
+def test_markdown_to_image_leaves_branding_empty_when_unconfigured():
     config = SimpleNamespace(md2img_engine="wkhtmltoimage")
     with (
         patch("src.config.get_config", return_value=config),
@@ -141,7 +140,7 @@ def test_markdown_to_image_uses_bundled_qr_when_branding_is_unconfigured():
     branding = render.call_args.args[2]
     assert branding.xiaohongshu_handle == ""
     assert branding.xiaohongshu_id == ""
-    assert branding.xiaohongshu_qr_path == DEFAULT_XIAOHONGSHU_QR_PATH
+    assert branding.xiaohongshu_qr_path == ""
 
 
 def test_wkhtml_renderer_forwards_structured_analysis_payload():

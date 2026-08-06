@@ -7,7 +7,6 @@ from types import SimpleNamespace
 import pytest
 
 from src.share_image import (
-    DEFAULT_XIAOHONGSHU_QR_PATH,
     PROJECT_DISPLAY_NAME,
     PROJECT_REPOSITORY,
     ShareImageBranding,
@@ -62,26 +61,24 @@ def test_stock_share_image_omits_unconfigured_social_account():
     assert 'class="footer-brand full"' in html
 
 
-def test_runtime_branding_defaults_to_bundled_xiaohongshu_qr():
+def test_runtime_branding_defaults_to_empty_xiaohongshu_branding():
     branding = share_image_branding_from_config(object())
 
     assert branding.xiaohongshu_handle == ""
     assert branding.xiaohongshu_id == ""
-    assert branding.xiaohongshu_qr_path == DEFAULT_XIAOHONGSHU_QR_PATH
+    assert branding.xiaohongshu_qr_path == ""
     html = build_share_image_html(
         "# 贵州茅台 600519 分析报告\n\n## 核心判断\n\n- 趋势偏多\n",
         generated_on=date(2026, 7, 31),
         branding=branding,
     )
 
-    assert html.count('class="qr-frame"') == 1
-    assert html.count("data:image/jpeg;base64,") == 1
-    assert "<b>小红书</b>" in html
-    assert "@霸天土小豆" not in html
-    assert " · ID " not in html
+    assert 'class="qr-card' not in html
+    assert "data:image/jpeg;base64," not in html
+    assert "<b>小红书</b>" not in html
 
 
-def test_runtime_branding_does_not_mix_default_qr_with_custom_identity():
+def test_runtime_branding_does_not_require_qr_for_custom_identity():
     branding = share_image_branding_from_config(
         SimpleNamespace(
             share_image_xiaohongshu_url="https://example.com/custom",
@@ -163,7 +160,7 @@ def test_runtime_branding_treats_whitespace_only_values_as_unconfigured():
 
     assert branding.xiaohongshu_handle == ""
     assert branding.xiaohongshu_id == ""
-    assert branding.xiaohongshu_qr_path == DEFAULT_XIAOHONGSHU_QR_PATH
+    assert branding.xiaohongshu_qr_path == ""
 
 
 def test_stock_share_image_does_not_link_unsafe_social_url():

@@ -127,10 +127,10 @@ Go to your forked repo → `Settings` → `Secrets and variables` → `Actions` 
 | `MARKDOWN_TO_IMAGE_CHANNELS` | Notification channels that receive report images: telegram,wechat,custom,email,slack | Optional |
 | `MARKDOWN_TO_IMAGE_MAX_CHARS` | Skip image conversion above this Markdown length (default 15000) | Optional |
 | `MD2IMG_ENGINE` | Image renderer: `wkhtmltoimage` (default), `markdown-to-file`, or `playwright` | Optional |
-| `SHARE_IMAGE_XIAOHONGSHU_URL` | Xiaohongshu profile URL shown in share images; the bundled branding only returns when all four Xiaohongshu fields are empty, so a custom branding set may leave this link empty | Optional |
+| `SHARE_IMAGE_XIAOHONGSHU_URL` | Xiaohongshu profile URL shown in share images; display is fully deployment-configured, with no bundled branding fallback | Optional |
 | `SHARE_IMAGE_XIAOHONGSHU_HANDLE` | Xiaohongshu nickname shown in share images; no source-level account identity is injected by default, and custom branding should usually provide the handle/ID/QR together | Optional |
 | `SHARE_IMAGE_XIAOHONGSHU_ID` | Xiaohongshu account ID shown in share images; optional for custom branding, but leaving it empty does not restore any bundled identity on its own | Optional |
-| `SHARE_IMAGE_XIAOHONGSHU_QR_PATH` | QR image path, absolute or relative to the project root; uses the bundled QR only when all four Xiaohongshu settings are empty | Optional |
+| `SHARE_IMAGE_XIAOHONGSHU_QR_PATH` | QR image path, absolute or relative to the project root; when omitted, the share image shows no QR code | Optional |
 | `NOTIFICATION_REPORT_CHANNELS` | Report route channels for single-stock, aggregate daily, market review, merged push, and Feishu document success notifications. Empty means all configured channels | Optional |
 | `NOTIFICATION_ALERT_CHANNELS` | Alert route channels for EventMonitor notifications. Empty means all configured channels | Optional |
 | `NOTIFICATION_SYSTEM_ERROR_CHANNELS` | Reserved system_error route channels. No automatic system error producer is added in P3; empty means all configured channels | Optional |
