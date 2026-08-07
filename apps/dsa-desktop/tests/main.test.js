@@ -238,11 +238,65 @@ test('renderDesktopShareImage captures the complete local poster and closes its 
   });
 
   assert.equal(windows.length, 1);
+  assert.equal(windows[0].options.enableLargerThanScreen, false);
   assert.equal(windows[0].loadedUrl, 'http://127.0.0.1:8123/api/v1/history/29/share-image-html');
   assert.deepEqual(windows[0].contentSize, [1080, 1840]);
   assert.deepEqual(windows[0].captureRect, { x: 0, y: 0, width: 1080, height: 1840 });
   assert.equal(windows[0].isDestroyed(), true);
   assert.equal(Buffer.from(bytes).toString(), 'png-bytes');
+});
+
+test('renderDesktopShareImage enables larger-than-screen capture windows on macOS', async (t) => {
+  const windows = [];
+  function FakeRenderWindow(options) {
+    let destroyed = false;
+    let executeCount = 0;
+    const instance = {
+      options,
+      webContents: {
+        setWindowOpenHandler: () => undefined,
+        on: () => undefined,
+        executeJavaScript: async () => {
+          executeCount += 1;
+          return executeCount === 1
+            ? { contentType: 'text/html', width: 1080, height: 4200 }
+            : undefined;
+        },
+        capturePage: async () => ({
+          isEmpty: () => false,
+          toPNG: () => Buffer.from('mac-png'),
+        }),
+      },
+      loadURL: async () => undefined,
+      setContentSize: () => undefined,
+      isDestroyed: () => destroyed,
+      destroy: () => {
+        destroyed = true;
+      },
+    };
+    windows.push(instance);
+    return instance;
+  }
+  FakeRenderWindow.getAllWindows = () => [];
+
+  const mainModule = loadMainModule(t, {
+    browserWindow: FakeRenderWindow,
+    platform: 'darwin',
+  });
+  const sourceWindow = {
+    isDestroyed: () => false,
+    webContents: {
+      getURL: () => 'http://127.0.0.1:8123/?desktop_version=3.30.0',
+    },
+  };
+
+  await mainModule.renderDesktopShareImage(31, {
+    sourceWindow,
+    BrowserWindowClass: FakeRenderWindow,
+  });
+
+  assert.equal(windows.length, 1);
+  assert.equal(windows[0].options.enableLargerThanScreen, true);
 });
 
 test('resolveDesktopConnectHost keeps desktop navigation local for public binds', (t) => {
