@@ -7,6 +7,8 @@ from types import SimpleNamespace
 import pytest
 
 from src.share_image import (
+    DEFAULT_XIAOHONGSHU_HANDLE,
+    DEFAULT_XIAOHONGSHU_QR_PATH,
     PROJECT_DISPLAY_NAME,
     PROJECT_REPOSITORY,
     ShareImageBranding,
@@ -61,24 +63,25 @@ def test_stock_share_image_omits_unconfigured_social_account():
     assert 'class="footer-brand full"' in html
 
 
-def test_runtime_branding_defaults_to_empty_xiaohongshu_branding():
+def test_runtime_branding_defaults_to_bundled_xiaohongshu_qr():
     branding = share_image_branding_from_config(object())
 
-    assert branding.xiaohongshu_handle == ""
+    assert branding.xiaohongshu_handle == DEFAULT_XIAOHONGSHU_HANDLE
     assert branding.xiaohongshu_id == ""
-    assert branding.xiaohongshu_qr_path == ""
+    assert branding.xiaohongshu_qr_path == DEFAULT_XIAOHONGSHU_QR_PATH
     html = build_share_image_html(
         "# 贵州茅台 600519 分析报告\n\n## 核心判断\n\n- 趋势偏多\n",
         generated_on=date(2026, 7, 31),
         branding=branding,
     )
 
-    assert 'class="qr-card' not in html
-    assert "data:image/jpeg;base64," not in html
-    assert "<b>小红书</b>" not in html
+    assert html.count('class="qr-frame"') == 1
+    assert html.count("data:image/jpeg;base64,") == 1
+    assert f"<b>小红书</b> {DEFAULT_XIAOHONGSHU_HANDLE}" in html
+    assert " · ID " not in html
 
 
-def test_runtime_branding_does_not_require_qr_for_custom_identity():
+def test_runtime_branding_does_not_mix_default_qr_with_custom_identity():
     branding = share_image_branding_from_config(
         SimpleNamespace(
             share_image_xiaohongshu_url="https://example.com/custom",
@@ -99,7 +102,7 @@ def test_runtime_branding_does_not_require_qr_for_custom_identity():
     assert "@自定义账号" in html
     assert "ID custom-id" in html
     assert "data:image/jpeg;base64," not in html
-    assert "@霸天土小豆" not in html
+    assert DEFAULT_XIAOHONGSHU_HANDLE not in html
 
 
 def test_runtime_branding_does_not_mix_default_pair_with_custom_handle_or_url():
@@ -123,7 +126,7 @@ def test_runtime_branding_does_not_mix_default_pair_with_custom_handle_or_url():
     assert "@自定义账号" in html
     assert 'href="https://example.com/custom"' in html
     assert "data:image/jpeg;base64," not in html
-    assert "@霸天土小豆" not in html
+    assert DEFAULT_XIAOHONGSHU_HANDLE not in html
 
 
 def test_runtime_branding_does_not_mix_default_handle_with_custom_qr():
@@ -145,7 +148,7 @@ def test_runtime_branding_does_not_mix_default_handle_with_custom_qr():
     )
 
     assert html.count("data:image/jpeg;base64,") == 1
-    assert "@霸天土小豆" not in html
+    assert DEFAULT_XIAOHONGSHU_HANDLE not in html
 
 
 def test_runtime_branding_treats_whitespace_only_values_as_unconfigured():
@@ -158,9 +161,9 @@ def test_runtime_branding_treats_whitespace_only_values_as_unconfigured():
         )
     )
 
-    assert branding.xiaohongshu_handle == ""
+    assert branding.xiaohongshu_handle == DEFAULT_XIAOHONGSHU_HANDLE
     assert branding.xiaohongshu_id == ""
-    assert branding.xiaohongshu_qr_path == ""
+    assert branding.xiaohongshu_qr_path == DEFAULT_XIAOHONGSHU_QR_PATH
 
 
 def test_stock_share_image_does_not_link_unsafe_social_url():

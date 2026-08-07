@@ -238,7 +238,7 @@ test('renderDesktopShareImage captures the complete local poster and closes its 
   });
 
   assert.equal(windows.length, 1);
-  assert.equal(windows[0].options.enableLargerThanScreen, false);
+  assert.equal('enableLargerThanScreen' in windows[0].options, false);
   assert.equal(windows[0].loadedUrl, 'http://127.0.0.1:8123/api/v1/history/29/share-image-html');
   assert.deepEqual(windows[0].contentSize, [1080, 1840]);
   assert.deepEqual(windows[0].captureRect, { x: 0, y: 0, width: 1080, height: 1840 });

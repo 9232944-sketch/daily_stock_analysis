@@ -1395,7 +1395,7 @@ async function renderDesktopShareImage(
       show: false,
       width: DESKTOP_SHARE_IMAGE_WIDTH,
       height: DESKTOP_SHARE_IMAGE_INITIAL_HEIGHT,
-      enableLargerThanScreen: isMac,
+      ...(isMac ? { enableLargerThanScreen: true } : {}),
       useContentSize: true,
       backgroundColor: '#eef4fd',
       webPreferences: {
