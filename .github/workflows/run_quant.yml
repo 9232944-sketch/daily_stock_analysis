@@ -26,10 +26,4 @@ jobs:
           pip install tushare requests python-dotenv
 
       - name: Minimal environment test
-        run: |
-          python -c "
-import os
-print('✅ Python环境正常')
-print('LLM_API_KEY present:', bool(os.environ.get('LLM_API_KEY')))
-print('TUSHARE_TOKEN present:', bool(os.environ.get('TUSHARE_TOKEN')))
-"
+        run: python -c "import os; print('✅ Python OK'); print('LLM:',bool(os.environ.get('LLM_API_KEY'))); print('Tushare:',bool(os.environ.get('TUSHARE_TOKEN')))"
