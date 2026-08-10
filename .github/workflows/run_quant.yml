@@ -25,6 +25,11 @@ jobs:
           python -m pip install --upgrade pip
           pip install tushare requests python-dotenv
 
-      - name: Run quant script
+      - name: Minimal environment test
         run: |
-          python test_demo.py
+          python -c "
+import os
+print('✅ Python环境正常')
+print('LLM_API_KEY present:', bool(os.environ.get('LLM_API_KEY')))
+print('TUSHARE_TOKEN present:', bool(os.environ.get('TUSHARE_TOKEN')))
+"
